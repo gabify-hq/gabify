@@ -1,0 +1,473 @@
+// Gabify — Prisma Schema
+// Module 1: Email Copilot
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────
+
+enum UserRole {
+  OWNER       // gabinete owner, full access
+  ACCOUNTANT  // standard accountant
+  VIEWER      // read-only
+}
+
+enum EmailProvider {
+  OUTLOOK
+  GMAIL
+  IMAP
+}
+
+enum EmailStatus {
+  UNREAD
+  READ
+  PROCESSING
+  PROCESSED
+  ARCHIVED
+  IGNORED
+}
+
+enum ActionType {
+  DRAFT_REPLY     // AI-generated draft reply
+  FORWARD         // forward to colleague
+  ARCHIVE         // archive without reply
+  REQUEST_DOCS    // request documents from client
+}
+
+enum ActionStatus {
+  PENDING_REVIEW  // waiting for accountant approval
+  APPROVED        // accountant approved
+  REJECTED        // accountant rejected
+  SENT            // approved + sent
+  EDITED_SENT     // edited by accountant then sent
+}
+
+enum DocumentType {
+  INVOICE_RECEIVED
+  INVOICE_ISSUED
+  RECEIPT
+  BANK_STATEMENT
+  PAYROLL
+  TAX_DOCUMENT
+  AT_COMMUNICATION    // Autoridade Tributária
+  SOCIAL_SECURITY
+  CONTRACT
+  BALANCE_SHEET
+  INCOME_STATEMENT
+  OTHER
+}
+
+enum DocumentStatus {
+  PENDING_CLASSIFICATION
+  CLASSIFIED
+  NEEDS_REVIEW            // low confidence classification
+  REVIEWED                // accountant confirmed classification
+}
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  RETRYING
+}
+
+// ─────────────────────────────────────────
+// OFFICE (gabinete de contabilidade)
+// ─────────────────────────────────────────
+
+model Office {
+  id          String   @id @default(cuid())
+  name        String
+  nif         String?  // NIF do gabinete
+  email       String?
+  phone       String?
+  address     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  users         User[]
+  clients       Client[]
+  emailAccounts EmailAccount[]
+  auditLogs     AuditLog[]
+  jobLogs       JobLog[]
+
+  @@index([deletedAt])
+}
+
+// ─────────────────────────────────────────
+// USER
+// ─────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  officeId      String
+  email         String    @unique
+  name          String?
+  role          UserRole  @default(ACCOUNTANT)
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+
+  // Auth.js v5 fields
+  emailVerified DateTime?
+
+  office        Office        @relation(fields: [officeId], references: [id], onDelete: Restrict)
+  accounts      Account[]
+  sessions      Session[]
+  emailReviews     EmailReview[]
+  docReviews       DocumentReview[]
+  auditLogsCreated AuditLog[]    @relation("AuditCreator")
+  auditLogsApproved AuditLog[]   @relation("AuditApprover")
+
+  @@index([officeId])
+  @@index([email])
+  @@index([deletedAt])
+}
+
+// ─────────────────────────────────────────
+// AUTH.JS v5 MODELS
+// ─────────────────────────────────────────
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─────────────────────────────────────────
+// CLIENT (cliente do gabinete)
+// ─────────────────────────────────────────
+
+model Client {
+  id           String    @id @default(cuid())
+  officeId     String
+  name         String
+  nif          String?   // NIF do cliente
+  email        String?   // email principal
+  phone        String?
+  notes        String?   @db.Text
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  // Matching fields — used to identify client from inbound emails
+  emailDomains String[]  // e.g. ["empresa.pt", "empresa.com"]
+  knownEmails  String[]  // e.g. ["joao@empresa.pt", "faturacao@empresa.pt"]
+
+  office       Office         @relation(fields: [officeId], references: [id], onDelete: Restrict)
+  inboundEmails InboundEmail[]
+  documents    Document[]
+
+  @@index([officeId])
+  @@index([deletedAt])
+}
+
+// ─────────────────────────────────────────
+// EMAIL ACCOUNT (caixa de email do contabilista)
+// ─────────────────────────────────────────
+
+model EmailAccount {
+  id       String        @id @default(cuid())
+  officeId String
+  email    String
+  name     String?       // display name
+  provider EmailProvider
+  active   Boolean       @default(true)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  // ── Microsoft Graph (Outlook) ──
+  // Stored encrypted at service layer
+  outlookAccessToken  String?  @db.Text
+  outlookRefreshToken String?  @db.Text
+  outlookTokenExpiry  DateTime?
+  outlookUserId       String?  // Graph user ID
+  deltaLink           String?  @db.Text // for delta query sync
+
+  // ── Gmail ──
+  // Stored encrypted at service layer
+  gmailAccessToken    String?  @db.Text
+  gmailRefreshToken   String?  @db.Text
+  gmailTokenExpiry    DateTime?
+  gmailUserId         String?  // Gmail user ID
+  historyId           String?  // for incremental sync
+  pubSubSubscription  String?  // Pub/Sub subscription name
+
+  // ── IMAP ──
+  // Stored encrypted at service layer
+  imapHost     String?
+  imapPort     Int?
+  imapUser     String?
+  imapPassword String?  @db.Text  // encrypted
+  imapTls      Boolean  @default(true)
+
+  office        Office         @relation(fields: [officeId], references: [id], onDelete: Restrict)
+  inboundEmails InboundEmail[]
+
+  @@unique([officeId, email, provider])
+  @@index([officeId])
+  @@index([provider])
+}
+
+// ─────────────────────────────────────────
+// EMAIL THREAD
+// ─────────────────────────────────────────
+
+model EmailThread {
+  id             String    @id @default(cuid())
+  providerThreadId String? // Graph conversationId / Gmail threadId
+  subject        String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  emails InboundEmail[]
+
+  @@index([providerThreadId])
+}
+
+// ─────────────────────────────────────────
+// INBOUND EMAIL
+// ─────────────────────────────────────────
+
+model InboundEmail {
+  id               String      @id @default(cuid())
+  emailAccountId   String
+  threadId         String?
+  clientId         String?     // null if unmatched
+  providerMessageId String     // Graph message ID / Gmail message ID
+  subject          String?
+  fromEmail        String
+  fromName         String?
+  toEmails         String[]
+  ccEmails         String[]
+  bodyText         String?     @db.Text
+  bodyHtml         String?     @db.Text
+  receivedAt       DateTime
+  status           EmailStatus @default(UNREAD)
+  clientMatchScore Float?      // confidence of client match (0.0-1.0)
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  emailAccount EmailAccount     @relation(fields: [emailAccountId], references: [id], onDelete: Cascade)
+  thread       EmailThread?     @relation(fields: [threadId], references: [id])
+  client       Client?          @relation(fields: [clientId], references: [id])
+  attachments  EmailAttachment[]
+  actions      EmailAction[]
+
+  @@unique([emailAccountId, providerMessageId])
+  @@index([emailAccountId])
+  @@index([clientId])
+  @@index([status])
+  @@index([receivedAt])
+}
+
+// ─────────────────────────────────────────
+// EMAIL ATTACHMENT
+// ─────────────────────────────────────────
+
+model EmailAttachment {
+  id             String   @id @default(cuid())
+  inboundEmailId String
+  providerAttachmentId String? // Graph attachment ID / Gmail attachment ID
+  filename       String
+  mimeType       String
+  sizeBytes      Int?
+  r2Key          String?  // R2 object key — <officeId>/<clientId>/<messageId>/<attachmentId>.<ext>
+  uploadedAt     DateTime?
+  createdAt      DateTime @default(now())
+
+  inboundEmail InboundEmail @relation(fields: [inboundEmailId], references: [id], onDelete: Cascade)
+  document     Document?
+
+  @@index([inboundEmailId])
+}
+
+// ─────────────────────────────────────────
+// EMAIL ACTION (AI-generated draft or action)
+// ─────────────────────────────────────────
+
+model EmailAction {
+  id             String       @id @default(cuid())
+  inboundEmailId String
+  type           ActionType
+  status         ActionStatus @default(PENDING_REVIEW)
+  draftContent   String?      @db.Text  // AI-generated draft text
+  editedContent  String?      @db.Text  // accountant-edited version
+  aiModel        String?      // Claude model used
+  aiPromptTokens Int?
+  sentAt         DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  inboundEmail InboundEmail  @relation(fields: [inboundEmailId], references: [id], onDelete: Cascade)
+  review       EmailReview?
+  auditLog     AuditLog?
+
+  @@index([inboundEmailId])
+  @@index([status])
+}
+
+// ─────────────────────────────────────────
+// EMAIL REVIEW (accountant approval record)
+// ─────────────────────────────────────────
+
+model EmailReview {
+  id            String       @id @default(cuid())
+  emailActionId String       @unique
+  reviewerId    String
+  decision      ActionStatus // APPROVED | REJECTED | EDITED_SENT
+  notes         String?
+  reviewedAt    DateTime     @default(now())
+
+  emailAction EmailAction @relation(fields: [emailActionId], references: [id], onDelete: Cascade)
+  reviewer    User        @relation(fields: [reviewerId], references: [id])
+
+  @@index([reviewerId])
+}
+
+// ─────────────────────────────────────────
+// DOCUMENT (classified attachment)
+// ─────────────────────────────────────────
+
+model Document {
+  id           String         @id @default(cuid())
+  attachmentId String         @unique
+  clientId     String?
+  type         DocumentType   @default(OTHER)
+  status       DocumentStatus @default(PENDING_CLASSIFICATION)
+  confidence   Float?         // AI classification confidence (0.0-1.0)
+  reasoning    String?        // AI reasoning (one sentence in PT)
+  extractedDate DateTime?
+  extractedAmount Float?
+  extractedVATNumber String?  // NIF extracted from document
+  textContent  String?        @db.Text  // extracted text used for classification
+  r2Key        String?        // same as attachment r2Key (denormalized for convenience)
+  aiModel      String?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  attachment   EmailAttachment @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
+  client       Client?         @relation(fields: [clientId], references: [id])
+  review       DocumentReview?
+
+  @@index([clientId])
+  @@index([type])
+  @@index([status])
+}
+
+// ─────────────────────────────────────────
+// DOCUMENT REVIEW (accountant validation)
+// ─────────────────────────────────────────
+
+model DocumentReview {
+  id           String       @id @default(cuid())
+  documentId   String       @unique
+  reviewerId   String
+  confirmedType DocumentType
+  notes        String?
+  reviewedAt   DateTime     @default(now())
+
+  document  Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  reviewer  User     @relation(fields: [reviewerId], references: [id])
+
+  @@index([reviewerId])
+}
+
+// ─────────────────────────────────────────
+// AUDIT LOG (immutable — AI action trail)
+// ─────────────────────────────────────────
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  officeId     String
+  userId       String?  // null if system-triggered
+  action       String   // e.g. "draft_generated", "email_sent", "document_classified"
+  entityType   String   // e.g. "EmailAction", "Document"
+  entityId     String
+  aiGenerated  Boolean  @default(false)
+  aiModel      String?
+  metadata     Json?    // additional context
+  approvedById String?  // userId who approved (if applicable)
+  approvedAt   DateTime?
+  emailActionId String? @unique  // link to EmailAction if applicable
+  createdAt    DateTime @default(now())
+  // NO updatedAt — audit logs are immutable
+
+  office     Office  @relation(fields: [officeId], references: [id])
+  user       User?   @relation("AuditCreator", fields: [userId], references: [id])
+  approvedBy User?   @relation("AuditApprover", fields: [approvedById], references: [id])
+  emailAction EmailAction? @relation(fields: [emailActionId], references: [id])
+
+  @@index([officeId])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+// ─────────────────────────────────────────
+// JOB LOG (BullMQ job tracking)
+// ─────────────────────────────────────────
+
+model JobLog {
+  id         String    @id @default(cuid())
+  officeId   String
+  queue      String    // "email-sync" | "document-parse"
+  jobId      String    // BullMQ job ID
+  status     JobStatus @default(QUEUED)
+  payload    Json?
+  result     Json?
+  error      String?   @db.Text
+  attempts   Int       @default(0)
+  startedAt  DateTime?
+  completedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  office Office @relation(fields: [officeId], references: [id])
+
+  @@index([officeId])
+  @@index([queue, status])
+  @@index([jobId])
+}

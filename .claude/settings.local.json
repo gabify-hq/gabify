@@ -9,7 +9,21 @@
       "Bash(node -e ' *)",
       "Bash(mkdir -p ~/gabify/.claude/commands)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "Bash(mkdir -p ~/gabify/.claude/rules ~/gabify/.claude/skills/email-draft ~/gabify/.claude/skills/document-classifier ~/gabify/.claude/skills/api-scaffold ~/gabify/.claude/skills/prisma-migrate ~/gabify/.claude/agents ~/gabify/.claude/hooks/scripts ~/gabify/.claude/hooks/config)"
+      "Bash(mkdir -p ~/gabify/.claude/rules ~/gabify/.claude/skills/email-draft ~/gabify/.claude/skills/document-classifier ~/gabify/.claude/skills/api-scaffold ~/gabify/.claude/skills/prisma-migrate ~/gabify/.claude/agents ~/gabify/.claude/hooks/scripts ~/gabify/.claude/hooks/config)",
+      "Bash(npx create-next-app@latest . --typescript --tailwind --app --src-dir --import-alias \"@/*\" --no-git --yes)",
+      "Bash(mv CLAUDE.md CLAUDE.md.bak)",
+      "Bash(mv README.md README.md.bak)",
+      "Bash(cd ~/gabify-temp && ls)",
+      "Bash(cp -r ~/gabify-temp/src ~/gabify/)",
+      "Bash(cp ~/gabify-temp/package.json ~/gabify/)",
+      "Bash(cp ~/gabify-temp/package-lock.json ~/gabify/)",
+      "Bash(cp ~/gabify-temp/next.config.ts ~/gabify/)",
+      "Bash(cp ~/gabify-temp/next-env.d.ts ~/gabify/)",
+      "Bash(npm install *)",
+      "Bash(npm pkg *)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d['scripts'], indent=2\\)\\)\")",
+      "Bash(node -e \"const f=require\\('./package.json'\\); console.log\\(JSON.stringify\\(f.scripts,null,2\\)\\)\")",
+      "Bash(npx prisma *)"
     ]
   }
 }

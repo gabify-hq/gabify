@@ -1,0 +1,21 @@
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "npm run start"
+healthcheckPath = "/api/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+[[services]]
+name = "web"
+startCommand = "npm run start"
+
+[[services]]
+name = "worker-email-sync"
+startCommand = "npm run worker:email"
+
+[[services]]
+name = "worker-document-parse"
+startCommand = "npm run worker:documents"
