@@ -231,6 +231,21 @@ See `prisma/schema.prisma` for full field definitions.
 
 ---
 
+## Dashboard UI (Phase 2 — complete)
+
+Route group `(dashboard)` with sidebar layout.
+
+| Route | Component | Description |
+|---|---|---|
+| `/inbox` | `EmailList` | All emails, unread count, pending draft badges |
+| `/inbox/[emailId]` | `EmailDetail` | Email + AI draft side-by-side, approve/edit/reject |
+| `/clients` | `ClientStatusCard` | Client grid grouped by status, progress bar, missing docs |
+| `/documents` | `DocumentTable` | Full document archive, filters by client/type/period |
+
+All pages use mock data from `src/lib/mock-data.ts`. No external API calls.
+
+Components: `StatusBadge`, `EmailList`, `EmailDetail`, `ClientStatusCard`, `DocumentTable`
+
 ## Known TODOs
 
 | Area | TODO |

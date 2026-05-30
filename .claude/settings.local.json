@@ -23,7 +23,14 @@
       "Bash(npm pkg *)",
       "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d['scripts'], indent=2\\)\\)\")",
       "Bash(node -e \"const f=require\\('./package.json'\\); console.log\\(JSON.stringify\\(f.scripts,null,2\\)\\)\")",
-      "Bash(npx prisma *)"
+      "Bash(npx prisma *)",
+      "Bash(New-Item -ItemType Directory -Force __TRACKED_VAR__/.claude/rules/ecc)",
+      "Bash(Copy-Item -Recurse __TRACKED_VAR__/ECC/rules/common __TRACKED_VAR__/.claude/rules/ecc/)",
+      "Bash(Copy-Item -Recurse __TRACKED_VAR__/ECC/rules/typescript __TRACKED_VAR__/.claude/rules/ecc/)",
+      "Bash(mkdir -p ~/.claude/rules/ecc)",
+      "Bash(cp -r ~/ECC/rules/common ~/.claude/rules/ecc/)",
+      "Bash(cp -r ~/ECC/rules/typescript ~/.claude/rules/ecc/)",
+      "Bash(ls ~/.claude/rules/ecc/)"
     ]
   }
 }
