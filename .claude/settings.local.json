@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__github__create_repository",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "Bash(gh api *)",
+      "Bash(xargs curl -s)",
+      "Bash(node -e ' *)",
+      "Bash(mkdir -p ~/gabify/.claude/commands)"
+    ]
+  }
+}
