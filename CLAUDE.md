@@ -37,6 +37,16 @@ No feature is done without tests. Tests live next to the code: `foo.ts` → `foo
 
 See `.claude/rules/testing.md` for full conventions.
 
+### 3. Documentation updated with every relevant change
+
+Two documents must stay in sync with the code:
+- `docs/HOW_IT_WORKS.md` — plain English for clients and stakeholders
+- `docs/TECHNICAL.md` — architecture, data flows, TODOs for developers
+
+Update both whenever a feature is implemented or meaningfully changed.
+
+See `.claude/rules/documentation.md` for what triggers an update.
+
 ---
 
 ## Module roadmap
