@@ -1,90 +1,133 @@
 # CLAUDE.md — Gabify
 
-Gabify is an operational platform for Portuguese accounting firms. It sits **before** accounting software (Primavera, TOConline, Sage) — it organises operational chaos, it does not replace the accounting layer.
+> Visão completa do produto, todos os módulos e contexto de mercado: ver **CONTEXT.md**
 
-## Core Principle: AI as Copilot, Never Pilot
+## O que é o Gabify
 
-Every AI action that affects the outside world (sending emails, filing documents, notifying clients) **must be approved by the accountant first**. No exceptions.
+Plataforma operacional para gabinetes de contabilidade portuguesa.
+Camada inteligente de intake e workflow **antes** do software de contabilidade (Primavera, TOConline, Sage).
+Não substitui o software de contabilidade — organiza o caos operacional antes disso.
 
-- Drafts are generated, never sent automatically
-- All AI decisions are logged in `AuditLog` with timestamp + approver
-- The accountant always has 1-click approve / edit / reject
+## Módulos (roadmap)
+
+| Módulo | Estado | Descrição |
+|---|---|---|
+| 0 — Fundação | ✅ | Schema, clientes, EmailProvider, workers |
+| 1 — Email Copilot | 🔨 em construção | Inbox → classificação → drafts → aprovação |
+| 2 — Client Portal | 📋 futuro | Upload self-service por clientes |
+| 3 — Document Vault | 📋 futuro | Repositório estruturado, pesquisa por conteúdo |
+| 4 — Deadline Tracker | 📋 futuro | Prazos fiscais PT, alertas, estado obrigações |
+| 5 — Communication Hub | 📋 futuro | Canal centralizado cliente ↔ gabinete |
+
+**Scope actual: Módulo 1 — Email Copilot.**
+
+---
+
+## Princípio central: AI como copiloto, nunca piloto
+
+Toda a ação que afeta o exterior (enviar email, notificar cliente, arquivar documento) **requer aprovação explícita do contabilista**.
+
+- Drafts gerados, nunca enviados automaticamente
+- Tudo registado em `AuditLog` com timestamp + quem aprovou
+- Contabilista tem sempre 1-click approve / edit / reject
+- AuditLog é imutável — nunca apagado, nunca editado
+
+---
 
 ## Stack
 
 - **Next.js 14** App Router + TypeScript (strict mode)
-- **PostgreSQL** + Prisma ORM (migrations only, never `db push` in prod)
-- **BullMQ** + Redis (job queues for email sync and document parsing)
-- **Cloudflare R2** (attachment storage — signed URLs only, never public)
-- **Auth.js v5** magic links (no passwords)
+- **PostgreSQL** + Prisma ORM (migrations only, never `db push` em prod)
+- **BullMQ** + Redis (email sync + document parse workers)
+- **Cloudflare R2** (attachments — signed URLs, nunca público)
+- **Auth.js v5** magic links (sem passwords)
 - **Resend** (outbound email)
-- **Claude API** (document classification + draft generation)
-- **Deploy target**: Railway
+- **Claude API** (classificação de documentos + geração de drafts)
+- **Deploy**: Railway (web + 2 workers separados)
 
-## Email Providers (priority order)
+---
 
-1. **Microsoft Graph API** — delta queries for incremental sync
+## Email Providers (ordem de prioridade)
+
+1. **Microsoft Graph API** — delta queries para sync incremental (prioritário — mais comum em PT)
 2. **Gmail API** — Pub/Sub push notifications
-3. **IMAP** — polling fallback, stub only
+3. **IMAP** — polling fallback, stub apenas
 
-Always code against the `EmailProvider` interface. Never call provider-specific code from business logic.
+Sempre codificar contra a interface `EmailProvider`. Nunca chamar código específico de provider em lógica de negócio.
 
-## Key Commands
+---
+
+## Comandos essenciais
 
 ```bash
-# Dev
-npm run dev
-
-# Database
-npx prisma migrate dev --name <semantic-name>
-npx prisma generate
-npx prisma studio
-
-# Jobs
-npm run worker:email
-npm run worker:documents
-
-# Type check
-npx tsc --noEmit
-
-# Lint
-npm run lint
+npm run dev                                      # Next.js dev server
+npm run worker:email                             # BullMQ email sync worker
+npm run worker:documents                         # BullMQ document parse worker
+npx prisma migrate dev --name <semantic-name>    # criar migration
+npx prisma generate                              # regenerar client após schema change
+npx prisma studio                                # GUI da base de dados
+npx tsc --noEmit                                 # type check
+npm run lint                                     # lint
 ```
 
-## Project Structure
+---
+
+## Estrutura do projecto
 
 ```
+prisma/
+  schema.prisma          — schema completo
+  config.ts              — Prisma 7 config (pg adapter)
+
 src/
-  app/                    # Next.js App Router
-    api/webhooks/         # Microsoft Graph + Gmail push endpoints
-    dashboard/
-    inbox/
-    clients/
-    settings/
-  lib/                    # Singleton clients (prisma, r2, resend, anthropic, redis)
+  types/index.ts         — enums e tipos globais
+  lib/
+    prisma.ts            — singleton Prisma client
+    r2.ts                — R2 upload + signed URLs
+    anthropic.ts         — Claude API client
+    resend.ts            — Resend client
+    redis.ts             — BullMQ connection config
+    auth.ts              — Auth.js v5 magic links
   server/
-    email-providers/      # EmailProvider interface + implementations
-    services/             # AI classification, client matching
-  queues/                 # BullMQ workers
-  components/             # UI components
-  types/                  # Global TypeScript types
+    email-providers/
+      EmailProvider.ts   — interface (syncInbox, getAttachment, sendReply, watchChanges)
+      OutlookProvider.ts — Microsoft Graph (delta queries)
+      GmailProvider.ts   — Gmail API (Pub/Sub)
+      ImapProvider.ts    — IMAP stub
+      index.ts           — createEmailProvider factory
+    services/
+      client-matching.ts         — email → cliente por domain/email
+      email-classification.ts    — Claude API: classify docs + drafts PT
+  queues/
+    email-sync.worker.ts         — sync inbox + match clientes + queue attachments
+    document-parse.worker.ts     — R2 upload + text extract + AI classify + AuditLog
+  app/
+    api/webhooks/graph/route.ts  — Microsoft Graph change notifications
+    api/webhooks/gmail/route.ts  — Gmail Pub/Sub push
+    api/auth/[...nextauth]/      — Auth.js handlers
+    dashboard/                   — TODO: overview
+    inbox/                       — TODO: email copilot UI
+    clients/                     — TODO: gestão clientes
+    settings/                    — TODO: email account connections
+  components/                    — UI components (shadcn/ui base)
 ```
 
-## Critical Rules
+---
 
-### Security
-- R2 attachments: **always signed URLs**, never public bucket access
-- OAuth tokens: stored encrypted, never logged
-- Webhook endpoints: always verify signatures (Graph HMAC, Gmail JWT)
-- AuditLog: every AI action must have an entry before execution
+## Regras críticas
+
+### Segurança
+- R2: **sempre signed URLs**, nunca URL pública. Expiração máx 1h documentos, 15min previews
+- OAuth tokens: encrypted antes de guardar na DB, nunca em logs
+- Webhooks: verificar assinatura (Graph HMAC, Gmail JWT) antes de processar
+- AuditLog: entrada criada **antes** de qualquer ação exterior, não depois
 
 ### Prisma
-- Always `prisma migrate dev` with a semantic name
-- Never `prisma db push` outside local dev
-- After schema changes: run `prisma generate` before writing service code
+- `prisma migrate dev --name <semantic-name>` — sempre com nome descritivo
+- **Nunca** `prisma db push` fora de dev scratch
+- Após mudança de schema: `prisma generate` antes de escrever código de serviço
 
-### Email Provider Interface
-Every provider must implement:
+### EmailProvider interface
 ```typescript
 interface EmailProvider {
   syncInbox(): Promise<SyncResult>
@@ -93,20 +136,20 @@ interface EmailProvider {
   watchChanges(webhookUrl: string): Promise<WatchResult>
 }
 ```
-Never bypass this interface. Business logic must be provider-agnostic.
+Nunca bypassar este interface. Lógica de negócio deve ser agnóstica ao provider.
 
 ### TypeScript
-- Strict mode always on
-- No `any` — use `unknown` and narrow
-- All API routes use Zod for request validation
+- Strict mode sempre activo
+- Sem `any` — usar `unknown` e narrowing
+- Todas as rotas API validam body com Zod antes de tocar na DB
 
 ### BullMQ Workers
-- Workers must be idempotent (safe to retry)
-- Always log job start/end to `JobLog`
-- Failed jobs: exponential backoff, max 3 retries
+- Workers devem ser idempotentes (seguros para retry)
+- Sempre logar início/fim do job em `JobLog`
+- Falhas: exponential backoff, máx 3 retries
 
-## Module 1: Email Copilot
-
-The only module in scope right now. Other modules (Client Portal, Document Vault, etc.) are documented in `CONTEXT.md` but not being built yet.
-
-Focus: scaffolding foundation — schema, types, client configs, provider abstraction, queue workers. No UI until foundation is solid.
+### Contexto PT
+- UI e emails gerados em **Português de Portugal** (PT-PT, não PT-BR)
+- Datas: DD/MM/YYYY
+- NIF: 9 dígitos — extrair de documentos sempre que presente
+- Fuso horário: Europe/Lisbon
