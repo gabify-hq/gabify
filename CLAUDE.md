@@ -39,9 +39,10 @@ See `.claude/rules/testing.md` for full conventions.
 
 ### 3. Documentation updated with every relevant change
 
-Two documents must stay in sync with the code:
-- `docs/HOW_IT_WORKS.md` — plain English for clients and stakeholders
-- `docs/TECHNICAL.md` — architecture, data flows, TODOs for developers
+Three documents must stay in sync with the code:
+- `docs/HOW_IT_WORKS.md` — plain English for clients and stakeholders (single file)
+- `docs/technical/OVERVIEW.md` — architecture, stack, security, deploy (cross-cutting)
+- `docs/technical/<module>.md` — per-module: data flow, endpoints, TODOs
 
 Update both whenever a feature is implemented or meaningfully changed.
 

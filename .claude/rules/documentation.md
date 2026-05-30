@@ -4,17 +4,24 @@ description: Documentation rules — both docs must be updated whenever relevant
 
 # Documentation Rules
 
-## Two documents, always in sync with the code
+## Three documents, always in sync with the code
 
 ### docs/HOW_IT_WORKS.md
 **Audience:** clients, non-technical stakeholders, potential customers.
 **Language:** plain English — no code, no jargon, no implementation details.
 **Content:** what Gabify does, how each feature works from the user's perspective, what's coming.
+**Structure:** single file, grows with sections per feature.
 
-### docs/TECHNICAL.md
-**Audience:** developers, technical reviewers, future contributors.
-**Language:** technical English — architecture, data flows, design decisions, known TODOs.
-**Content:** architecture diagrams, schema decisions, API flows, security model, test coverage, TODOs.
+### docs/technical/OVERVIEW.md
+**Audience:** developers — cross-cutting concerns only.
+**Content:** service topology, stack table, schema map, security model, testing conventions, environment variables, deployment.
+**Rule:** never put module-specific detail here. Keep it at the architecture level.
+
+### docs/technical/<module-name>.md
+**Audience:** developers working on that specific module.
+**Content:** data flow diagram, provider details, job queue specs, API endpoints, schema models used, known TODOs.
+**One file per module:** `email-copilot.md`, `client-portal.md`, `document-parser.md`, etc.
+**Create the file** when the module is started. Never leave it empty.
 
 ---
 
