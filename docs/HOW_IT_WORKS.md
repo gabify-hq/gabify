@@ -69,10 +69,33 @@ In the Gabify dashboard, you see:
 
 For each draft, you can:
 - **Approve** — sends the reply as-is
-- **Edit** — modify the text, then send
+- **Edit** — modify the text, then send with your changes
 - **Reject** — discard the draft, handle manually
 
-Only after you approve does anything get sent.
+Only after you approve does anything get sent. Every decision is recorded with a timestamp.
+
+---
+
+## The dashboard
+
+Gabify's dashboard has three main sections:
+
+### Inbox
+The inbox shows all emails received by your firm, ordered by date. Unread emails are highlighted. Emails with pending AI drafts are clearly marked so you can prioritise them. Clicking any email opens the detail view — the original email on the left, the AI draft on the right.
+
+### Clients
+The clients view shows the documentation status for each client for the current period. Clients are grouped into three categories:
+
+- **Complete** — all expected documents received
+- **Incomplete** — some documents received, others still missing
+- **Missing** — no documents received yet
+
+Each client card shows a progress bar, the list of missing documents, and the period. Clicking a client opens their full profile with email history and all archived documents.
+
+### Documents
+The documents view shows every file that Gabify has received and classified. You can filter by client, document type, and period. Each row shows the filename, document type, extracted amount, AI confidence score, and current status.
+
+Documents marked **"Rever"** (Review) are ones where the AI was less confident — these need your confirmation before being treated as final.
 
 ---
 

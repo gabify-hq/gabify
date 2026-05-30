@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { StatusBadge } from './status-badge'
+import { useDashboardStore } from '@/lib/dashboard-store'
 import type { MockEmail, MockEmailAction } from '@/lib/mock-data'
 import { formatDateTime } from '@/lib/mock-data'
 
@@ -16,23 +17,34 @@ interface EmailDetailProps {
 }
 
 export function EmailDetail({ email, action }: EmailDetailProps) {
+  const store = useDashboardStore()
+  const persisted = action ? store.getAction(action.id) : undefined
+
+  const currentStatus = persisted?.status ?? action?.status ?? null
+  const currentContent = persisted?.editedContent ?? action?.draftContent ?? ''
+
   const [isEditing, setIsEditing] = useState(false)
-  const [draftText, setDraftText] = useState(action?.draftContent ?? '')
-  const [actionStatus, setActionStatus] = useState<'idle' | 'approved' | 'rejected'>(
-    action?.status === 'APPROVED' ? 'approved' : 'idle'
-  )
+  const [draftText, setDraftText] = useState(currentContent)
 
   const handleApprove = () => {
-    // TODO: call POST /api/emails/[id]/actions/[actionId]/approve
-    setActionStatus('approved')
+    if (!action) return
+    store.approveAction(action.id, draftText)
     setIsEditing(false)
   }
 
   const handleReject = () => {
-    // TODO: call POST /api/emails/[id]/actions/[actionId]/reject
-    setActionStatus('rejected')
+    if (!action) return
+    store.rejectAction(action.id)
     setIsEditing(false)
   }
+
+  const handleEditAndSend = () => {
+    if (!action) return
+    store.editAndSendAction(action.id, draftText)
+    setIsEditing(false)
+  }
+
+  const isPending = !currentStatus || currentStatus === 'PENDING_REVIEW'
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -77,17 +89,12 @@ export function EmailDetail({ email, action }: EmailDetailProps) {
           <div className="flex items-center justify-between border-b border-neutral-200 px-5 py-3">
             <div className="flex items-center gap-2">
               <span className="text-[13px] font-medium text-neutral-700">Rascunho AI</span>
-              {action && actionStatus === 'idle' && (
-                <StatusBadge variant="pending" label="Aguarda aprovação" />
-              )}
-              {actionStatus === 'approved' && (
-                <StatusBadge variant="approved" label="Aprovado" />
-              )}
-              {actionStatus === 'rejected' && (
-                <StatusBadge variant="rejected" label="Rejeitado" />
-              )}
+              {action && isPending && <StatusBadge variant="pending" label="Aguarda aprovação" />}
+              {currentStatus === 'APPROVED' && <StatusBadge variant="approved" label="Aprovado" />}
+              {currentStatus === 'EDITED_SENT' && <StatusBadge variant="approved" label="Editado e enviado" />}
+              {currentStatus === 'REJECTED' && <StatusBadge variant="rejected" label="Rejeitado" />}
             </div>
-            {action && actionStatus === 'idle' && !isEditing && (
+            {action && isPending && !isEditing && (
               <button
                 onClick={() => setIsEditing(true)}
                 className="flex items-center gap-1 rounded px-2 py-1 text-[12px] text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700"
@@ -118,12 +125,10 @@ export function EmailDetail({ email, action }: EmailDetailProps) {
                   <pre
                     className={cn(
                       'whitespace-pre-wrap font-sans text-sm leading-relaxed',
-                      actionStatus === 'approved' && 'text-neutral-400 line-through',
-                      actionStatus === 'rejected' && 'text-neutral-400 line-through',
-                      actionStatus === 'idle' && 'text-neutral-700'
+                      !isPending ? 'text-neutral-400' : 'text-neutral-700'
                     )}
                   >
-                    {draftText}
+                    {persisted?.editedContent ?? draftText}
                   </pre>
                 )}
               </div>
@@ -132,27 +137,30 @@ export function EmailDetail({ email, action }: EmailDetailProps) {
               <div className="border-t border-neutral-100 px-5 py-2">
                 <p className="text-[11px] text-neutral-400">
                   Gerado por {action.aiModel} · {formatDateTime(action.createdAt)}
+                  {persisted?.decidedAt && (
+                    <> · Decisão: {formatDateTime(new Date(persisted.decidedAt))}</>
+                  )}
                 </p>
               </div>
 
               {/* Actions */}
-              {actionStatus === 'idle' && (
+              {isPending && (
                 <div className="flex gap-2 border-t border-neutral-200 px-5 py-3">
                   {isEditing ? (
                     <>
                       <Button
                         size="sm"
                         className="flex-1 gap-1.5 bg-green-600 text-white hover:bg-green-700"
-                        onClick={handleApprove}
+                        onClick={handleEditAndSend}
                       >
                         <Check className="h-3.5 w-3.5" />
-                        Aprovar e enviar
+                        Guardar e enviar
                       </Button>
                       <Button
                         size="sm"
                         variant="outline"
                         onClick={() => {
-                          setDraftText(action.draftContent)
+                          setDraftText(persisted?.editedContent ?? action.draftContent)
                           setIsEditing(false)
                         }}
                       >
@@ -183,10 +191,12 @@ export function EmailDetail({ email, action }: EmailDetailProps) {
                 </div>
               )}
 
-              {actionStatus !== 'idle' && (
+              {!isPending && (
                 <div className="border-t border-neutral-200 px-5 py-3">
                   <p className="text-center text-sm text-neutral-500">
-                    {actionStatus === 'approved' ? 'Email aprovado e enviado.' : 'Rascunho rejeitado.'}
+                    {currentStatus === 'APPROVED' && 'Email aprovado e enviado.'}
+                    {currentStatus === 'EDITED_SENT' && 'Rascunho editado e enviado.'}
+                    {currentStatus === 'REJECTED' && 'Rascunho rejeitado.'}
                   </p>
                 </div>
               )}

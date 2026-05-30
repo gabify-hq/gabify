@@ -1,7 +1,13 @@
 'use client'
 
 import { useState } from 'react'
-import { FileText, ExternalLink } from 'lucide-react'
+import { FileText, ExternalLink, X } from 'lucide-react'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import {
   Table,
   TableBody,
@@ -23,12 +29,14 @@ import { MOCK_CLIENTS, DOCUMENT_TYPE_LABELS } from '@/lib/mock-data'
 
 interface DocumentTableProps {
   documents: MockDocument[]
+  hideClientFilter?: boolean
 }
 
-export function DocumentTable({ documents }: DocumentTableProps) {
+export function DocumentTable({ documents, hideClientFilter = false }: DocumentTableProps) {
   const [filterClient, setFilterClient] = useState<string>('all')
   const [filterType, setFilterType] = useState<string>('all')
   const [filterPeriod, setFilterPeriod] = useState<string>('all')
+  const [previewDoc, setPreviewDoc] = useState<MockDocument | null>(null)
 
   const handleClientChange = (v: string | null) => setFilterClient(v ?? 'all')
   const handleTypeChange = (v: string | null) => setFilterType(v ?? 'all')
@@ -64,19 +72,21 @@ export function DocumentTable({ documents }: DocumentTableProps) {
     <div className="flex flex-col gap-4">
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-2">
-        <Select value={filterClient} onValueChange={handleClientChange}>
-          <SelectTrigger className="h-8 w-[200px] text-xs">
-            <SelectValue placeholder="Todos os clientes" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todos os clientes</SelectItem>
-            {MOCK_CLIENTS.map((c) => (
-              <SelectItem key={c.id} value={c.id}>
-                {c.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        {!hideClientFilter && (
+          <Select value={filterClient} onValueChange={handleClientChange}>
+            <SelectTrigger className="h-8 w-[200px] text-xs">
+              <SelectValue placeholder="Todos os clientes" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todos os clientes</SelectItem>
+              {MOCK_CLIENTS.map((c) => (
+                <SelectItem key={c.id} value={c.id}>
+                  {c.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
 
         <Select value={filterType} onValueChange={handleTypeChange}>
           <SelectTrigger className="h-8 w-[170px] text-xs">
@@ -174,7 +184,7 @@ export function DocumentTable({ documents }: DocumentTableProps) {
                   <button
                     className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600"
                     title="Ver documento"
-                    // TODO: open signed URL from R2
+                    onClick={() => setPreviewDoc(doc)}
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
                   </button>
@@ -191,6 +201,66 @@ export function DocumentTable({ documents }: DocumentTableProps) {
           </TableBody>
         </Table>
       </div>
+
+      {/* Document preview modal */}
+      <Dialog open={!!previewDoc} onOpenChange={(open) => !open && setPreviewDoc(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="truncate text-sm font-medium">
+              {previewDoc?.filename}
+            </DialogTitle>
+          </DialogHeader>
+          {previewDoc && (
+            <div className="space-y-3 text-sm">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-md bg-neutral-50 p-3 text-[13px]">
+                <span className="text-neutral-500">Tipo</span>
+                <span className="font-medium text-neutral-800">{previewDoc.typeLabel}</span>
+                <span className="text-neutral-500">Cliente</span>
+                <span className="font-medium text-neutral-800">{previewDoc.clientName}</span>
+                <span className="text-neutral-500">Período</span>
+                <span className="font-medium text-neutral-800">{previewDoc.period}</span>
+                {previewDoc.extractedDate && (
+                  <>
+                    <span className="text-neutral-500">Data doc.</span>
+                    <span className="font-medium text-neutral-800">{previewDoc.extractedDate}</span>
+                  </>
+                )}
+                {previewDoc.extractedAmount != null && (
+                  <>
+                    <span className="text-neutral-500">Valor</span>
+                    <span className="font-medium text-neutral-800">
+                      €{previewDoc.extractedAmount.toLocaleString('pt-PT', { minimumFractionDigits: 2 })}
+                    </span>
+                  </>
+                )}
+                {previewDoc.extractedVATNumber && (
+                  <>
+                    <span className="text-neutral-500">NIF</span>
+                    <span className="font-medium text-neutral-800">{previewDoc.extractedVATNumber}</span>
+                  </>
+                )}
+                <span className="text-neutral-500">Confiança AI</span>
+                <span className={
+                  previewDoc.confidence >= 0.85 ? 'font-medium text-green-700' :
+                  previewDoc.confidence >= 0.6 ? 'font-medium text-yellow-700' :
+                  'font-medium text-red-700'
+                }>
+                  {Math.round(previewDoc.confidence * 100)}%
+                </span>
+              </div>
+              <div className="rounded-md border border-neutral-200 bg-neutral-50 p-3">
+                <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-neutral-500">
+                  Localização R2
+                </p>
+                <code className="break-all text-[11px] text-neutral-600">{previewDoc.r2Key}</code>
+              </div>
+              <p className="text-[11px] text-neutral-400">
+                Em produção, este botão abre um signed URL com expiração de 1 hora.
+              </p>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -1,28 +1,35 @@
 'use client'
 
 import Link from 'next/link'
+import { usePathname } from 'next/navigation'
 import { Paperclip } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { StatusBadge } from './status-badge'
+import { useDashboardStore } from '@/lib/dashboard-store'
 import type { MockEmail, MockEmailAction } from '@/lib/mock-data'
 import { formatRelativeTime } from '@/lib/mock-data'
 
 interface EmailListProps {
   emails: MockEmail[]
   actions: MockEmailAction[]
-  selectedEmailId?: string
 }
 
-export function EmailList({ emails, actions, selectedEmailId }: EmailListProps) {
-  const pendingActionEmailIds = new Set(
-    actions.filter((a) => a.status === 'PENDING_REVIEW').map((a) => a.emailId)
-  )
+export function EmailList({ emails, actions }: EmailListProps) {
+  const pathname = usePathname()
+  const store = useDashboardStore()
+
+  // Map emailId → actionId for quick lookup
+  const emailToAction = new Map(actions.map((a) => [a.emailId, a]))
 
   return (
     <div className="flex flex-col divide-y divide-neutral-100">
       {emails.map((email) => {
-        const hasPendingDraft = pendingActionEmailIds.has(email.id)
-        const isSelected = email.id === selectedEmailId
+        const action = emailToAction.get(email.id)
+        const persisted = action ? store.getAction(action.id) : undefined
+        const actionStatus = persisted?.status ?? action?.status ?? null
+        const hasPendingDraft = actionStatus === 'PENDING_REVIEW'
+
+        const isSelected = pathname === `/inbox/${email.id}`
         const isUnread = email.status === 'UNREAD'
 
         return (
@@ -51,31 +58,26 @@ export function EmailList({ emails, actions, selectedEmailId }: EmailListProps) 
             </div>
 
             {/* Row 2: subject */}
-            <p
-              className={cn(
-                'truncate text-sm',
-                isUnread ? 'text-neutral-800' : 'text-neutral-500'
-              )}
-            >
+            <p className={cn('truncate text-sm', isUnread ? 'text-neutral-800' : 'text-neutral-500')}>
               {email.subject}
             </p>
 
             {/* Row 3: badges */}
-            <div className="flex items-center gap-1.5 flex-wrap">
-              {email.clientName && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {email.clientName ? (
                 <span className="truncate rounded bg-neutral-100 px-1.5 py-0.5 text-[11px] text-neutral-600">
                   {email.clientName}
                 </span>
-              )}
-              {!email.clientName && (
+              ) : (
                 <span className="rounded bg-orange-50 px-1.5 py-0.5 text-[11px] text-orange-600">
                   Sem cliente
                 </span>
               )}
-              {hasPendingDraft && (
-                <StatusBadge variant="pending" label="Rascunho pendente" />
-              )}
-              {email.status === 'PROCESSED' && (
+              {hasPendingDraft && <StatusBadge variant="pending" label="Rascunho pendente" />}
+              {actionStatus === 'APPROVED' && <StatusBadge variant="approved" label="Aprovado" />}
+              {actionStatus === 'EDITED_SENT' && <StatusBadge variant="approved" label="Enviado" />}
+              {actionStatus === 'REJECTED' && <StatusBadge variant="rejected" label="Rejeitado" />}
+              {email.status === 'PROCESSED' && !action && (
                 <StatusBadge variant="approved" label="Processado" />
               )}
               {email.hasAttachments && (

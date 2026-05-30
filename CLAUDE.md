@@ -211,3 +211,23 @@ Never bypass this interface. Business logic must be provider-agnostic.
 - NIF: 9 digits — extract from documents whenever present
 - Timezone: Europe/Lisbon
 - AI-generated emails: sound human, PT-PT, professional but natural — no AI-speak
+
+---
+
+## Standard of Work
+
+The marginal cost of completeness is near zero with AI. Do the whole thing.
+Do it right, do it with tests, do it with documentation. Do it so well that
+the result is genuinely impressive — not politely satisfactory, actually impressive.
+
+- Never offer to "table this for later" when the permanent solution is within reach
+- Never leave a dangling thread when tying it off takes 5 more minutes
+- Never present a workaround when the real fix exists
+- Never stub a function with TODO when implementing it takes the same time
+
+The standard is not "good enough" — it is "holy shit, that's done".
+
+Search before building. Test before shipping. Ship the complete thing.
+
+When asked for something, the answer is the finished product, not a plan to build it.
+Time is not an excuse. Fatigue is not an excuse. Complexity is not an excuse.
