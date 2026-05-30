@@ -10,7 +10,9 @@ Does not replace accounting software — organises the operational chaos before 
 
 ---
 
-## ⚠️ Sacred rule: code is always in English
+## ⚠️ Sacred rules
+
+### 1. Code is always in English
 
 **All code, variable names, comments, tests, types, database fields, API responses, error messages in code — always in English.**
 
@@ -27,6 +29,13 @@ return { error: 'Documento não encontrado' }
 const pontuacaoCorrespondencia = 0.85
 const estado = 'AGUARDA_REVISAO'
 ```
+
+### 2. Unit tests for every new feature
+
+Every new function, service, worker, or utility **must have unit tests**.
+No feature is done without tests. Tests live next to the code: `foo.ts` → `foo.test.ts`.
+
+See `.claude/rules/testing.md` for full conventions.
 
 ---
 

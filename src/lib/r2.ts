@@ -6,21 +6,33 @@ import {
 } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 
-if (!process.env.R2_ACCOUNT_ID) throw new Error('R2_ACCOUNT_ID is required')
-if (!process.env.R2_ACCESS_KEY_ID) throw new Error('R2_ACCESS_KEY_ID is required')
-if (!process.env.R2_SECRET_ACCESS_KEY) throw new Error('R2_SECRET_ACCESS_KEY is required')
-if (!process.env.R2_BUCKET_NAME) throw new Error('R2_BUCKET_NAME is required')
+// Lazy client — instantiated on first use so tests can import utility
+// functions (buildAttachmentKey) without needing env vars
+let _r2: S3Client | null = null
 
-export const r2 = new S3Client({
-  region: 'auto',
-  endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
-  credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY_ID,
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
-  },
-})
+function getR2Client(): S3Client {
+  if (_r2) return _r2
 
-const BUCKET = process.env.R2_BUCKET_NAME
+  if (!process.env.R2_ACCOUNT_ID) throw new Error('R2_ACCOUNT_ID is required')
+  if (!process.env.R2_ACCESS_KEY_ID) throw new Error('R2_ACCESS_KEY_ID is required')
+  if (!process.env.R2_SECRET_ACCESS_KEY) throw new Error('R2_SECRET_ACCESS_KEY is required')
+
+  _r2 = new S3Client({
+    region: 'auto',
+    endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+    credentials: {
+      accessKeyId: process.env.R2_ACCESS_KEY_ID,
+      secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    },
+  })
+
+  return _r2
+}
+
+function getBucket(): string {
+  if (!process.env.R2_BUCKET_NAME) throw new Error('R2_BUCKET_NAME is required')
+  return process.env.R2_BUCKET_NAME
+}
 
 /**
  * Upload a file to R2.
@@ -31,9 +43,9 @@ export async function uploadToR2(
   body: Buffer,
   contentType: string
 ): Promise<void> {
-  await r2.send(
+  await getR2Client().send(
     new PutObjectCommand({
-      Bucket: BUCKET,
+      Bucket: getBucket(),
       Key: key,
       Body: body,
       ContentType: contentType,
@@ -49,19 +61,20 @@ export async function getSignedDownloadUrl(
   key: string,
   expiresInSeconds = 3600
 ): Promise<string> {
-  const command = new GetObjectCommand({ Bucket: BUCKET, Key: key })
-  return getSignedUrl(r2, command, { expiresIn: expiresInSeconds })
+  const command = new GetObjectCommand({ Bucket: getBucket(), Key: key })
+  return getSignedUrl(getR2Client(), command, { expiresIn: expiresInSeconds })
 }
 
 /**
  * Delete an object from R2.
  */
 export async function deleteFromR2(key: string): Promise<void> {
-  await r2.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }))
+  await getR2Client().send(new DeleteObjectCommand({ Bucket: getBucket(), Key: key }))
 }
 
 /**
  * Build the R2 key for an email attachment.
+ * Pure function — no env vars required, safe to test directly.
  */
 export function buildAttachmentKey(
   officeId: string,
