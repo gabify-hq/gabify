@@ -7,7 +7,9 @@
       "Bash(gh api *)",
       "Bash(xargs curl -s)",
       "Bash(node -e ' *)",
-      "Bash(mkdir -p ~/gabify/.claude/commands)"
+      "Bash(mkdir -p ~/gabify/.claude/commands)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(mkdir -p ~/gabify/.claude/rules ~/gabify/.claude/skills/email-draft ~/gabify/.claude/skills/document-classifier ~/gabify/.claude/skills/api-scaffold ~/gabify/.claude/skills/prisma-migrate ~/gabify/.claude/agents ~/gabify/.claude/hooks/scripts ~/gabify/.claude/hooks/config)"
     ]
   }
 }
