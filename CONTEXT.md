@@ -1,148 +1,188 @@
 # Gabify — Product Context
 
-## O que é o Gabify
+## What is Gabify
 
-Gabify é uma plataforma operacional para gabinetes de contabilidade portuguesa.
-É uma **camada inteligente de intake e workflow** que fica ANTES do software de contabilidade (Primavera, TOConline, Sage).
+Gabify is an operational platform for Portuguese accounting firms.
+It is an **intelligent intake and workflow layer** that sits BEFORE accounting software (Primavera, TOConline, Sage).
 
-**Não substitui** o software de contabilidade — organiza o caos operacional antes disso.
+It does **not replace** accounting software — it organises the operational chaos that happens before that.
 
-### Problema que resolve
+## Problem it solves
 
-Os gabinetes de contabilidade em Portugal operam num caos constante de:
-- Emails de clientes sem resposta ou mal classificados
-- Documentos (faturas, recibos, extratos) em pastas de email sem organizar
-- Contabilistas a gastar 30-40% do tempo em trabalho de intake manual
-- Clientes que não sabem o que foi recebido, processado ou está em falta
-- Sem rastreabilidade de quem fez o quê e quando
+Portuguese accounting firms operate in constant chaos:
+- Client emails unanswered or misclassified
+- Documents (invoices, receipts, bank statements) buried in email folders
+- Accountants spending 30-40% of their time on manual intake work
+- Clients who don't know what was received, processed, or is missing
+- No traceability of who did what and when
 
-### Proposta de valor
+## Value proposition
 
-Gabify processa o caos operacional automaticamente com AI — mas sempre com o contabilista no loop de decisão.
-O contabilista aprova com 1 clique. O AI nunca age sozinho no mundo exterior.
-
----
-
-## Princípios do produto
-
-### 1. AI como copiloto, nunca piloto
-Toda a ação que afeta o exterior (enviar email, notificar cliente, arquivar documento) requer aprovação explícita do contabilista.
-Sem exceções.
-
-### 2. Rastreabilidade total
-Tudo o que o AI faz fica no `AuditLog` com timestamp, modelo usado, e quem aprovou.
-O AuditLog é imutável — nunca apagado, nunca editado.
-
-### 3. Documentos privados por defeito
-Anexos no Cloudflare R2 nunca têm acesso público.
-Sempre signed URLs com expiração máxima de 1 hora.
-
-### 4. Português de Portugal, não PT-BR
-UI, emails gerados, mensagens de erro — tudo em PT-PT.
-Datas no formato DD/MM/YYYY. Moeda em €X,XX.
-
-### 5. Desenhado para contabilistas, não para startups
-Interface densa e funcional. Tabelas em vez de cards. Sem excessos visuais.
-O utilizador passa 8h/dia nisto — velocidade e clareza antes de estética.
+Gabify automatically processes operational chaos using AI — but always with the accountant in the decision loop.
+The accountant approves with 1 click. AI never acts alone in the external world.
 
 ---
 
-## Roadmap de módulos
+## Planned modules
 
-> **Estado actual: Módulo 1 em construção. Os restantes são visão futura.**
+### ✅ Module 0 — Foundation (complete)
+Infrastructure: Prisma schema, clients (R2, Anthropic, Resend), EmailProvider abstraction, BullMQ workers.
 
-### ✅ Módulo 0 — Fundação (scaffolding)
-Infraestrutura base: schema Prisma, clientes (R2, Anthropic, Resend), abstração EmailProvider, workers BullMQ.
+### 🔨 Module 1 — Email Copilot (Phase 1 complete, Phase 2 in progress)
+**Agent that processes the accountant's inbox.**
 
-### 🔨 Módulo 1 — Email Copilot (em construção)
-**Agente que processa a caixa de entrada do contabilista.**
+Flow:
+1. Reads inbox via Microsoft Graph API (Outlook) or Gmail API
+2. Classifies email by client — matching by known email or domain
+3. Extracts and archives attachments to Cloudflare R2
+4. Classifies documents by **content** using Claude AI (never by filename)
+5. Generates reply draft for accountant approval
+6. Accountant approves / edits / rejects with 1 click
+7. Only after approval: email is sent, document is archived
 
-Fluxo:
-1. Lê inbox via Microsoft Graph API (Outlook) ou Gmail API
-2. Classifica email por cliente — matching por email conhecido ou domínio
-3. Extrai e arquiva anexos no Cloudflare R2
-4. Classifica documentos por conteúdo com Claude AI (não pelo nome do ficheiro)
-5. Gera rascunho de resposta para aprovação
-6. Contabilista aprova/edita/rejeita com 1 clique
-7. Só após aprovação: email é enviado, documento é arquivado
-
-Providers de email:
-- Microsoft Graph API (prioritário — mais comum nos gabinetes PT)
+Email providers (priority order):
+- Microsoft Graph API (priority — most common in PT firms, Outlook)
 - Gmail API
-- IMAP (stub/fallback)
+- IMAP (stub/fallback only)
 
-### 📋 Módulo 2 — Client Portal (futuro)
-Portal self-service para clientes do gabinete.
-- Cliente faz upload de documentos diretamente (sem enviar por email)
-- Contabilista vê tudo organizado por cliente e período fiscal
-- Notificações quando documentos estão em falta
-- Histórico de comunicações
+Interface `EmailProvider`: `syncInbox()`, `getAttachment()`, `sendReply()`, `watchChanges()`
 
-### 📁 Módulo 3 — Document Vault (futuro)
-Repositório estruturado de todos os documentos processados.
-- Organização automática por cliente / tipo / período
-- Pesquisa por conteúdo (não por nome de ficheiro)
-- Exportação para software de contabilidade (CSV, XML, integração API)
-- Controlo de versões de documentos
+**Phase 2 (current):** Accountant dashboard UI with mock data — inbox list, pending approvals, client status.
 
-### 📊 Módulo 4 — Deadline Tracker (futuro)
-Gestão de prazos fiscais e obrigações.
-- Calendário fiscal português (IVA, IRS, IRC, SS, IMI, etc.)
-- Alertas automáticos para contabilista e cliente
-- Estado de cada obrigação: pendente / submetido / confirmado
-- Integração com Portal das Finanças (AT)
+### 📋 Module 2 — Client Portal (future)
+Self-service portal for the accounting firm's clients.
+- Client uploads documents via drag & drop (no email)
+- Magic link only — clients never create a password
+- Monthly checklist of required documents
+- Accountant sees everything organised by client and fiscal period
+- Notifications when documents are missing
+- Shareable invite link for onboarding
 
-### 💬 Módulo 5 — Client Communication Hub (futuro)
-Canal centralizado de comunicação com clientes.
-- Substituição de email disperso por threads estruturadas
-- Pedidos de documentos com checklist
-- Aprovações de declarações com assinatura digital
-- Histórico completo por cliente
+### 📄 Module 3 — AI Document Parser (future)
+Deep document classification and extraction.
+- PDF OCR + Claude content analysis — never by filename
+- Extraction: NIF, amounts, dates, document type
+- Cross-reference with client records
+- Confidence scoring with manual review fallback
+
+### 📊 Module 4 — Dashboard & Deadline Tracker (future)
+Status of each client and Portuguese fiscal obligations.
+- Client status: complete / incomplete / missing documents
+- Portuguese fiscal calendar: IVA, IRS, IRC, SS, IMI, etc.
+- Automatic alerts for accountant and client
+- Obligation status: pending / submitted / confirmed
+- AT (Autoridade Tributária) integration
+
+### 🔔 Module 5 — Automated Reminders (future)
+Proactive communication with clients.
+- Email reminders now (via Resend)
+- WhatsApp integration later
+- Configurable reminder schedules by document type and fiscal period
+- Escalation logic when clients don't respond
+
+### 📦 Module 6 — Organised Export (future)
+Structured document export.
+- ZIP export organised as: `Client/Year/Month/DocumentType`
+- Filterable by client, period, document type
+- Audit trail included in export
+
+### 🔗 Module 7 — Accounting Software Integration (future)
+Direct send to Portuguese accounting software — no manual re-entry.
+
+Targets:
+- **TOConline** — via REST API (public documentation available)
+- **Primavera BSS** — via API or supported import file formats
+- **Sage** — via API or structured export
+
+Capabilities:
+- Send classified documents directly to accounting software
+- Map Gabify document types to each system's accepted types
+- Log every send in AuditLog with confirmation receipt
+- Fallback to organised ZIP export when API unavailable
+
+> **Architecture note:** Even though this module is built after Email Copilot and Dashboard are functional, the architecture must accommodate it from the start — schema fields and types should be prepared.
 
 ---
 
-## Stack técnica
+## Core principles
 
-| Camada | Tecnologia | Notas |
+### 1. AI as copilot, never pilot
+Every action that affects the outside world (sending email, notifying client, filing document) **requires explicit accountant approval**. No exceptions.
+
+### 2. Full traceability
+Everything AI does is logged in `AuditLog` with timestamp, model used, and who approved.
+AuditLog is immutable — never deleted, never edited.
+
+### 3. Private documents by default
+Attachments in Cloudflare R2 never have public access.
+Always signed URLs with maximum 1-hour expiry.
+
+### 4. Zero-friction onboarding
+- CSV import for existing clients
+- Automatic client detection by sender email/domain
+- Shareable invite link for client onboarding
+- Clients never create a password — magic links always
+
+### 5. Content-based classification
+Documents are **always** classified by extracted text content, never by filename.
+A file called `doc_final_v3.pdf` is meaningless — the content tells the truth.
+
+### 6. Portuguese of Portugal (PT-PT)
+UI, AI-generated emails, error messages — all in PT-PT, not PT-BR.
+Dates in DD/MM/YYYY. Currency in €X,XX. Timezone Europe/Lisbon.
+
+### 7. Designed for accountants, not startups
+Dense, functional interface. Tables over cards. No visual excess.
+The user spends 8h/day in this — speed and clarity before aesthetics.
+
+---
+
+## Stack
+
+| Layer | Technology | Notes |
 |---|---|---|
 | Framework | Next.js 14 App Router + TypeScript | strict mode |
-| UI | Tailwind CSS + shadcn/ui | componentes base |
-| Base de dados | PostgreSQL + Prisma ORM | migrations only |
+| UI | Tailwind CSS + shadcn/ui | base components |
+| Database | PostgreSQL + Prisma ORM | migrations only |
 | Jobs | BullMQ + Redis | email sync, doc parse |
-| Storage | Cloudflare R2 | signed URLs, privado |
-| Auth | Auth.js v5 | magic links, sem passwords |
-| Email | Resend | magic links + notificações |
-| AI | Claude API (Anthropic) | classificação + drafts |
-| Deploy | Railway | web + workers separados |
+| Storage | Cloudflare R2 | signed URLs, private |
+| Auth | Auth.js v5 | magic links, no passwords |
+| Email | Resend | magic links + notifications |
+| AI | Claude API (Anthropic) | classification + drafts |
+| Deploy | Railway | web + workers separate |
 
 ---
 
-## Personas de utilizador
+## User personas
 
-### Contabilista (utilizador primário)
-- 35-55 anos, Portugal
-- Usa Primavera ou TOConline no dia-a-dia
-- Recebe 50-200 emails/dia de clientes
-- Dor principal: intake manual, documentos perdidos, clientes que não enviam o que precisam
-- Quer: menos tempo em gestão, mais tempo em trabalho de valor
+### Accountant (primary user)
+- 35-55 years old, Portugal
+- Uses Primavera or TOConline daily
+- Receives 50-200 emails/day from clients
+- Main pain: manual intake, lost documents, clients who don't send what's needed
+- Wants: less time on admin, more time on value-adding work
+- Conservative — uses Outlook, not Gmail
 
-### Dono de gabinete (utilizador secundário)
-- Quer visibilidade sobre o que a equipa está a processar
-- Quer métricas: tempo de resposta, documentos processados, clientes activos
-- Quer que novos contabilistas onboardem rápido
+### Firm owner (secondary user)
+- Wants visibility on what the team is processing
+- Wants metrics: response time, documents processed, active clients
+- Wants new accountants to onboard quickly
 
-### Cliente do gabinete (utilizador terciário — Módulo 2+)
-- Empresário ou particular
-- Quer saber o que está pendente, o que foi recebido
-- Quer comunicação clara sem email back-and-forth
+### Firm client (tertiary user — Module 2+)
+- Business owner or individual
+- Wants to know what's pending, what was received
+- Wants clear communication without email back-and-forth
+- Will never create a password — uses magic links
 
 ---
 
-## Contexto do mercado português
+## Portuguese market context
 
-- **Software de contabilidade dominante**: Primavera BSS (líder), TOConline (cloud), Sage
-- **Comunicação fiscal**: Portal das Finanças (AT), Segurança Social Direta
-- **Obrigações fiscais recorrentes**: IVA (mensal/trimestral), IRS (anual), IRC (anual), SS (mensal), IMI (anual)
-- **NIF** (Número de Identificação Fiscal): 9 dígitos — campo importante em todos os documentos
-- **Datas**: formato DD/MM/YYYY, fuso horário Europe/Lisbon
-- **Regulação**: RGPD aplica-se, dados financeiros são dados sensíveis
+- **Dominant accounting software**: Primavera BSS (market leader), TOConline (cloud), Sage
+- **Tax authority**: Portal das Finanças (AT — Autoridade Tributária)
+- **Social security**: Segurança Social Direta
+- **Recurring fiscal obligations**: IVA (monthly/quarterly), IRS (annual), IRC (annual), SS (monthly), IMI (annual)
+- **NIF** (Número de Identificação Fiscal): 9 digits — key field in all documents
+- **Dates**: DD/MM/YYYY format, Europe/Lisbon timezone
+- **Regulation**: GDPR applies, financial data is sensitive data
+- **Communication preference**: email (Outlook dominant), moving to digital but conservative

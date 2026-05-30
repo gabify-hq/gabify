@@ -1,88 +1,112 @@
 # CLAUDE.md — Gabify
 
-> Visão completa do produto, todos os módulos e contexto de mercado: ver **CONTEXT.md**
+> Full product vision, all modules, and market context: see **CONTEXT.md**
 
-## O que é o Gabify
+## What is Gabify
 
-Plataforma operacional para gabinetes de contabilidade portuguesa.
-Camada inteligente de intake e workflow **antes** do software de contabilidade (Primavera, TOConline, Sage).
-Não substitui o software de contabilidade — organiza o caos operacional antes disso.
-
-## Módulos (roadmap)
-
-| Módulo | Estado | Descrição |
-|---|---|---|
-| 0 — Fundação | ✅ | Schema, clientes, EmailProvider, workers |
-| 1 — Email Copilot | 🔨 em construção | Inbox → classificação → drafts → aprovação |
-| 2 — Client Portal | 📋 futuro | Upload self-service por clientes |
-| 3 — Document Vault | 📋 futuro | Repositório estruturado, pesquisa por conteúdo |
-| 4 — Deadline Tracker | 📋 futuro | Prazos fiscais PT, alertas, estado obrigações |
-| 5 — Communication Hub | 📋 futuro | Canal centralizado cliente ↔ gabinete |
-
-**Scope actual: Módulo 1 — Email Copilot.**
+Operational platform for Portuguese accounting firms.
+Intelligent intake and workflow layer **before** accounting software (Primavera, TOConline, Sage).
+Does not replace accounting software — organises the operational chaos before that.
 
 ---
 
-## Princípio central: AI como copiloto, nunca piloto
+## ⚠️ Sacred rule: code is always in English
 
-Toda a ação que afeta o exterior (enviar email, notificar cliente, arquivar documento) **requer aprovação explícita do contabilista**.
+**All code, variable names, comments, tests, types, database fields, API responses, error messages in code — always in English.**
 
-- Drafts gerados, nunca enviados automaticamente
-- Tudo registado em `AuditLog` com timestamp + quem aprovou
-- Contabilista tem sempre 1-click approve / edit / reject
-- AuditLog é imutável — nunca apagado, nunca editado
+The only exception: string literals that are displayed to end users in the UI (because users are Portuguese).
+
+```typescript
+// CORRECT
+const clientMatchScore = 0.85
+const status = 'PENDING_REVIEW'
+// Error shown to user in Portuguese — this is a UI string, acceptable:
+return { error: 'Documento não encontrado' }
+
+// WRONG — never do this
+const pontuacaoCorrespondencia = 0.85
+const estado = 'AGUARDA_REVISAO'
+```
+
+---
+
+## Module roadmap
+
+| Module | Status | Description |
+|---|---|---|
+| 0 — Foundation | ✅ done | Schema, clients, EmailProvider, workers |
+| 1 — Email Copilot | 🔨 Phase 2 | **Dashboard UI (current work)** |
+| 2 — Client Portal | 📋 future | Client self-service, magic links, drag & drop |
+| 3 — AI Document Parser | 📋 future | OCR + Claude, content-based only |
+| 4 — Dashboard & Deadlines | 📋 future | Client status, PT fiscal calendar |
+| 5 — Automated Reminders | 📋 future | Email now, WhatsApp later |
+| 6 — Organised Export | 📋 future | ZIP: Client/Year/Month/DocType |
+| 7 — Accounting Software Integration | 📋 future | TOConline, Primavera, Sage APIs |
+
+**Current scope: Module 1 Phase 2 — Accountant Dashboard UI.**
+
+---
+
+## Core principle: AI as copilot, never pilot
+
+Every action that affects the outside world (send email, notify client, file document) **requires explicit accountant approval**.
+
+- Drafts generated, never sent automatically
+- Everything logged in `AuditLog` with timestamp + who approved
+- Accountant always has 1-click approve / edit / reject
+- AuditLog is immutable — never deleted, never edited
 
 ---
 
 ## Stack
 
 - **Next.js 14** App Router + TypeScript (strict mode)
-- **PostgreSQL** + Prisma ORM (migrations only, never `db push` em prod)
+- **PostgreSQL** + Prisma ORM (migrations only, never `db push` in prod)
 - **BullMQ** + Redis (email sync + document parse workers)
-- **Cloudflare R2** (attachments — signed URLs, nunca público)
-- **Auth.js v5** magic links (sem passwords)
+- **Cloudflare R2** (attachments — signed URLs, never public)
+- **Auth.js v5** magic links (no passwords ever)
 - **Resend** (outbound email)
-- **Claude API** (classificação de documentos + geração de drafts)
-- **Deploy**: Railway (web + 2 workers separados)
+- **Claude API** (document classification + draft generation)
+- **Deploy**: Railway (web + 2 workers separate)
 
 ---
 
-## Email Providers (ordem de prioridade)
+## Email Providers (priority order)
 
-1. **Microsoft Graph API** — delta queries para sync incremental (prioritário — mais comum em PT)
+1. **Microsoft Graph API** — delta queries for incremental sync (priority — PT firms use Outlook)
 2. **Gmail API** — Pub/Sub push notifications
-3. **IMAP** — polling fallback, stub apenas
+3. **IMAP** — polling fallback, stub only
 
-Sempre codificar contra a interface `EmailProvider`. Nunca chamar código específico de provider em lógica de negócio.
+Always code against the `EmailProvider` interface. Never call provider-specific code from business logic.
 
 ---
 
-## Comandos essenciais
+## Essential commands
 
 ```bash
 npm run dev                                      # Next.js dev server
 npm run worker:email                             # BullMQ email sync worker
 npm run worker:documents                         # BullMQ document parse worker
-npx prisma migrate dev --name <semantic-name>    # criar migration
-npx prisma generate                              # regenerar client após schema change
-npx prisma studio                                # GUI da base de dados
+npx prisma migrate dev --name <semantic-name>    # create migration
+npx prisma generate                              # regenerate client after schema change
+npx prisma studio                                # database GUI
 npx tsc --noEmit                                 # type check
 npm run lint                                     # lint
 ```
 
 ---
 
-## Estrutura do projecto
+## Project structure
 
 ```
 prisma/
-  schema.prisma          — schema completo
+  schema.prisma          — complete schema (all models)
   config.ts              — Prisma 7 config (pg adapter)
 
 src/
-  types/index.ts         — enums e tipos globais
+  types/index.ts         — global enums and types
   lib/
-    prisma.ts            — singleton Prisma client
+    prisma.ts            — Prisma client singleton
     r2.ts                — R2 upload + signed URLs
     anthropic.ts         — Claude API client
     resend.ts            — Resend client
@@ -91,41 +115,41 @@ src/
   server/
     email-providers/
       EmailProvider.ts   — interface (syncInbox, getAttachment, sendReply, watchChanges)
-      OutlookProvider.ts — Microsoft Graph (delta queries)
-      GmailProvider.ts   — Gmail API (Pub/Sub)
+      OutlookProvider.ts — Microsoft Graph (delta queries skeleton)
+      GmailProvider.ts   — Gmail API (Pub/Sub skeleton)
       ImapProvider.ts    — IMAP stub
       index.ts           — createEmailProvider factory
     services/
-      client-matching.ts         — email → cliente por domain/email
-      email-classification.ts    — Claude API: classify docs + drafts PT
+      client-matching.ts         — email → client by domain/known email
+      email-classification.ts    — Claude API: classify PT accounting docs + drafts
   queues/
-    email-sync.worker.ts         — sync inbox + match clientes + queue attachments
+    email-sync.worker.ts         — sync inbox + match clients + queue attachments
     document-parse.worker.ts     — R2 upload + text extract + AI classify + AuditLog
   app/
     api/webhooks/graph/route.ts  — Microsoft Graph change notifications
     api/webhooks/gmail/route.ts  — Gmail Pub/Sub push
     api/auth/[...nextauth]/      — Auth.js handlers
-    dashboard/                   — TODO: overview
-    inbox/                       — TODO: email copilot UI
-    clients/                     — TODO: gestão clientes
-    settings/                    — TODO: email account connections
+    dashboard/                   — Accountant dashboard (Phase 2 — in progress)
+    inbox/                       — Email copilot UI
+    clients/                     — Client management
+    settings/                    — Email account connections
   components/                    — UI components (shadcn/ui base)
 ```
 
 ---
 
-## Regras críticas
+## Critical rules
 
-### Segurança
-- R2: **sempre signed URLs**, nunca URL pública. Expiração máx 1h documentos, 15min previews
-- OAuth tokens: encrypted antes de guardar na DB, nunca em logs
-- Webhooks: verificar assinatura (Graph HMAC, Gmail JWT) antes de processar
-- AuditLog: entrada criada **antes** de qualquer ação exterior, não depois
+### Security
+- R2: **always signed URLs**, never public URL. Max expiry 1h for documents, 15min for previews
+- OAuth tokens: encrypted before storing in DB, never in logs
+- Webhooks: verify signature (Graph HMAC, Gmail JWT) before processing
+- AuditLog: entry created **before** any external action, not after
 
 ### Prisma
-- `prisma migrate dev --name <semantic-name>` — sempre com nome descritivo
-- **Nunca** `prisma db push` fora de dev scratch
-- Após mudança de schema: `prisma generate` antes de escrever código de serviço
+- `prisma migrate dev --name <semantic-name>` — always with descriptive name
+- **Never** `prisma db push` outside dev scratch
+- After schema change: `prisma generate` before writing service code
 
 ### EmailProvider interface
 ```typescript
@@ -136,20 +160,34 @@ interface EmailProvider {
   watchChanges(webhookUrl: string): Promise<WatchResult>
 }
 ```
-Nunca bypassar este interface. Lógica de negócio deve ser agnóstica ao provider.
+Never bypass this interface. Business logic must be provider-agnostic.
 
 ### TypeScript
-- Strict mode sempre activo
-- Sem `any` — usar `unknown` e narrowing
-- Todas as rotas API validam body com Zod antes de tocar na DB
+- Strict mode always on
+- No `any` — use `unknown` and narrow
+- All API routes validate body with Zod before touching the DB
 
 ### BullMQ Workers
-- Workers devem ser idempotentes (seguros para retry)
-- Sempre logar início/fim do job em `JobLog`
-- Falhas: exponential backoff, máx 3 retries
+- Workers must be idempotent (safe to retry)
+- Always log job start/end to `JobLog`
+- Failures: exponential backoff, max 3 retries
 
-### Contexto PT
-- UI e emails gerados em **Português de Portugal** (PT-PT, não PT-BR)
-- Datas: DD/MM/YYYY
-- NIF: 9 dígitos — extrair de documentos sempre que presente
-- Fuso horário: Europe/Lisbon
+### UI (accountant-focused)
+- No decorative elements — no gradients, no hero sections, no marketing patterns
+- Tables over cards for list data
+- Dense but readable spacing
+- Color only for status, not decoration
+- Status color mapping (enforce globally):
+  - `PENDING_REVIEW` → yellow
+  - `APPROVED` → green
+  - `REJECTED` → red
+  - `PROCESSING` → blue
+  - `ERROR` → red
+  - `DRAFT` → gray
+
+### Portuguese context
+- UI display strings in **PT-PT** (not PT-BR, not English)
+- Dates: DD/MM/YYYY
+- NIF: 9 digits — extract from documents whenever present
+- Timezone: Europe/Lisbon
+- AI-generated emails: sound human, PT-PT, professional but natural — no AI-speak
