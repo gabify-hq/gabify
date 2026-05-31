@@ -4,25 +4,29 @@ import { MOCK_EMAILS, MOCK_EMAIL_ACTIONS, getPendingActions } from '@/lib/mock-d
 
 export default function InboxPage() {
   const pendingActions = getPendingActions()
+  const unread = MOCK_EMAILS.filter((e) => e.status === 'UNREAD').length
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       {/* Page header */}
-      <div className="flex items-center justify-between border-b border-neutral-200 px-6 py-3.5">
+      <div className="flex items-center justify-between border-b border-zinc-800 px-5 py-3">
         <div className="flex items-center gap-2.5">
-          <Inbox className="h-4 w-4 text-neutral-500" />
-          <h1 className="text-[15px] font-semibold text-neutral-900">Caixa de entrada</h1>
-          <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[12px] font-medium text-neutral-600">
+          <Inbox className="h-4 w-4 stroke-[1.5] text-zinc-500" />
+          <h1 className="text-[13px] font-semibold text-zinc-200">Caixa de entrada</h1>
+          <span className="data rounded bg-zinc-800 px-1.5 py-0.5 text-[11px] font-medium text-zinc-500">
             {MOCK_EMAILS.length}
           </span>
+          {unread > 0 && (
+            <span className="data rounded bg-blue-500/15 px-1.5 py-0.5 text-[11px] font-semibold text-blue-400">
+              {unread} não lidos
+            </span>
+          )}
         </div>
         {pendingActions.length > 0 && (
-          <div className="flex items-center gap-1.5 rounded-md border border-yellow-200 bg-yellow-50 px-3 py-1.5">
-            <span className="flex h-4 w-4 items-center justify-center rounded-full bg-yellow-500 text-[10px] font-bold text-white">
-              {pendingActions.length}
-            </span>
-            <span className="text-[12px] font-medium text-yellow-700">
-              rascunho{pendingActions.length > 1 ? 's' : ''} aguarda{pendingActions.length === 1 ? '' : 'm'} aprovação
+          <div className="flex items-center gap-1.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+            <span className="text-[11px] font-medium text-amber-400">
+              {pendingActions.length} rascunho{pendingActions.length > 1 ? 's' : ''} pendente{pendingActions.length > 1 ? 's' : ''}
             </span>
           </div>
         )}
