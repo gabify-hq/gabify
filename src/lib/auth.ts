@@ -2,9 +2,11 @@ import NextAuth from 'next-auth'
 import { PrismaAdapter } from '@auth/prisma-adapter'
 import Resend from 'next-auth/providers/resend'
 import { prisma } from '@/lib/prisma'
+import { authConfig } from '@/lib/auth.config'
 import type { UserRole } from '@prisma/client'
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
+  ...authConfig,
   adapter: PrismaAdapter(prisma),
   providers: [
     Resend({
@@ -12,11 +14,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       from: process.env.FROM_EMAIL ?? 'no-reply@gabify.pt',
     }),
   ],
-  pages: {
-    signIn: '/login',
-    verifyRequest: '/login/verify',
-  },
   callbacks: {
+    ...authConfig.callbacks,
     async session({ session, user }) {
       const dbUser = await prisma.user.findUnique({
         where: { id: user.id },
