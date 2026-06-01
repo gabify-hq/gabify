@@ -1,4 +1,4 @@
-import { Settings, Mail, Unlink, Plus } from 'lucide-react'
+import { Settings, Mail, Unlink, Plus, CheckCircle2, AlertCircle } from 'lucide-react'
 import { StatusBadge } from '@/components/dashboard/status-badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -92,6 +92,7 @@ interface ProviderCardDef {
   description: string
   initial: string
   initialBg: string
+  connectHref: string | null
 }
 
 const providerCards: ProviderCardDef[] = [
@@ -101,6 +102,7 @@ const providerCards: ProviderCardDef[] = [
     description: 'Sincronização via Microsoft Graph API. Recomendado para gabinetes portugueses.',
     initial: 'O',
     initialBg: 'bg-blue-50 text-blue-600',
+    connectHref: '/api/auth/microsoft/initiate',
   },
   {
     provider: 'GMAIL',
@@ -108,6 +110,7 @@ const providerCards: ProviderCardDef[] = [
     description: 'Sincronização via Gmail API com Pub/Sub push notifications.',
     initial: 'G',
     initialBg: 'bg-red-50 text-red-600',
+    connectHref: '/api/auth/google/initiate',
   },
   {
     provider: 'IMAP',
@@ -115,6 +118,7 @@ const providerCards: ProviderCardDef[] = [
     description: 'Compatível com qualquer servidor de email. Polling a cada 5 minutos.',
     initial: 'I',
     initialBg: 'bg-gray-100 text-gray-500',
+    connectHref: null,
   },
 ]
 
@@ -122,7 +126,15 @@ const providerCards: ProviderCardDef[] = [
 // Page
 // ---------------------------------------------------------------------------
 
-export default function SettingsPage() {
+interface SettingsPageProps {
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+}
+
+export default async function SettingsPage({ searchParams }: SettingsPageProps) {
+  const params = await searchParams
+  const connected = params.connected
+  const error = params.error
+
   const hasAccounts = mockAccounts.length > 0
 
   return (
@@ -135,6 +147,34 @@ export default function SettingsPage() {
 
       <div className="flex-1 overflow-y-auto bg-gray-50 px-5 py-5">
         <div className="mx-auto max-w-3xl space-y-8">
+
+          {/* Connection status banners */}
+          {connected === 'gmail' && (
+            <div className="flex items-center gap-2.5 rounded-xl border border-green-200 bg-green-50 px-4 py-3">
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-green-600" />
+              <p className="text-[13px] font-semibold text-green-800">
+                Conta Gmail ligada com sucesso.
+              </p>
+            </div>
+          )}
+
+          {error === 'gmail_auth_failed' && (
+            <div className="flex items-center gap-2.5 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+              <AlertCircle className="h-4 w-4 shrink-0 text-red-600" />
+              <p className="text-[13px] font-semibold text-red-800">
+                Não foi possível ligar a conta Gmail. Tente novamente.
+              </p>
+            </div>
+          )}
+
+          {error === 'gmail_auth_invalid_state' && (
+            <div className="flex items-center gap-2.5 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+              <AlertCircle className="h-4 w-4 shrink-0 text-red-600" />
+              <p className="text-[13px] font-semibold text-red-800">
+                Pedido de autenticação inválido. Tente novamente.
+              </p>
+            </div>
+          )}
 
           {/* Section 1: Connected accounts */}
           <section>
@@ -259,12 +299,22 @@ export default function SettingsPage() {
                     {card.description}
                   </p>
 
-                  <Button
-                    size="sm"
-                    className="pressable h-8 w-full border-0 bg-green-600 text-[12px] font-bold text-white shadow-none hover:bg-green-700"
-                  >
-                    Ligar
-                  </Button>
+                  {card.connectHref ? (
+                    <a
+                      href={card.connectHref}
+                      className="pressable inline-flex h-8 w-full items-center justify-center rounded-md bg-green-600 px-3 text-[12px] font-bold text-white transition-colors duration-150 hover:bg-green-700"
+                    >
+                      Ligar
+                    </a>
+                  ) : (
+                    <Button
+                      size="sm"
+                      disabled
+                      className="h-8 w-full border-0 bg-gray-100 text-[12px] font-bold text-gray-400 shadow-none"
+                    >
+                      Em breve
+                    </Button>
+                  )}
                 </div>
               ))}
             </div>

@@ -2,12 +2,19 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Inbox, Users, FileText, Settings } from 'lucide-react'
+import { Inbox, Users, FileText, Settings, LogOut } from 'lucide-react'
+import { signOut } from 'next-auth/react'
 import { cn } from '@/lib/utils'
+
+interface SidebarUser {
+  name?: string | null
+  email?: string | null
+}
 
 interface SidebarProps {
   unreadCount: number
   pendingCount: number
+  user?: SidebarUser
 }
 
 const navItems = [
@@ -16,7 +23,35 @@ const navItems = [
   { href: '/documents', label: 'Documentos', icon: FileText, badgeKey: null },
 ]
 
-export function Sidebar({ unreadCount, pendingCount }: SidebarProps) {
+function getInitials(name?: string | null, email?: string | null): string {
+  if (name) {
+    const parts = name.trim().split(/\s+/)
+    if (parts.length >= 2) {
+      return ((parts[0][0] ?? '') + (parts[1][0] ?? '')).toUpperCase()
+    }
+    return name.slice(0, 2).toUpperCase()
+  }
+  if (email) {
+    return email.slice(0, 2).toUpperCase()
+  }
+  return '?'
+}
+
+function LogoutButton() {
+  return (
+    <button
+      type="button"
+      onClick={() => signOut({ callbackUrl: '/auth/signin' })}
+      className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[12px] font-medium text-gray-400 transition-colors duration-150 hover:bg-red-50 hover:text-red-500"
+      aria-label="Terminar sessão"
+    >
+      <LogOut className="h-3.5 w-3.5 shrink-0 stroke-[1.75]" />
+      <span>Terminar sessão</span>
+    </button>
+  )
+}
+
+export function Sidebar({ unreadCount, pendingCount, user }: SidebarProps) {
   const pathname = usePathname()
 
   const getBadge = (key: 'unread' | null) =>
@@ -24,6 +59,10 @@ export function Sidebar({ unreadCount, pendingCount }: SidebarProps) {
 
   const isActive = (href: string) =>
     pathname === href || pathname.startsWith(href + '/')
+
+  const initials = getInitials(user?.name, user?.email)
+  const displayName = user?.name ?? user?.email ?? 'Utilizador'
+  const displayEmail = user?.email ?? ''
 
   return (
     <aside className="flex w-56 shrink-0 flex-col border-r border-gray-200 bg-gray-50">
@@ -115,13 +154,18 @@ export function Sidebar({ unreadCount, pendingCount }: SidebarProps) {
         {/* User */}
         <div className="mt-1 flex items-center gap-3 px-3 py-2">
           <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-green-600 text-[11px] font-bold text-white">
-            AF
+            {initials}
           </div>
-          <div className="min-w-0">
-            <p className="truncate text-[12px] font-semibold text-gray-700">Dr. António Ferreira</p>
-            <p className="truncate text-[10px] text-gray-400">aferreira@gabinete.pt</p>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[12px] font-semibold text-gray-700">{displayName}</p>
+            {displayEmail && (
+              <p className="truncate text-[10px] text-gray-400">{displayEmail}</p>
+            )}
           </div>
         </div>
+
+        {/* Logout */}
+        <LogoutButton />
       </div>
     </aside>
   )

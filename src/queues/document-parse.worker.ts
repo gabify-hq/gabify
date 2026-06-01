@@ -3,8 +3,8 @@ import { redisConnection, QUEUE_DOCUMENT_PARSE } from '@/lib/redis'
 import { prisma } from '@/lib/prisma'
 import { createEmailProvider } from '@/server/email-providers'
 import { uploadToR2, buildAttachmentKey } from '@/lib/r2'
-import { classifyDocument } from '@/server/services/email-classification'
-import { extractText } from '@/lib/text-extractor'
+import { classifyDocument, generateEmailDraft } from '@/server/services/email-classification'
+import { CLAUDE_MODEL } from '@/lib/anthropic'
 
 export interface DocumentParseJobData {
   attachmentId: string
@@ -23,7 +23,8 @@ export interface DocumentParseJobData {
  * 4. Extract text content from document
  * 5. Classify with Claude AI
  * 6. Create Document record with classification result
- * 7. Create AuditLog entry (aiGenerated: true)
+ * 7. Create AuditLog entry for classification (aiGenerated: true)
+ * 8. If confidence >= 0.7, generate draft reply + EmailAction + AuditLog
  *
  * Workers must be idempotent — check r2Key before re-uploading.
  */
@@ -44,6 +45,7 @@ export const documentParseWorker = new Worker<DocumentParseJobData>(
     })
 
     if (attachment.document) {
+      console.log(`[document-parse] attachment ${attachmentId} already processed, skipping`)
       return
     }
 
@@ -73,7 +75,11 @@ export const documentParseWorker = new Worker<DocumentParseJobData>(
     })
 
     // 3. Extract text content
-    const textContent = await extractText(buffer, attachment.filename)
+    // TODO: implement text extraction based on mimeType
+    // - PDF: use pdf-parse or pdfjs-dist
+    // - DOCX: use mammoth
+    // - Images: use Claude Vision or Tesseract OCR
+    const textContent = await extractText(buffer, attachment.mimeType)
 
     // 4. Create Document record (pending classification)
     const document = await prisma.document.create({
@@ -87,7 +93,7 @@ export const documentParseWorker = new Worker<DocumentParseJobData>(
     })
 
     // 5. Classify with Claude AI
-    const classificationResult = await classifyDocument(textContent, document.id)
+    const classificationResult = await classifyDocument(textContent ?? '', document.id)
 
     // 6. Create AuditLog entry — AI action must be logged before any external effect
     await prisma.auditLog.create({
@@ -106,6 +112,16 @@ export const documentParseWorker = new Worker<DocumentParseJobData>(
       },
     })
 
+    // 7. Wire draft generation — only if confidence is high enough
+    const DRAFT_CONFIDENCE_THRESHOLD = 0.7
+    if (classificationResult.confidence >= DRAFT_CONFIDENCE_THRESHOLD) {
+      await generateAndStoreDraft({
+        inboundEmail: attachment.inboundEmail,
+        clientName: attachment.inboundEmail.client?.name ?? null,
+        officeId,
+      })
+    }
+
     return { documentId: document.id, type: classificationResult.type }
   },
   {
@@ -119,6 +135,72 @@ documentParseWorker.on('failed', (job, err) => {
 })
 
 // ── Helpers ──
+
+/**
+ * Generates a draft reply for an inbound email and persists it as an EmailAction + AuditLog.
+ * Failures are non-fatal — a draft failure must not fail the whole document parse job.
+ */
+async function generateAndStoreDraft(params: {
+  inboundEmail: {
+    id: string
+    subject: string | null
+    fromEmail: string
+    bodyText: string | null
+    emailAccount: { officeId: string }
+  }
+  clientName: string | null
+  officeId: string
+}): Promise<void> {
+  const { inboundEmail, clientName, officeId } = params
+
+  try {
+    // Look up the office owner name to use as the accountant signature
+    const officeOwner = await prisma.user.findFirst({
+      where: { officeId, role: 'OWNER', deletedAt: null },
+      select: { name: true },
+    })
+    const accountantName = officeOwner?.name ?? 'O Contabilista'
+
+    // AuditLog entry BEFORE the external AI call — per security rules
+    const auditLog = await prisma.auditLog.create({
+      data: {
+        officeId,
+        action: 'draft_generated',
+        entityType: 'EmailAction',
+        entityId: 'pending',
+        aiGenerated: true,
+        aiModel: CLAUDE_MODEL,
+      },
+    })
+
+    const draftText = await generateEmailDraft({
+      inboundEmailId: inboundEmail.id,
+      subject: inboundEmail.subject,
+      bodyText: inboundEmail.bodyText,
+      clientName,
+      accountantName,
+    })
+
+    const emailAction = await prisma.emailAction.create({
+      data: {
+        inboundEmailId: inboundEmail.id,
+        type: 'DRAFT_REPLY',
+        status: 'PENDING_REVIEW',
+        draftContent: draftText,
+        aiModel: CLAUDE_MODEL,
+      },
+    })
+
+    // Update AuditLog with real entityId now that EmailAction is created
+    await prisma.auditLog.update({
+      where: { id: auditLog.id },
+      data: { entityId: emailAction.id, emailActionId: emailAction.id },
+    })
+  } catch (err) {
+    // Draft generation failure must not fail the whole job — log and continue
+    console.error('[document-parse] draft generation failed:', err)
+  }
+}
 
 function getExtension(filename: string, mimeType: string): string {
   const fromFilename = filename.split('.').pop()?.toLowerCase()
@@ -136,3 +218,12 @@ function getExtension(filename: string, mimeType: string): string {
   return mimeMap[mimeType] ?? 'bin'
 }
 
+async function extractText(buffer: Buffer, mimeType: string): Promise<string | null> {
+  // TODO: implement text extraction per mimeType
+  // PDF: import pdfParse from 'pdf-parse'; return (await pdfParse(buffer)).text
+  // DOCX: import mammoth from 'mammoth'; return (await mammoth.extractRawText({buffer})).value
+  // Images: call Claude Vision API with base64 image
+  // TXT: return buffer.toString('utf-8')
+  console.warn(`[document-parse] text extraction not implemented for ${mimeType}`)
+  return null
+}

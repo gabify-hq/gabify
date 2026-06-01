@@ -1,83 +1,474 @@
 import type { EmailProvider } from './EmailProvider'
 import type { SyncResult, WatchResult, EmailDraft } from '@/types'
 import type { EmailAccount } from '@prisma/client'
+import { prisma } from '@/lib/prisma'
+import { encryptToken, decryptToken } from '@/lib/crypto'
+
+const GMAIL_BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
+const TOKEN_URL = 'https://oauth2.googleapis.com/token'
+const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000 // 5 minutes
+
+/**
+ * Shape of a Gmail message resource (abbreviated fields we use).
+ */
+interface GmailMessage {
+  id: string
+  threadId: string
+  payload: GmailMessagePart
+  historyId?: string
+}
+
+interface GmailMessagePart {
+  headers?: GmailHeader[]
+  parts?: GmailMessagePart[]
+  mimeType?: string
+  body?: { data?: string; attachmentId?: string; size?: number }
+  filename?: string
+}
+
+interface GmailHeader {
+  name: string
+  value: string
+}
+
+interface GmailMessagesListResponse {
+  messages?: Array<{ id: string; threadId: string }>
+  nextPageToken?: string
+  resultSizeEstimate?: number
+}
+
+interface GmailHistoryResponse {
+  history?: Array<{
+    id: string
+    messagesAdded?: Array<{ message: { id: string; threadId: string } }>
+  }>
+  nextPageToken?: string
+  historyId: string
+}
+
+interface GmailAttachmentResponse {
+  data: string
+  size: number
+}
+
+interface GmailWatchResponse {
+  historyId: string
+  expiration: string
+}
+
+interface GmailTokenResponse {
+  access_token: string
+  refresh_token?: string
+  expires_in: number
+}
 
 /**
  * GmailProvider — Gmail API implementation.
  *
- * Key concepts:
- * - Incremental sync: users.history.list with startHistoryId
- *   Returns changes since last historyId. Store new historyId after each sync.
- * - Push notifications: Gmail Pub/Sub
- *   POST /gmail/v1/users/me/watch with topicName
- *   Google publishes to Pub/Sub → Cloud Run / Railway endpoint receives push
- * - Token refresh: accessToken expires in 1h. Use refreshToken with OAuth2 client.
+ * Uses historyId for incremental inbox sync and Gmail Pub/Sub for real-time
+ * webhook delivery. Tokens are AES-256-CBC encrypted at rest.
  *
  * Docs: https://developers.google.com/gmail/api/guides/push
  */
 export class GmailProvider implements EmailProvider {
-  private account: EmailAccount
+  private readonly account: EmailAccount
 
   constructor(account: EmailAccount) {
     this.account = account
   }
 
-  async syncInbox(): Promise<SyncResult> {
-    // TODO: implement Gmail incremental sync
-    // 1. Check token expiry, refresh if needed
-    // 2. If no historyId: GET /gmail/v1/users/me/messages?labelIds=INBOX (initial sync)
-    //    Store historyId from first message
-    // 3. If historyId: GET /gmail/v1/users/me/history?startHistoryId={historyId}&historyTypes=messageAdded
-    // 4. For each new message: GET /gmail/v1/users/me/messages/{id}?format=full
-    //    Upsert InboundEmail + EmailThread in DB
-    // 5. For each message with attachments: queue document-parse job
-    // 6. Store new historyId from response
+  // ── Public interface ────────────────────────────────────────────────────────
 
-    throw new Error('TODO: GmailProvider.syncInbox not implemented')
+  async syncInbox(): Promise<SyncResult> {
+    const token = await this.refreshTokenIfNeeded()
+
+    let newMessages = 0
+    let skippedUpdates = 0
+    let finalHistoryId: string | null = null
+
+    if (!this.account.historyId) {
+      // Initial sync: fetch last 50 messages
+      const listUrl = `${GMAIL_BASE}/messages?labelIds=INBOX&maxResults=50`
+      const listData = await this.gmailGet<GmailMessagesListResponse>(listUrl, token)
+
+      const messageRefs = listData.messages ?? []
+
+      for (const ref of messageRefs) {
+        const message = await this.gmailGet<GmailMessage>(
+          `${GMAIL_BASE}/messages/${ref.id}?format=full`,
+          token
+        )
+
+        const result = await this.upsertMessage(message)
+        if (result === 'created') {
+          newMessages++
+        } else {
+          skippedUpdates++
+        }
+
+        // Capture historyId from first message
+        if (!finalHistoryId && message.historyId) {
+          finalHistoryId = message.historyId
+        }
+      }
+    } else {
+      // Incremental sync using historyId
+      const historyUrl = `${GMAIL_BASE}/history?startHistoryId=${encodeURIComponent(
+        this.account.historyId
+      )}&historyTypes=messageAdded&labelId=INBOX`
+
+      const historyData = await this.gmailGet<GmailHistoryResponse>(historyUrl, token)
+
+      finalHistoryId = historyData.historyId
+
+      const historyItems = historyData.history ?? []
+      for (const item of historyItems) {
+        const added = item.messagesAdded ?? []
+        for (const { message: ref } of added) {
+          const message = await this.gmailGet<GmailMessage>(
+            `${GMAIL_BASE}/messages/${ref.id}?format=full`,
+            token
+          )
+
+          const result = await this.upsertMessage(message)
+          if (result === 'created') {
+            newMessages++
+          } else {
+            skippedUpdates++
+          }
+        }
+      }
+    }
+
+    if (finalHistoryId) {
+      await prisma.emailAccount.update({
+        where: { id: this.account.id },
+        data: { historyId: finalHistoryId },
+      })
+    }
+
+    return {
+      provider: 'GMAIL',
+      emailAccountId: this.account.id,
+      messagesProcessed: newMessages + skippedUpdates,
+      newMessages,
+      errors: [],
+      historyId: finalHistoryId ?? undefined,
+    }
   }
 
   async getAttachment(messageId: string, attachmentId: string): Promise<Buffer> {
-    // TODO: implement
-    // 1. Check token expiry, refresh if needed
-    // 2. GET /gmail/v1/users/me/messages/{messageId}/attachments/{attachmentId}
-    // 3. Decode base64url body.data → Buffer
+    const token = await this.refreshTokenIfNeeded()
+    const url = `${GMAIL_BASE}/messages/${messageId}/attachments/${attachmentId}`
 
-    throw new Error('TODO: GmailProvider.getAttachment not implemented')
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+
+    if (!response.ok) {
+      throw new Error(
+        `GmailProvider.getAttachment failed: ${response.status} ${response.statusText}`
+      )
+    }
+
+    const data = (await response.json()) as GmailAttachmentResponse
+
+    // Gmail uses base64url encoding (RFC 4648)
+    return Buffer.from(data.data, 'base64url')
   }
 
   async sendReply(messageId: string, draft: EmailDraft): Promise<void> {
-    // TODO: implement
-    // 1. Check token expiry, refresh if needed
-    // 2. Build RFC 2822 message with In-Reply-To and References headers
-    // 3. POST /gmail/v1/users/me/messages/send
-    //    Body: { raw: base64url(RFC2822 message), threadId }
+    const token = await this.refreshTokenIfNeeded()
 
-    throw new Error('TODO: GmailProvider.sendReply not implemented')
+    // Fetch the original message to get thread ID and headers
+    const originalMessage = await this.gmailGet<GmailMessage>(
+      `${GMAIL_BASE}/messages/${messageId}?format=full`,
+      token
+    )
+
+    const threadId = originalMessage.threadId
+    const headers = originalMessage.payload.headers ?? []
+    const messageIdHeader =
+      headers.find((h) => h.name.toLowerCase() === 'message-id')?.value ?? ''
+    const subject =
+      headers.find((h) => h.name.toLowerCase() === 'subject')?.value ??
+      draft.subject ??
+      ''
+    const fromHeader =
+      headers.find((h) => h.name.toLowerCase() === 'from')?.value ?? ''
+
+    const replySubject = subject.startsWith('Re:') ? subject : `Re: ${subject}`
+
+    // Build RFC 2822 MIME message
+    const mimeLines = [
+      `To: ${fromHeader}`,
+      `Subject: ${replySubject}`,
+      `In-Reply-To: ${messageIdHeader}`,
+      `References: ${messageIdHeader}`,
+      'Content-Type: text/plain; charset=utf-8',
+      '',
+      draft.bodyText,
+    ]
+
+    const rawMime = mimeLines.join('\r\n')
+    const rawBase64 = Buffer.from(rawMime).toString('base64url')
+
+    const sendUrl = `${GMAIL_BASE}/messages/send`
+
+    const response = await fetch(sendUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ raw: rawBase64, threadId }),
+    })
+
+    if (!response.ok) {
+      throw new Error(
+        `GmailProvider.sendReply failed: ${response.status} ${response.statusText}`
+      )
+    }
+
+    await prisma.inboundEmail.updateMany({
+      where: {
+        emailAccountId: this.account.id,
+        providerMessageId: messageId,
+      },
+      data: { status: 'PROCESSED' },
+    })
   }
 
-  async watchChanges(webhookUrl: string): Promise<WatchResult> {
-    // TODO: implement
-    // 1. POST /gmail/v1/users/me/watch
-    //    { topicName: "projects/{project}/topics/{topic}", labelIds: ["INBOX"] }
-    // 2. Store historyId from response as initial sync point
-    // 3. Store pubSubSubscription on EmailAccount
-    // Note: watch expires after 7 days — schedule renewal
+  async watchChanges(_webhookUrl: string): Promise<WatchResult> {
+    const token = await this.refreshTokenIfNeeded()
 
-    throw new Error('TODO: GmailProvider.watchChanges not implemented')
+    const pubSubTopic = process.env.GMAIL_PUBSUB_TOPIC
+    if (!pubSubTopic) {
+      throw new Error('GMAIL_PUBSUB_TOPIC environment variable is not set')
+    }
+
+    const watchUrl = `${GMAIL_BASE}/watch`
+
+    const response = await fetch(watchUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        topicName: pubSubTopic,
+        labelIds: ['INBOX'],
+      }),
+    })
+
+    if (!response.ok) {
+      throw new Error(
+        `GmailProvider.watchChanges failed: ${response.status} ${response.statusText}`
+      )
+    }
+
+    const data = (await response.json()) as GmailWatchResponse
+
+    // Store the initial historyId if we don't have one yet
+    if (!this.account.historyId && data.historyId) {
+      await prisma.emailAccount.update({
+        where: { id: this.account.id },
+        data: { historyId: data.historyId },
+      })
+    }
+
+    return {
+      provider: 'GMAIL',
+      pubSubSubscription: pubSubTopic,
+      expiresAt: new Date(parseInt(data.expiration, 10)),
+    }
   }
 
-  // ── Private helpers ──
+  // ── Private helpers ─────────────────────────────────────────────────────────
 
-  private async refreshTokenIfNeeded(): Promise<void> {
-    // TODO: check this.account.gmailTokenExpiry
-    // If expired or within 5 min: use googleapis OAuth2 client to refresh
-    // Update EmailAccount with new tokens (encrypted)
-    throw new Error('TODO: Gmail token refresh not implemented')
+  private async refreshTokenIfNeeded(): Promise<string> {
+    const { gmailAccessToken, gmailRefreshToken, gmailTokenExpiry } = this.account
+
+    const isExpiringSoon =
+      !gmailTokenExpiry ||
+      gmailTokenExpiry.getTime() - Date.now() < TOKEN_REFRESH_BUFFER_MS
+
+    if (!isExpiringSoon && gmailAccessToken) {
+      return decryptToken(gmailAccessToken)
+    }
+
+    if (!gmailRefreshToken) {
+      throw new Error(
+        'GmailProvider: no refresh token available — re-authentication required'
+      )
+    }
+
+    const clientId = process.env.GOOGLE_CLIENT_ID
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET
+    if (!clientId || !clientSecret) {
+      throw new Error(
+        'GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables are required'
+      )
+    }
+
+    const params = new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: decryptToken(gmailRefreshToken),
+    })
+
+    const response = await fetch(TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params.toString(),
+    })
+
+    if (!response.ok) {
+      throw new Error(
+        `GmailProvider: token refresh failed: ${response.status} ${response.statusText}`
+      )
+    }
+
+    const tokenData = (await response.json()) as GmailTokenResponse
+    const newAccessToken = tokenData.access_token
+    const newRefreshToken = tokenData.refresh_token ?? decryptToken(gmailRefreshToken)
+    const newExpiry = new Date(Date.now() + tokenData.expires_in * 1000)
+
+    await prisma.emailAccount.update({
+      where: { id: this.account.id },
+      data: {
+        gmailAccessToken: encryptToken(newAccessToken),
+        gmailRefreshToken: encryptToken(newRefreshToken),
+        gmailTokenExpiry: newExpiry,
+      },
+    })
+
+    return newAccessToken
   }
 
-  private getGmailClient() {
-    // TODO: return googleapis gmail('v1') client with auth
-    // Use this.account.gmailAccessToken (decrypt first)
-    throw new Error('TODO: Gmail client not implemented')
+  private async gmailGet<T>(url: string, token: string): Promise<T> {
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+
+    if (!response.ok) {
+      throw new Error(
+        `GmailProvider: GET failed [${url}]: ${response.status} ${response.statusText}`
+      )
+    }
+
+    return response.json() as Promise<T>
   }
+
+  private async upsertMessage(message: GmailMessage): Promise<'created' | 'updated'> {
+    const headers = message.payload.headers ?? []
+
+    const subject = headers.find((h) => h.name === 'Subject')?.value ?? null
+    const fromRaw = headers.find((h) => h.name === 'From')?.value ?? ''
+    const dateRaw = headers.find((h) => h.name === 'Date')?.value ?? null
+
+    const { fromEmail, fromName } = parseFromHeader(fromRaw)
+    const receivedAt = dateRaw ? new Date(dateRaw) : new Date()
+    const bodyText = extractTextBody(message.payload)
+    const threadId = message.threadId
+
+    // Find or create the email thread
+    let dbThreadId: string | null = null
+    if (threadId) {
+      const existingThread = await prisma.emailThread.findFirst({
+        where: { providerThreadId: threadId },
+        select: { id: true },
+      })
+
+      if (existingThread) {
+        dbThreadId = existingThread.id
+      } else {
+        const newThread = await prisma.emailThread.create({
+          data: {
+            providerThreadId: threadId,
+            subject: subject ?? null,
+          },
+          select: { id: true },
+        })
+        dbThreadId = newThread.id
+      }
+    }
+
+    const existing = await prisma.inboundEmail.findUnique({
+      where: {
+        emailAccountId_providerMessageId: {
+          emailAccountId: this.account.id,
+          providerMessageId: message.id,
+        },
+      },
+      select: { id: true },
+    })
+
+    await prisma.inboundEmail.upsert({
+      where: {
+        emailAccountId_providerMessageId: {
+          emailAccountId: this.account.id,
+          providerMessageId: message.id,
+        },
+      },
+      create: {
+        emailAccountId: this.account.id,
+        providerMessageId: message.id,
+        threadId: dbThreadId,
+        subject,
+        fromEmail,
+        fromName,
+        toEmails: [],
+        ccEmails: [],
+        bodyText,
+        receivedAt,
+        status: 'UNREAD',
+      },
+      update: {
+        subject,
+        fromEmail,
+        fromName,
+        bodyText,
+        threadId: dbThreadId,
+      },
+    })
+
+    return existing ? 'updated' : 'created'
+  }
+}
+
+// ── Module-level helpers ────────────────────────────────────────────────────
+
+/**
+ * Parse a "Name <email@example.com>" or plain "email@example.com" header.
+ */
+function parseFromHeader(from: string): { fromEmail: string; fromName: string | null } {
+  const match = from.match(/^(.+?)\s*<(.+?)>$/)
+  if (match) {
+    return {
+      fromName: match[1].trim().replace(/^"|"$/g, '') || null,
+      fromEmail: match[2].trim(),
+    }
+  }
+  return { fromEmail: from.trim(), fromName: null }
+}
+
+/**
+ * Recursively walk a Gmail message payload to find the first text/plain part.
+ * Returns decoded plain-text body or null.
+ */
+function extractTextBody(part: GmailMessagePart): string | null {
+  if (part.mimeType === 'text/plain' && part.body?.data) {
+    return Buffer.from(part.body.data, 'base64url').toString('utf-8')
+  }
+
+  if (part.parts) {
+    for (const child of part.parts) {
+      const result = extractTextBody(child)
+      if (result !== null) return result
+    }
+  }
+
+  return null
 }

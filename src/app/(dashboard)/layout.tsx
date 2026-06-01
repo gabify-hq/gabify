@@ -1,12 +1,29 @@
 import type { ReactNode } from 'react'
 import { DashboardProvider } from '@/lib/dashboard-store'
 import { Sidebar } from '@/components/dashboard/sidebar'
-import { MOCK_EMAILS, MOCK_EMAIL_ACTIONS } from '@/lib/mock-data'
+import { auth } from '@/lib/auth'
+import { prisma } from '@/lib/prisma'
 
-const pendingCount = MOCK_EMAIL_ACTIONS.filter((a) => a.status === 'PENDING_REVIEW').length
-const unreadCount = MOCK_EMAILS.filter((e) => e.status === 'UNREAD').length
+export default async function DashboardLayout({ children }: { children: ReactNode }) {
+  const session = await auth()
+  const officeId = session?.user?.officeId ?? ''
 
-export default function DashboardLayout({ children }: { children: ReactNode }) {
+  const [unreadCount, pendingCount] = await Promise.all([
+    officeId
+      ? prisma.inboundEmail.count({
+          where: { emailAccount: { officeId }, status: 'UNREAD' },
+        })
+      : Promise.resolve(0),
+    officeId
+      ? prisma.emailAction.count({
+          where: {
+            inboundEmail: { emailAccount: { officeId } },
+            status: 'PENDING_REVIEW',
+          },
+        })
+      : Promise.resolve(0),
+  ])
+
   return (
     <DashboardProvider>
       {/* Skip link for keyboard/screen-reader users */}
@@ -17,7 +34,11 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
         Saltar para o conteúdo principal
       </a>
       <div className="flex h-screen overflow-hidden bg-white">
-        <Sidebar unreadCount={unreadCount} pendingCount={pendingCount} />
+        <Sidebar
+          unreadCount={unreadCount}
+          pendingCount={pendingCount}
+          user={session?.user}
+        />
         <main id="main-content" className="flex flex-1 flex-col overflow-hidden">{children}</main>
       </div>
     </DashboardProvider>

@@ -225,7 +225,8 @@ model EmailAccount {
   outlookRefreshToken String?  @db.Text
   outlookTokenExpiry  DateTime?
   outlookUserId       String?  // Graph user ID
-  deltaLink           String?  @db.Text // for delta query sync
+  deltaLink             String?  @db.Text // for delta query sync
+  outlookSubscriptionId String?  // Graph subscription ID from watchChanges()
 
   // ── Gmail ──
   // Stored encrypted at service layer
@@ -235,6 +236,7 @@ model EmailAccount {
   gmailUserId         String?  // Gmail user ID
   historyId           String?  // for incremental sync
   pubSubSubscription  String?  // Pub/Sub subscription name
+  gmailWatchExpiry    DateTime? // Gmail watch expiration (needs renewal)
 
   // ── IMAP ──
   // Stored encrypted at service layer
