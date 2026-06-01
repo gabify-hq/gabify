@@ -6,9 +6,9 @@ import { GabifyAdapter } from '@/lib/auth-adapter'
 import type { UserRole } from '@prisma/client'
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  // Spread pages only — do NOT spread callbacks (authorized is middleware-only)
   pages: authConfig.pages,
   adapter: GabifyAdapter(prisma),
+  session: { strategy: 'jwt' },
   providers: [
     Resend({
       apiKey: process.env.RESEND_API_KEY,
@@ -16,14 +16,23 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     }),
   ],
   callbacks: {
-    async session({ session, user }) {
-      const dbUser = await prisma.user.findUnique({
-        where: { id: user.id },
-        select: { officeId: true, role: true },
-      })
-      session.user.id = user.id
-      session.user.officeId = dbUser?.officeId ?? null
-      session.user.role = dbUser?.role ?? 'ACCOUNTANT'
+    async jwt({ token, user }) {
+      // `user` is only present on first sign-in — enrich token with DB fields
+      if (user?.id) {
+        const dbUser = await prisma.user.findUnique({
+          where: { id: user.id },
+          select: { officeId: true, role: true },
+        })
+        token.id = user.id
+        token.officeId = dbUser?.officeId ?? null
+        token.role = dbUser?.role ?? 'ACCOUNTANT'
+      }
+      return token
+    },
+    session({ session, token }) {
+      session.user.id = token.id as string
+      session.user.officeId = (token.officeId as string | null) ?? null
+      session.user.role = (token.role as UserRole) ?? 'ACCOUNTANT'
       return session
     },
   },
@@ -42,3 +51,4 @@ declare module 'next-auth' {
     }
   }
 }
+
