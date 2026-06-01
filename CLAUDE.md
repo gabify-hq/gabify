@@ -84,7 +84,7 @@ Every action that affects the outside world (send email, notify client, file doc
 
 ## Stack
 
-- **Next.js 14** App Router + TypeScript (strict mode)
+- **Next.js 16** App Router + TypeScript (strict mode) — uses `src/proxy.ts` (not `middleware.ts`)
 - **PostgreSQL** + Prisma ORM (migrations only, never `db push` in prod)
 - **BullMQ** + Redis (email sync + document parse workers)
 - **Cloudflare R2** (attachments — signed URLs, never public)
