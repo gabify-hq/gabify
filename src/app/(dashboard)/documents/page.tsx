@@ -8,11 +8,11 @@ export default function DocumentsPage() {
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-zinc-800 px-5 py-3">
+      <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
         <div className="flex items-center gap-2.5">
-          <FileText className="h-4 w-4 stroke-[1.5] text-zinc-500" />
-          <h1 className="text-[13px] font-semibold text-zinc-200">Documentos</h1>
-          <span className="data rounded bg-zinc-800 px-1.5 py-0.5 text-[11px] font-medium text-zinc-500">
+          <FileText className="h-4 w-4 stroke-[1.75] text-gray-400" />
+          <h1 className="text-[13px] font-semibold text-gray-800">Documentos</h1>
+          <span className="data rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-400">
             {MOCK_DOCUMENTS.length}
           </span>
         </div>

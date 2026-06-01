@@ -44,37 +44,37 @@ export function EmailDetail({ email, action }: EmailDetailProps) {
   }
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden bg-zinc-950">
+    <div className="flex flex-1 flex-col overflow-hidden bg-white">
       {/* Breadcrumb header */}
-      <div className="flex items-center gap-2 border-b border-zinc-800 px-5 py-2.5">
+      <div className="flex items-center gap-2 border-b border-gray-200 px-5 py-2.5">
         <Link
           href="/inbox"
-          className="pressable flex items-center gap-1 text-[12px] text-zinc-500 transition-colors hover:text-zinc-300"
+          className="pressable flex items-center gap-1 text-[12px] font-medium text-gray-400 transition-colors hover:text-gray-700"
         >
-          <ChevronLeft className="h-3.5 w-3.5 stroke-[1.5]" />
+          <ChevronLeft className="h-3.5 w-3.5 stroke-2" />
           Caixa de entrada
         </Link>
       </div>
 
       <div className="flex flex-1 overflow-hidden">
         {/* Original email */}
-        <div className="flex flex-1 flex-col overflow-hidden border-r border-zinc-800">
+        <div className="flex flex-1 flex-col overflow-hidden border-r border-gray-200">
           {/* Email header */}
-          <div className="border-b border-zinc-800/60 px-6 py-4">
-            <h1 className="text-[14px] font-semibold text-zinc-100 leading-snug">
+          <div className="border-b border-gray-100 px-6 py-5">
+            <h1 className="text-[15px] font-bold text-gray-900 leading-snug">
               {email.subject}
             </h1>
             <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-              <span className="text-[12px] text-zinc-400">
-                <span className="text-zinc-200">{email.fromName}</span>
+              <span className="text-[12px] text-gray-600">
+                <span className="font-semibold text-gray-800">{email.fromName}</span>
                 {' '}
-                <span className="data text-zinc-600">&lt;{email.fromEmail}&gt;</span>
+                <span className="data text-gray-400">&lt;{email.fromEmail}&gt;</span>
               </span>
-              <span className="data text-[11px] text-zinc-600">
+              <span className="data text-[11px] text-gray-400">
                 {formatDateTime(email.receivedAt)}
               </span>
               {email.clientName && (
-                <span className="rounded bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-400">
+                <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-[11px] font-medium text-gray-600">
                   {email.clientName}
                 </span>
               )}
@@ -83,18 +83,18 @@ export function EmailDetail({ email, action }: EmailDetailProps) {
 
           {/* Email body */}
           <div className="flex-1 overflow-y-auto px-6 py-5">
-            <pre className="whitespace-pre-wrap font-sans text-[13px] leading-relaxed text-zinc-300">
+            <pre className="whitespace-pre-wrap font-sans text-[13px] leading-relaxed text-gray-700">
               {email.bodyText}
             </pre>
           </div>
         </div>
 
         {/* AI draft panel */}
-        <div className="flex w-[400px] shrink-0 flex-col bg-zinc-900/50">
+        <div className="flex w-[400px] shrink-0 flex-col bg-gray-50">
           {/* Draft header */}
-          <div className="flex items-center justify-between border-b border-zinc-800 px-5 py-3">
+          <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3.5">
             <div className="flex items-center gap-2.5">
-              <span className="text-[12px] font-semibold text-zinc-400 uppercase tracking-wide">
+              <span className="text-[11px] font-bold uppercase tracking-widest text-gray-400">
                 Rascunho AI
               </span>
               {action && isPending && (
@@ -113,9 +113,9 @@ export function EmailDetail({ email, action }: EmailDetailProps) {
             {action && isPending && !isEditing && (
               <button
                 onClick={() => setIsEditing(true)}
-                className="pressable flex items-center gap-1.5 rounded px-2 py-1 text-[11px] font-medium text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+                className="pressable flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-gray-500 transition-colors hover:bg-gray-200 hover:text-gray-700"
               >
-                <Pencil className="h-3 w-3 stroke-[1.5]" />
+                <Pencil className="h-3 w-3 stroke-[1.75]" />
                 Editar
               </button>
             )}
@@ -123,7 +123,7 @@ export function EmailDetail({ email, action }: EmailDetailProps) {
 
           {!action && (
             <div className="flex flex-1 items-center justify-center">
-              <p className="text-[13px] text-zinc-600">Sem rascunho gerado</p>
+              <p className="text-[13px] text-gray-400">Sem rascunho gerado</p>
             </div>
           )}
 
@@ -135,13 +135,13 @@ export function EmailDetail({ email, action }: EmailDetailProps) {
                   <Textarea
                     value={draftText}
                     onChange={(e) => setDraftText(e.target.value)}
-                    className="h-full min-h-[280px] resize-none border-zinc-700 bg-zinc-900 text-[13px] leading-relaxed text-zinc-200 placeholder:text-zinc-600 focus-visible:ring-1 focus-visible:ring-zinc-600"
+                    className="h-full min-h-[280px] resize-none border-gray-200 bg-white text-[13px] leading-relaxed text-gray-700 placeholder:text-gray-400 focus-visible:ring-1 focus-visible:ring-green-400"
                     autoFocus
                   />
                 ) : (
                   <pre className={cn(
                     'whitespace-pre-wrap font-sans text-[13px] leading-relaxed',
-                    !isPending ? 'text-zinc-600 line-through decoration-zinc-700' : 'text-zinc-300'
+                    !isPending ? 'text-gray-300 line-through decoration-gray-200' : 'text-gray-700'
                   )}>
                     {persisted?.editedContent ?? draftText}
                   </pre>
@@ -149,8 +149,8 @@ export function EmailDetail({ email, action }: EmailDetailProps) {
               </div>
 
               {/* AI attribution */}
-              <div className="border-t border-zinc-800/60 px-5 py-2">
-                <p className="data text-[10px] text-zinc-700">
+              <div className="border-t border-gray-100 px-5 py-2">
+                <p className="data text-[10px] text-gray-400">
                   {action.aiModel} · {formatDateTime(action.createdAt)}
                   {persisted?.decidedAt && (
                     <> · decisão {formatDateTime(new Date(persisted.decidedAt))}</>
@@ -160,14 +160,14 @@ export function EmailDetail({ email, action }: EmailDetailProps) {
 
               {/* Action buttons */}
               {isPending && (
-                <div className="flex gap-2 border-t border-zinc-800 px-5 py-3">
+                <div className="flex gap-2 border-t border-gray-200 bg-white px-5 py-3.5">
                   {isEditing ? (
                     <>
                       <button
                         onClick={handleEditAndSend}
-                        className="pressable flex flex-1 items-center justify-center gap-1.5 rounded bg-green-600 px-3 py-2 text-[12px] font-semibold text-white transition-colors hover:bg-green-500"
+                        className="pressable flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-green-600 px-3 py-2.5 text-[13px] font-bold text-white shadow-sm transition-colors hover:bg-green-700"
                       >
-                        <Check className="h-3.5 w-3.5 stroke-[2]" />
+                        <Check className="h-3.5 w-3.5 stroke-[2.5]" />
                         Guardar e enviar
                       </button>
                       <button
@@ -175,7 +175,7 @@ export function EmailDetail({ email, action }: EmailDetailProps) {
                           setDraftText(persisted?.editedContent ?? action.draftContent)
                           setIsEditing(false)
                         }}
-                        className="pressable rounded border border-zinc-700 px-3 py-2 text-[12px] font-medium text-zinc-400 transition-colors hover:border-zinc-600 hover:text-zinc-200"
+                        className="pressable rounded-lg border border-gray-200 px-3 py-2 text-[13px] font-medium text-gray-500 transition-colors hover:border-gray-300 hover:text-gray-700"
                       >
                         Cancelar
                       </button>
@@ -184,16 +184,16 @@ export function EmailDetail({ email, action }: EmailDetailProps) {
                     <>
                       <button
                         onClick={handleApprove}
-                        className="pressable flex flex-1 items-center justify-center gap-1.5 rounded bg-green-600 px-3 py-2 text-[12px] font-semibold text-white transition-colors hover:bg-green-500"
+                        className="pressable flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-green-600 px-3 py-2.5 text-[13px] font-bold text-white shadow-sm transition-colors hover:bg-green-700"
                       >
-                        <Check className="h-3.5 w-3.5 stroke-[2]" />
+                        <Check className="h-3.5 w-3.5 stroke-[2.5]" />
                         Aprovar
                       </button>
                       <button
                         onClick={handleReject}
-                        className="pressable flex items-center gap-1.5 rounded border border-zinc-700 px-3 py-2 text-[12px] font-medium text-red-500 transition-colors hover:border-red-500/30 hover:bg-red-500/5"
+                        className="pressable flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[13px] font-semibold text-red-600 transition-colors hover:bg-red-100"
                       >
-                        <X className="h-3.5 w-3.5 stroke-[2]" />
+                        <X className="h-3.5 w-3.5 stroke-[2.5]" />
                         Rejeitar
                       </button>
                     </>
@@ -202,8 +202,8 @@ export function EmailDetail({ email, action }: EmailDetailProps) {
               )}
 
               {!isPending && (
-                <div className="border-t border-zinc-800 px-5 py-3">
-                  <p className="text-center text-[12px] text-zinc-600">
+                <div className="border-t border-gray-200 px-5 py-3">
+                  <p className="text-center text-[12px] text-gray-400">
                     {currentStatus === 'APPROVED' && 'Email aprovado e enviado.'}
                     {currentStatus === 'EDITED_SENT' && 'Rascunho editado e enviado.'}
                     {currentStatus === 'REJECTED' && 'Rascunho rejeitado.'}
