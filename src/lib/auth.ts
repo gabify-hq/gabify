@@ -1,14 +1,14 @@
 import NextAuth from 'next-auth'
-import { PrismaAdapter } from '@auth/prisma-adapter'
 import Resend from 'next-auth/providers/resend'
 import { prisma } from '@/lib/prisma'
 import { authConfig } from '@/lib/auth.config'
+import { GabifyAdapter } from '@/lib/auth-adapter'
 import type { UserRole } from '@prisma/client'
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   // Spread pages only — do NOT spread callbacks (authorized is middleware-only)
   pages: authConfig.pages,
-  adapter: PrismaAdapter(prisma),
+  adapter: GabifyAdapter(prisma),
   providers: [
     Resend({
       apiKey: process.env.RESEND_API_KEY,
