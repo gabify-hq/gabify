@@ -6,7 +6,8 @@ import { authConfig } from '@/lib/auth.config'
 import type { UserRole } from '@prisma/client'
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  ...authConfig,
+  // Spread pages only — do NOT spread callbacks (authorized is middleware-only)
+  pages: authConfig.pages,
   adapter: PrismaAdapter(prisma),
   providers: [
     Resend({
@@ -15,7 +16,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     }),
   ],
   callbacks: {
-    ...authConfig.callbacks,
     async session({ session, user }) {
       const dbUser = await prisma.user.findUnique({
         where: { id: user.id },
