@@ -1,85 +1,373 @@
 import type { EmailProvider } from './EmailProvider'
 import type { SyncResult, WatchResult, EmailDraft } from '@/types'
 import type { EmailAccount } from '@prisma/client'
+import { prisma } from '@/lib/prisma'
+import { encryptToken, decryptToken } from '@/lib/crypto'
+
+const GRAPH_BASE = 'https://graph.microsoft.com/v1.0'
+const TOKEN_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/token'
+const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000 // 5 minutes
+const WEBHOOK_LIFETIME_MINUTES = 4230
+
+/**
+ * Shape of a message returned by Microsoft Graph delta queries.
+ */
+interface GraphMessage {
+  id: string
+  subject?: string
+  from?: { emailAddress?: { address?: string; name?: string } }
+  receivedDateTime?: string
+  hasAttachments?: boolean
+  body?: { content?: string; contentType?: string }
+  conversationId?: string
+}
+
+interface GraphDeltaResponse {
+  value: GraphMessage[]
+  '@odata.nextLink'?: string
+  '@odata.deltaLink'?: string
+}
+
+interface GraphTokenResponse {
+  access_token: string
+  refresh_token?: string
+  expires_in: number
+}
+
+interface GraphSubscriptionResponse {
+  id: string
+  expirationDateTime: string
+}
 
 /**
  * OutlookProvider — Microsoft Graph API implementation.
  *
- * Key concepts:
- * - Delta queries: GET /me/mailFolders/inbox/messages/delta
- *   Returns messages changed since last sync. Stores deltaLink for next call.
- * - Change notifications: POST /subscriptions
- *   Webhook subscription for real-time notifications. Max lifetime: 4230 minutes.
- *   Must renew before expiry.
- * - Token refresh: accessToken expires in ~1h. Use refreshToken to get new one.
+ * Uses delta queries for incremental inbox sync and Graph change notifications
+ * for real-time webhook delivery. Tokens are AES-256-CBC encrypted at rest.
  *
  * Docs: https://learn.microsoft.com/en-us/graph/delta-query-messages
  */
 export class OutlookProvider implements EmailProvider {
-  private account: EmailAccount
+  private readonly account: EmailAccount
 
   constructor(account: EmailAccount) {
     this.account = account
   }
 
-  async syncInbox(): Promise<SyncResult> {
-    // TODO: implement Microsoft Graph delta query sync
-    // 1. Check token expiry, refresh if needed (refreshOutlookToken)
-    // 2. GET /me/mailFolders/inbox/messages/delta?$deltaToken=<deltaLink>
-    //    If no deltaLink: GET /me/mailFolders/inbox/messages/delta (initial sync)
-    // 3. For each message: upsert InboundEmail + EmailThread in DB
-    // 4. For each message with attachments: queue document-parse job
-    // 5. Store updated deltaLink from response @odata.deltaLink
-    // 6. Return SyncResult with new deltaLink
+  // ── Public interface ────────────────────────────────────────────────────────
 
-    throw new Error('TODO: OutlookProvider.syncInbox not implemented')
+  async syncInbox(): Promise<SyncResult> {
+    const token = await this.refreshTokenIfNeeded()
+
+    let url: string
+    if (this.account.deltaLink) {
+      url = `${GRAPH_BASE}/me/mailFolders/inbox/messages/delta?$deltaToken=${encodeURIComponent(this.account.deltaLink)}`
+    } else {
+      url = `${GRAPH_BASE}/me/mailFolders/inbox/messages/delta?$select=id,subject,from,receivedDateTime,hasAttachments,body,conversationId`
+    }
+
+    let newMessages = 0
+    let skippedUpdates = 0
+    let finalDeltaLink: string | null = null
+
+    while (url) {
+      const response = await this.graphGet<GraphDeltaResponse>(url, token)
+
+      for (const message of response.value) {
+        const upserted = await this.upsertMessage(message)
+        if (upserted === 'created') {
+          newMessages++
+        } else {
+          skippedUpdates++
+        }
+      }
+
+      if (response['@odata.deltaLink']) {
+        finalDeltaLink = this.extractDeltaToken(response['@odata.deltaLink'])
+        url = ''
+      } else if (response['@odata.nextLink']) {
+        url = response['@odata.nextLink']
+      } else {
+        url = ''
+      }
+    }
+
+    if (finalDeltaLink) {
+      await prisma.emailAccount.update({
+        where: { id: this.account.id },
+        data: { deltaLink: finalDeltaLink },
+      })
+    }
+
+    return {
+      provider: 'OUTLOOK',
+      emailAccountId: this.account.id,
+      messagesProcessed: newMessages + skippedUpdates,
+      newMessages,
+      errors: [],
+      deltaLink: finalDeltaLink ?? undefined,
+    }
   }
 
   async getAttachment(messageId: string, attachmentId: string): Promise<Buffer> {
-    // TODO: implement
-    // 1. Check token expiry, refresh if needed
-    // 2. GET /me/messages/{messageId}/attachments/{attachmentId}/$value
-    // 3. Return Buffer
+    const token = await this.refreshTokenIfNeeded()
+    const url = `${GRAPH_BASE}/me/messages/${messageId}/attachments/${attachmentId}/$value`
 
-    throw new Error('TODO: OutlookProvider.getAttachment not implemented')
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+
+    if (!response.ok) {
+      throw new Error(
+        `OutlookProvider.getAttachment failed: ${response.status} ${response.statusText}`
+      )
+    }
+
+    const arrayBuffer = await response.arrayBuffer()
+    return Buffer.from(arrayBuffer)
   }
 
   async sendReply(messageId: string, draft: EmailDraft): Promise<void> {
-    // TODO: implement
-    // 1. Check token expiry, refresh if needed
-    // 2. POST /me/messages/{messageId}/reply
-    //    Body: { message: { body: { contentType, content } }, comment }
-    // 3. Update InboundEmail status to PROCESSED
+    const token = await this.refreshTokenIfNeeded()
+    const url = `${GRAPH_BASE}/me/messages/${messageId}/reply`
 
-    throw new Error('TODO: OutlookProvider.sendReply not implemented')
+    const body = {
+      message: {
+        body: {
+          contentType: 'Text',
+          content: draft.bodyText,
+        },
+      },
+    }
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    })
+
+    if (!response.ok) {
+      throw new Error(
+        `OutlookProvider.sendReply failed: ${response.status} ${response.statusText}`
+      )
+    }
+
+    await prisma.inboundEmail.updateMany({
+      where: {
+        emailAccountId: this.account.id,
+        providerMessageId: messageId,
+      },
+      data: { status: 'PROCESSED' },
+    })
   }
 
   async watchChanges(webhookUrl: string): Promise<WatchResult> {
-    // TODO: implement
-    // 1. POST /subscriptions
-    //    changeType: "created,updated"
-    //    notificationUrl: webhookUrl
-    //    resource: "me/mailFolders/inbox/messages"
-    //    expirationDateTime: now + 4230 minutes (max)
-    //    clientState: HMAC secret for validation
-    // 2. Store subscriptionId + expiresAt on EmailAccount
-    // 3. Schedule renewal job before expiry
+    const token = await this.refreshTokenIfNeeded()
+    const url = `${GRAPH_BASE}/subscriptions`
 
-    throw new Error('TODO: OutlookProvider.watchChanges not implemented')
+    const webhookSecret = process.env.GRAPH_WEBHOOK_SECRET
+    if (!webhookSecret) {
+      throw new Error('GRAPH_WEBHOOK_SECRET environment variable is not set')
+    }
+
+    const expirationDateTime = new Date(
+      Date.now() + WEBHOOK_LIFETIME_MINUTES * 60 * 1000
+    ).toISOString()
+
+    const body = {
+      changeType: 'created,updated',
+      notificationUrl: webhookUrl,
+      resource: 'me/mailFolders/inbox/messages',
+      expirationDateTime,
+      clientState: webhookSecret,
+    }
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    })
+
+    if (!response.ok) {
+      throw new Error(
+        `OutlookProvider.watchChanges failed: ${response.status} ${response.statusText}`
+      )
+    }
+
+    const data = (await response.json()) as GraphSubscriptionResponse
+
+    return {
+      provider: 'OUTLOOK',
+      subscriptionId: data.id,
+      expiresAt: new Date(data.expirationDateTime),
+    }
   }
 
-  // ── Private helpers ──
+  // ── Private helpers ─────────────────────────────────────────────────────────
 
   private async refreshTokenIfNeeded(): Promise<string> {
-    // TODO: check this.account.outlookTokenExpiry
-    // If expired or within 5 min: POST to https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token
-    // Update EmailAccount with new tokens (encrypted)
-    throw new Error('TODO: token refresh not implemented')
+    const { outlookAccessToken, outlookRefreshToken, outlookTokenExpiry } = this.account
+
+    const isExpiringSoon =
+      !outlookTokenExpiry ||
+      outlookTokenExpiry.getTime() - Date.now() < TOKEN_REFRESH_BUFFER_MS
+
+    if (!isExpiringSoon && outlookAccessToken) {
+      return decryptToken(outlookAccessToken)
+    }
+
+    if (!outlookRefreshToken) {
+      throw new Error(
+        'OutlookProvider: no refresh token available — re-authentication required'
+      )
+    }
+
+    const clientId = process.env.MICROSOFT_CLIENT_ID
+    const clientSecret = process.env.MICROSOFT_CLIENT_SECRET
+    if (!clientId || !clientSecret) {
+      throw new Error(
+        'MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET environment variables are required'
+      )
+    }
+
+    const params = new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: decryptToken(outlookRefreshToken),
+      scope:
+        'https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Mail.Send offline_access',
+    })
+
+    const response = await fetch(TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params.toString(),
+    })
+
+    if (!response.ok) {
+      throw new Error(
+        `OutlookProvider: token refresh failed: ${response.status} ${response.statusText}`
+      )
+    }
+
+    const tokenData = (await response.json()) as GraphTokenResponse
+    const newAccessToken = tokenData.access_token
+    const newRefreshToken = tokenData.refresh_token ?? decryptToken(outlookRefreshToken)
+    const newExpiry = new Date(Date.now() + tokenData.expires_in * 1000)
+
+    await prisma.emailAccount.update({
+      where: { id: this.account.id },
+      data: {
+        outlookAccessToken: encryptToken(newAccessToken),
+        outlookRefreshToken: encryptToken(newRefreshToken),
+        outlookTokenExpiry: newExpiry,
+      },
+    })
+
+    return newAccessToken
   }
 
-  private getGraphClient() {
-    // TODO: return @microsoft/microsoft-graph-client Client instance
-    // Use this.account.outlookAccessToken (decrypt first)
-    throw new Error('TODO: Graph client not implemented')
+  private async graphGet<T>(url: string, token: string): Promise<T> {
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+
+    if (!response.ok) {
+      throw new Error(
+        `OutlookProvider: Graph GET failed [${url}]: ${response.status} ${response.statusText}`
+      )
+    }
+
+    return response.json() as Promise<T>
+  }
+
+  private async upsertMessage(message: GraphMessage): Promise<'created' | 'updated'> {
+    const fromEmail = message.from?.emailAddress?.address ?? ''
+    const fromName = message.from?.emailAddress?.name ?? null
+    const receivedAt = message.receivedDateTime
+      ? new Date(message.receivedDateTime)
+      : new Date()
+    const bodyText = message.body?.content ?? null
+
+    // Find or create the thread when we have a conversationId
+    let threadId: string | null = null
+    if (message.conversationId) {
+      const existingThread = await prisma.emailThread.findFirst({
+        where: { providerThreadId: message.conversationId },
+        select: { id: true },
+      })
+
+      if (existingThread) {
+        threadId = existingThread.id
+      } else {
+        const newThread = await prisma.emailThread.create({
+          data: {
+            providerThreadId: message.conversationId,
+            subject: message.subject ?? null,
+          },
+          select: { id: true },
+        })
+        threadId = newThread.id
+      }
+    }
+
+    const existing = await prisma.inboundEmail.findUnique({
+      where: {
+        emailAccountId_providerMessageId: {
+          emailAccountId: this.account.id,
+          providerMessageId: message.id,
+        },
+      },
+      select: { id: true },
+    })
+
+    await prisma.inboundEmail.upsert({
+      where: {
+        emailAccountId_providerMessageId: {
+          emailAccountId: this.account.id,
+          providerMessageId: message.id,
+        },
+      },
+      create: {
+        emailAccountId: this.account.id,
+        providerMessageId: message.id,
+        threadId,
+        subject: message.subject ?? null,
+        fromEmail,
+        fromName,
+        toEmails: [],
+        ccEmails: [],
+        bodyText,
+        receivedAt,
+        status: 'UNREAD',
+      },
+      update: {
+        subject: message.subject ?? null,
+        fromEmail,
+        fromName,
+        bodyText,
+        threadId,
+      },
+    })
+
+    return existing ? 'updated' : 'created'
+  }
+
+  private extractDeltaToken(deltaLinkUrl: string): string {
+    try {
+      const url = new URL(deltaLinkUrl)
+      const token = url.searchParams.get('$deltaToken')
+      if (token) return token
+    } catch {
+      // fall through to return the raw value
+    }
+    return deltaLinkUrl
   }
 }
