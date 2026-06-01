@@ -2,6 +2,7 @@ import NextAuth from 'next-auth'
 import { PrismaAdapter } from '@auth/prisma-adapter'
 import Resend from 'next-auth/providers/resend'
 import { prisma } from '@/lib/prisma'
+import type { UserRole } from '@prisma/client'
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: PrismaAdapter(prisma),
@@ -12,13 +13,18 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     }),
   ],
   pages: {
-    signIn: '/auth/signin',
-    verifyRequest: '/auth/verify',
+    signIn: '/login',
+    verifyRequest: '/login/verify',
   },
   callbacks: {
-    session({ session, user }) {
+    async session({ session, user }) {
+      const dbUser = await prisma.user.findUnique({
+        where: { id: user.id },
+        select: { officeId: true, role: true },
+      })
       session.user.id = user.id
-      // TODO: add officeId and role to session
+      session.user.officeId = dbUser?.officeId ?? null
+      session.user.role = dbUser?.role ?? 'ACCOUNTANT'
       return session
     },
   },
@@ -32,6 +38,8 @@ declare module 'next-auth' {
       email: string
       name?: string | null
       image?: string | null
+      officeId: string | null
+      role: UserRole
     }
   }
 }
