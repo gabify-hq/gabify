@@ -8,7 +8,7 @@ import type { UserRole } from '@prisma/client'
 export const { handlers, auth, signIn, signOut } = NextAuth({
   pages: authConfig.pages,
   adapter: GabifyAdapter(prisma),
-  session: { strategy: 'jwt' },
+  session: { strategy: 'jwt', maxAge: 24 * 60 * 60 }, // 24h
   providers: [
     Resend({
       apiKey: process.env.RESEND_API_KEY,
