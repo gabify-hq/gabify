@@ -12,6 +12,10 @@ Does not replace accounting software — organises the operational chaos before 
 
 ## ⚠️ Sacred rules
 
+### 0. Plan before executing
+
+**Always present a step-by-step plan before executing any task. Wait for explicit approval before proceeding.**
+
 ### 1. Code is always in English
 
 **All code, variable names, comments, tests, types, database fields, API responses, error messages in code — always in English.**

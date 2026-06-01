@@ -1,11 +1,12 @@
-// Prisma 7 configuration
-// Database connection is handled via DATABASE_URL env var
-// The adapter is instantiated in src/lib/prisma.ts for the client
-// and referenced here for migrations
+import { defineConfig, env } from 'prisma/config'
+import { config } from 'dotenv'
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { defineConfig } = require('prisma/config')
+// Prisma CLI does not load .env.local — load it explicitly so DATABASE_URL is available
+config({ path: '.env.local' })
 
-module.exports = defineConfig({
+export default defineConfig({
   schema: 'prisma/schema.prisma',
+  datasource: {
+    url: env('DATABASE_URL'),
+  },
 })
