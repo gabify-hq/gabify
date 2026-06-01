@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { createEmailProvider } from '@/server/email-providers'
 import { uploadToR2, buildAttachmentKey } from '@/lib/r2'
 import { classifyDocument } from '@/server/services/email-classification'
+import { extractText } from '@/lib/text-extractor'
 
 export interface DocumentParseJobData {
   attachmentId: string
@@ -43,7 +44,6 @@ export const documentParseWorker = new Worker<DocumentParseJobData>(
     })
 
     if (attachment.document) {
-      console.log(`[document-parse] attachment ${attachmentId} already processed, skipping`)
       return
     }
 
@@ -73,11 +73,7 @@ export const documentParseWorker = new Worker<DocumentParseJobData>(
     })
 
     // 3. Extract text content
-    // TODO: implement text extraction based on mimeType
-    // - PDF: use pdf-parse or pdfjs-dist
-    // - DOCX: use mammoth
-    // - Images: use Claude Vision or Tesseract OCR
-    const textContent = await extractText(buffer, attachment.mimeType)
+    const textContent = await extractText(buffer, attachment.filename)
 
     // 4. Create Document record (pending classification)
     const document = await prisma.document.create({
@@ -91,7 +87,7 @@ export const documentParseWorker = new Worker<DocumentParseJobData>(
     })
 
     // 5. Classify with Claude AI
-    const classificationResult = await classifyDocument(textContent ?? '', document.id)
+    const classificationResult = await classifyDocument(textContent, document.id)
 
     // 6. Create AuditLog entry — AI action must be logged before any external effect
     await prisma.auditLog.create({
@@ -140,12 +136,3 @@ function getExtension(filename: string, mimeType: string): string {
   return mimeMap[mimeType] ?? 'bin'
 }
 
-async function extractText(buffer: Buffer, mimeType: string): Promise<string | null> {
-  // TODO: implement text extraction per mimeType
-  // PDF: import pdfParse from 'pdf-parse'; return (await pdfParse(buffer)).text
-  // DOCX: import mammoth from 'mammoth'; return (await mammoth.extractRawText({buffer})).value
-  // Images: call Claude Vision API with base64 image
-  // TXT: return buffer.toString('utf-8')
-  console.warn(`[document-parse] text extraction not implemented for ${mimeType}`)
-  return null
-}

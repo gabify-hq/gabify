@@ -37,7 +37,7 @@ BullMQ: document-parse queue
 document-parse.worker
   ├── EmailProvider.getAttachment() → Buffer
   ├── uploadToR2(key, buffer)
-  ├── extractText(buffer, mimeType)          ← TODO
+  ├── extractText(buffer, filename)           ← src/lib/text-extractor.ts
   ├── classifyDocument(text) → Claude API
   ├── upsert Document with classification
   └── create AuditLog (aiGenerated: true)
@@ -152,14 +152,19 @@ Claude API classifies document content — never filename.
 **Supported document types:**
 `INVOICE_RECEIVED`, `INVOICE_ISSUED`, `RECEIPT`, `BANK_STATEMENT`, `PAYROLL`, `TAX_DOCUMENT`, `AT_COMMUNICATION`, `SOCIAL_SECURITY`, `CONTRACT`, `BALANCE_SHEET`, `INCOME_STATEMENT`, `OTHER`
 
-**Text extraction (⏳ TODO):**
+**Text extraction (`src/lib/text-extractor.ts`):**
 
-| MIME type | Library |
-|---|---|
-| `application/pdf` | pdf-parse |
-| `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | mammoth |
-| `image/*` | Claude Vision API |
-| `text/plain` | `buffer.toString('utf-8')` |
+Extraction is keyed on the file extension (from `attachment.filename`), not the MIME type, for robustness.
+
+| Extension | Library | Notes |
+|---|---|---|
+| `.pdf` | pdf-parse v2 (`PDFParse` class) | getText() → TextResult.text |
+| `.docx` | mammoth | extractRawText({ buffer }) |
+| `.txt`, `.csv` | built-in | `buffer.toString('utf-8')` |
+| `.xlsx`, `.xls` | — | returns `[XLSX: text extraction not supported]` |
+| other | — | returns `[.<ext>: text extraction not supported]` |
+
+All output is capped at 8000 characters (appends `\n[truncated]` if exceeded) to stay within Claude context limits. Images (Claude Vision) remain a future TODO.
 
 ---
 
@@ -256,7 +261,7 @@ Components: `StatusBadge`, `EmailList`, `EmailDetail`, `ClientStatusCard`, `Docu
 | Graph webhook | HMAC `clientState` verification |
 | Gmail webhook | Google JWT verification |
 | Token encryption | AES-256 encrypt/decrypt for OAuth tokens in providers |
-| Text extraction | pdf-parse, mammoth, Claude Vision |
+| Text extraction — images | Claude Vision API for image attachments (.jpg, .png, .tiff) |
 | Graph subscription renewal | Scheduled job before 4230min expiry |
 | Gmail watch renewal | Scheduled job before 7-day expiry |
 | Draft generation | Wire `generateEmailDraft()` into worker post-classification |
