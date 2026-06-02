@@ -5,7 +5,7 @@ import { encryptToken } from '@/lib/crypto'
 
 const OAUTH_STATE_COOKIE = 'google_oauth_state'
 const TOKEN_URL = 'https://oauth2.googleapis.com/token'
-const USERINFO_URL = 'https://www.googleapis.com/oauth2/v2/userinfo'
+const GMAIL_PROFILE_URL = 'https://gmail.googleapis.com/gmail/v1/users/me/profile'
 
 interface GoogleTokenResponse {
   access_token: string
@@ -14,11 +14,10 @@ interface GoogleTokenResponse {
   token_type: string
 }
 
-interface GoogleUserInfo {
-  id: string
-  email: string
-  name?: string
-  picture?: string
+interface GmailProfile {
+  emailAddress: string
+  messagesTotal?: number
+  historyId?: string
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
@@ -75,16 +74,16 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const tokenData = (await tokenResponse.json()) as GoogleTokenResponse
 
-    // Get user info
-    const userInfoResponse = await fetch(USERINFO_URL, {
+    // Get Gmail profile (email address) using gmail scopes — no openid needed
+    const profileResponse = await fetch(GMAIL_PROFILE_URL, {
       headers: { Authorization: `Bearer ${tokenData.access_token}` },
     })
 
-    if (!userInfoResponse.ok) {
+    if (!profileResponse.ok) {
       return errorRedirect
     }
 
-    const userInfo = (await userInfoResponse.json()) as GoogleUserInfo
+    const profile = (await profileResponse.json()) as GmailProfile
 
     // Require authenticated session
     const session = await auth()
@@ -99,20 +98,20 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       where: {
         officeId_email_provider: {
           officeId,
-          email: userInfo.email,
+          email: profile.emailAddress,
           provider: 'GMAIL',
         },
       },
       create: {
         officeId,
-        email: userInfo.email,
+        email: profile.emailAddress,
         provider: 'GMAIL',
         gmailAccessToken: encryptToken(tokenData.access_token),
         gmailRefreshToken: tokenData.refresh_token
           ? encryptToken(tokenData.refresh_token)
           : null,
         gmailTokenExpiry: new Date(Date.now() + tokenData.expires_in * 1000),
-        gmailUserId: userInfo.id,
+        historyId: profile.historyId ?? null,
         active: true,
       },
       update: {
@@ -121,7 +120,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           ? encryptToken(tokenData.refresh_token)
           : undefined,
         gmailTokenExpiry: new Date(Date.now() + tokenData.expires_in * 1000),
-        gmailUserId: userInfo.id,
+        historyId: profile.historyId ?? undefined,
         active: true,
       },
     })

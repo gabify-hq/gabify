@@ -106,6 +106,10 @@ emailSyncWorker.on('failed', (job, err) => {
   console.error(`[email-sync] job ${job?.id} failed:`, err.message)
 })
 
+emailSyncWorker.on('error', (err) => {
+  console.error('[email-sync] worker error:', err.message)
+})
+
 // ── Auto-polling scheduler ──────────────────────────────────────────────────
 
 const POLL_INTERVAL_MS = Number(process.env.EMAIL_POLL_INTERVAL_MS ?? 30_000)
@@ -126,10 +130,7 @@ async function schedulePollingJobs(): Promise<void> {
     await queue.add(
       'sync-inbox',
       { emailAccountId: account.id, officeId: account.officeId, triggerSource: 'scheduled' },
-      {
-        ...DEFAULT_JOB_OPTIONS,
-        jobId: `poll-${account.id}`, // deduplicate — same ID = only one queued at a time
-      }
+      DEFAULT_JOB_OPTIONS
     )
   }
 
