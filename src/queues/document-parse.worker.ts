@@ -5,6 +5,7 @@ import { createEmailProvider } from '@/server/email-providers'
 import { uploadToR2, buildAttachmentKey } from '@/lib/r2'
 import { classifyDocument, generateEmailDraft } from '@/server/services/email-classification'
 import { CLAUDE_MODEL } from '@/lib/anthropic'
+import { extractText } from '@/lib/text-extractor'
 
 export interface DocumentParseJobData {
   attachmentId: string
@@ -75,11 +76,7 @@ export const documentParseWorker = new Worker<DocumentParseJobData>(
     })
 
     // 3. Extract text content
-    // TODO: implement text extraction based on mimeType
-    // - PDF: use pdf-parse or pdfjs-dist
-    // - DOCX: use mammoth
-    // - Images: use Claude Vision or Tesseract OCR
-    const textContent = await extractText(buffer, attachment.mimeType)
+    const textContent = await extractText(buffer, attachment.filename)
 
     // 4. Create Document record (pending classification)
     const document = await prisma.document.create({
@@ -216,14 +213,4 @@ function getExtension(filename: string, mimeType: string): string {
     'text/plain': 'txt',
   }
   return mimeMap[mimeType] ?? 'bin'
-}
-
-async function extractText(buffer: Buffer, mimeType: string): Promise<string | null> {
-  // TODO: implement text extraction per mimeType
-  // PDF: import pdfParse from 'pdf-parse'; return (await pdfParse(buffer)).text
-  // DOCX: import mammoth from 'mammoth'; return (await mammoth.extractRawText({buffer})).value
-  // Images: call Claude Vision API with base64 image
-  // TXT: return buffer.toString('utf-8')
-  console.warn(`[document-parse] text extraction not implemented for ${mimeType}`)
-  return null
 }
