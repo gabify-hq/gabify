@@ -325,6 +325,7 @@ model EmailAttachment {
   document     Document?
 
   @@index([inboundEmailId])
+  @@unique([inboundEmailId, providerAttachmentId])
 }
 
 // ─────────────────────────────────────────

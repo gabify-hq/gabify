@@ -851,6 +851,7 @@ describe('GmailProvider', () => {
             sizeBytes: 12000,
           },
         ],
+        skipDuplicates: true,
       })
     })
 
@@ -878,6 +879,7 @@ describe('GmailProvider', () => {
         data: [
           expect.objectContaining({ providerAttachmentId: 'att-002' }),
         ],
+        skipDuplicates: true,
       })
     })
 
@@ -960,6 +962,7 @@ describe('GmailProvider', () => {
 
       expect(vi.mocked(prisma.emailAttachment.createMany)).toHaveBeenCalledWith({
         data: [expect.objectContaining({ filename: 'nested.pdf', providerAttachmentId: 'att-nested' })],
+        skipDuplicates: true,
       })
     })
   })

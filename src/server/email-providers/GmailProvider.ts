@@ -462,6 +462,7 @@ export class GmailProvider implements EmailProvider {
             mimeType: p.mimeType,
             sizeBytes: p.sizeBytes,
           })),
+          skipDuplicates: true,
         })
       }
     }
