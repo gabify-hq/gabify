@@ -49,12 +49,11 @@ export const emailSyncWorker = new Worker<EmailSyncJobData>(
       // 3. Sync inbox
       const syncResult = await provider.syncInbox()
 
-      // 4. Match clients for new emails
+      // 4. Match clients for ALL unmatched emails (not just recent)
       const newEmails = await prisma.inboundEmail.findMany({
         where: {
           emailAccountId,
           clientId: null,
-          createdAt: { gte: new Date(Date.now() - 10 * 60 * 1000) }, // last 10 min
         },
         select: { id: true, fromEmail: true },
       })
