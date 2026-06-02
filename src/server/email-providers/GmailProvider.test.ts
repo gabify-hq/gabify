@@ -17,6 +17,10 @@ vi.mock('@/lib/prisma', () => ({
       findFirst: vi.fn(),
       create: vi.fn(),
     },
+    emailAttachment: {
+      findMany: vi.fn(),
+      createMany: vi.fn(),
+    },
   },
 }))
 
@@ -113,11 +117,13 @@ describe('GmailProvider', () => {
     process.env.TOKEN_ENCRYPTION_KEY = 'a'.repeat(64)
 
     vi.mocked(prisma.inboundEmail.findUnique).mockResolvedValue(null)
-    vi.mocked(prisma.inboundEmail.upsert).mockResolvedValue({} as never)
+    vi.mocked(prisma.inboundEmail.upsert).mockResolvedValue({ id: 'email-db-1' } as never)
     vi.mocked(prisma.emailThread.findFirst).mockResolvedValue(null)
     vi.mocked(prisma.emailThread.create).mockResolvedValue({ id: 'thread-db-1' } as never)
     vi.mocked(prisma.emailAccount.update).mockResolvedValue({} as never)
     vi.mocked(prisma.inboundEmail.updateMany).mockResolvedValue({ count: 1 })
+    vi.mocked(prisma.emailAttachment.findMany).mockResolvedValue([])
+    vi.mocked(prisma.emailAttachment.createMany).mockResolvedValue({ count: 0 })
   })
 
   afterEach(() => {
@@ -776,6 +782,185 @@ describe('GmailProvider', () => {
       await expect(
         provider.watchChanges('https://gabify.app/api/webhooks/gmail')
       ).rejects.toThrow('GmailProvider.watchChanges failed: 400')
+    })
+  })
+
+  // ── attachment extraction ─────────────────────────────────────────────────
+
+  describe('attachment extraction', () => {
+    function makeMultipartMessage(attachments: Array<{
+      filename: string
+      mimeType: string
+      attachmentId: string
+      size?: number
+    }>) {
+      return makeGmailMessage({
+        payload: {
+          headers: [
+            { name: 'Subject', value: 'Docs' },
+            { name: 'From', value: 'sender@client.pt' },
+            { name: 'Date', value: 'Mon, 15 Jan 2024 10:00:00 +0000' },
+          ],
+          mimeType: 'multipart/mixed',
+          parts: [
+            {
+              mimeType: 'text/plain',
+              body: { data: Buffer.from('body text').toString('base64url') },
+            },
+            ...attachments.map(a => ({
+              mimeType: a.mimeType,
+              filename: a.filename,
+              body: { attachmentId: a.attachmentId, size: a.size ?? 1024 },
+            })),
+          ],
+        },
+      })
+    }
+
+    it('creates EmailAttachment records for each attachment part', async () => {
+      const account = makeAccount({ historyId: null })
+      const provider = new GmailProvider(account)
+
+      vi.mocked(prisma.inboundEmail.upsert).mockResolvedValue({ id: 'email-db-1' } as never)
+
+      fetchMock
+        .mockResolvedValueOnce(makeFetchResponse({
+          messages: [{ id: 'gmail-msg-1', threadId: 'thread-1' }],
+        }))
+        .mockResolvedValueOnce(makeFetchResponse(makeMultipartMessage([
+          { filename: 'fatura.pdf', mimeType: 'application/pdf', attachmentId: 'att-001', size: 50000 },
+          { filename: 'recibo.pdf', mimeType: 'application/pdf', attachmentId: 'att-002', size: 12000 },
+        ])))
+
+      await provider.syncInbox()
+
+      expect(vi.mocked(prisma.emailAttachment.createMany)).toHaveBeenCalledWith({
+        data: [
+          {
+            inboundEmailId: 'email-db-1',
+            providerAttachmentId: 'att-001',
+            filename: 'fatura.pdf',
+            mimeType: 'application/pdf',
+            sizeBytes: 50000,
+          },
+          {
+            inboundEmailId: 'email-db-1',
+            providerAttachmentId: 'att-002',
+            filename: 'recibo.pdf',
+            mimeType: 'application/pdf',
+            sizeBytes: 12000,
+          },
+        ],
+      })
+    })
+
+    it('skips attachments that already exist in the database', async () => {
+      const account = makeAccount({ historyId: null })
+      const provider = new GmailProvider(account)
+
+      vi.mocked(prisma.inboundEmail.upsert).mockResolvedValue({ id: 'email-db-1' } as never)
+      vi.mocked(prisma.emailAttachment.findMany).mockResolvedValue([
+        { providerAttachmentId: 'att-001' } as never,
+      ])
+
+      fetchMock
+        .mockResolvedValueOnce(makeFetchResponse({
+          messages: [{ id: 'gmail-msg-1', threadId: 'thread-1' }],
+        }))
+        .mockResolvedValueOnce(makeFetchResponse(makeMultipartMessage([
+          { filename: 'fatura.pdf', mimeType: 'application/pdf', attachmentId: 'att-001' },
+          { filename: 'recibo.pdf', mimeType: 'application/pdf', attachmentId: 'att-002' },
+        ])))
+
+      await provider.syncInbox()
+
+      expect(vi.mocked(prisma.emailAttachment.createMany)).toHaveBeenCalledWith({
+        data: [
+          expect.objectContaining({ providerAttachmentId: 'att-002' }),
+        ],
+      })
+    })
+
+    it('does not call createMany when all attachments already exist', async () => {
+      const account = makeAccount({ historyId: null })
+      const provider = new GmailProvider(account)
+
+      vi.mocked(prisma.inboundEmail.upsert).mockResolvedValue({ id: 'email-db-1' } as never)
+      vi.mocked(prisma.emailAttachment.findMany).mockResolvedValue([
+        { providerAttachmentId: 'att-001' } as never,
+      ])
+
+      fetchMock
+        .mockResolvedValueOnce(makeFetchResponse({
+          messages: [{ id: 'gmail-msg-1', threadId: 'thread-1' }],
+        }))
+        .mockResolvedValueOnce(makeFetchResponse(makeMultipartMessage([
+          { filename: 'fatura.pdf', mimeType: 'application/pdf', attachmentId: 'att-001' },
+        ])))
+
+      await provider.syncInbox()
+
+      expect(vi.mocked(prisma.emailAttachment.createMany)).not.toHaveBeenCalled()
+    })
+
+    it('does not call emailAttachment methods for plain-text messages with no attachments', async () => {
+      const account = makeAccount({ historyId: null })
+      const provider = new GmailProvider(account)
+
+      vi.mocked(prisma.inboundEmail.upsert).mockResolvedValue({ id: 'email-db-1' } as never)
+
+      fetchMock
+        .mockResolvedValueOnce(makeFetchResponse({
+          messages: [{ id: 'gmail-msg-1', threadId: 'thread-1' }],
+        }))
+        .mockResolvedValueOnce(makeFetchResponse(makeGmailMessage()))
+
+      await provider.syncInbox()
+
+      expect(vi.mocked(prisma.emailAttachment.findMany)).not.toHaveBeenCalled()
+      expect(vi.mocked(prisma.emailAttachment.createMany)).not.toHaveBeenCalled()
+    })
+
+    it('extracts attachments nested inside multipart/related parts', async () => {
+      const account = makeAccount({ historyId: null })
+      const provider = new GmailProvider(account)
+
+      vi.mocked(prisma.inboundEmail.upsert).mockResolvedValue({ id: 'email-db-1' } as never)
+
+      const nestedMessage = makeGmailMessage({
+        payload: {
+          headers: [
+            { name: 'Subject', value: 'Nested' },
+            { name: 'From', value: 'sender@client.pt' },
+            { name: 'Date', value: 'Mon, 15 Jan 2024 10:00:00 +0000' },
+          ],
+          mimeType: 'multipart/mixed',
+          parts: [
+            {
+              mimeType: 'multipart/related',
+              parts: [
+                {
+                  mimeType: 'application/pdf',
+                  filename: 'nested.pdf',
+                  body: { attachmentId: 'att-nested', size: 5000 },
+                },
+              ],
+            },
+          ],
+        },
+      })
+
+      fetchMock
+        .mockResolvedValueOnce(makeFetchResponse({
+          messages: [{ id: 'gmail-msg-1', threadId: 'thread-1' }],
+        }))
+        .mockResolvedValueOnce(makeFetchResponse(nestedMessage))
+
+      await provider.syncInbox()
+
+      expect(vi.mocked(prisma.emailAttachment.createMany)).toHaveBeenCalledWith({
+        data: [expect.objectContaining({ filename: 'nested.pdf', providerAttachmentId: 'att-nested' })],
+      })
     })
   })
 

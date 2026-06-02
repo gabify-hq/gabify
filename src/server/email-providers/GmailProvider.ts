@@ -106,8 +106,13 @@ export class GmailProvider implements EmailProvider {
           skippedUpdates++
         }
 
-        // Capture historyId from first message
-        if (!finalHistoryId && message.historyId) {
+        // Track the highest historyId across all messages so the next
+        // incremental sync starts from the true latest cursor, not just
+        // the first message's (potentially stale) historyId.
+        if (
+          message.historyId &&
+          (!finalHistoryId || BigInt(message.historyId) > BigInt(finalHistoryId))
+        ) {
           finalHistoryId = message.historyId
         }
       }
@@ -405,7 +410,7 @@ export class GmailProvider implements EmailProvider {
       select: { id: true },
     })
 
-    await prisma.inboundEmail.upsert({
+    const { id: emailId } = await prisma.inboundEmail.upsert({
       where: {
         emailAccountId_providerMessageId: {
           emailAccountId: this.account.id,
@@ -432,7 +437,34 @@ export class GmailProvider implements EmailProvider {
         bodyText,
         threadId: dbThreadId,
       },
+      select: { id: true },
     })
+
+    // Persist attachment metadata — document-parse worker picks these up
+    const attachmentParts = extractAttachmentParts(message.payload)
+    if (attachmentParts.length > 0) {
+      const existingAttachments = await prisma.emailAttachment.findMany({
+        where: {
+          inboundEmailId: emailId,
+          providerAttachmentId: { in: attachmentParts.map((p) => p.providerAttachmentId) },
+        },
+        select: { providerAttachmentId: true },
+      })
+      const existingIds = new Set(existingAttachments.map((a) => a.providerAttachmentId))
+
+      const toCreate = attachmentParts.filter((p) => !existingIds.has(p.providerAttachmentId))
+      if (toCreate.length > 0) {
+        await prisma.emailAttachment.createMany({
+          data: toCreate.map((p) => ({
+            inboundEmailId: emailId,
+            providerAttachmentId: p.providerAttachmentId,
+            filename: p.filename,
+            mimeType: p.mimeType,
+            sizeBytes: p.sizeBytes,
+          })),
+        })
+      }
+    }
 
     return existing ? 'updated' : 'created'
   }
@@ -471,4 +503,36 @@ function extractTextBody(part: GmailMessagePart): string | null {
   }
 
   return null
+}
+
+interface AttachmentPart {
+  providerAttachmentId: string
+  filename: string
+  mimeType: string
+  sizeBytes: number | null
+}
+
+/**
+ * Recursively walk a Gmail message payload to find all attachment parts.
+ * A part is an attachment when it has a non-empty body.attachmentId and a filename.
+ */
+function extractAttachmentParts(part: GmailMessagePart): AttachmentPart[] {
+  const results: AttachmentPart[] = []
+
+  if (part.body?.attachmentId && part.filename) {
+    results.push({
+      providerAttachmentId: part.body.attachmentId,
+      filename: part.filename,
+      mimeType: part.mimeType ?? 'application/octet-stream',
+      sizeBytes: part.body.size ?? null,
+    })
+  }
+
+  if (part.parts) {
+    for (const child of part.parts) {
+      results.push(...extractAttachmentParts(child))
+    }
+  }
+
+  return results
 }
