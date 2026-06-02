@@ -3,9 +3,12 @@ import { redisConnection, QUEUE_DOCUMENT_PARSE } from '@/lib/redis'
 import { prisma } from '@/lib/prisma'
 import { createEmailProvider } from '@/server/email-providers'
 import { uploadToR2, buildAttachmentKey } from '@/lib/r2'
-import { classifyDocument, generateEmailDraft } from '@/server/services/email-classification'
+import { classifyDocument, classifyImage, generateEmailDraft } from '@/server/services/email-classification'
 import { CLAUDE_MODEL } from '@/lib/anthropic'
 import { extractText } from '@/lib/text-extractor'
+
+// Claude Vision supports these image types — everything else uses text extraction
+const VISION_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp'])
 
 export interface DocumentParseJobData {
   attachmentId: string
@@ -75,8 +78,9 @@ export const documentParseWorker = new Worker<DocumentParseJobData>(
       data: { r2Key, uploadedAt: new Date() },
     })
 
-    // 3. Extract text content
-    const textContent = await extractText(buffer, attachment.filename)
+    // 3. Extract text content (skipped for images — Claude Vision handles those)
+    const isImage = VISION_MIME_TYPES.has(attachment.mimeType)
+    const textContent = isImage ? null : await extractText(buffer, attachment.filename)
 
     // 4. Create Document record (pending classification)
     const document = await prisma.document.create({
@@ -89,8 +93,10 @@ export const documentParseWorker = new Worker<DocumentParseJobData>(
       },
     })
 
-    // 5. Classify with Claude AI
-    const classificationResult = await classifyDocument(textContent ?? '', document.id)
+    // 5. Classify with Claude AI — Vision for images, text for everything else
+    const classificationResult = isImage
+      ? await classifyImage(buffer, attachment.mimeType, document.id)
+      : await classifyDocument(textContent ?? '', document.id)
 
     // 6. Create AuditLog entry — AI action must be logged before any external effect
     await prisma.auditLog.create({
