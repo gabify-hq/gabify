@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { Inbox, Users, Mail, FileText } from 'lucide-react'
+import { Inbox, Users, Mail, FileText, UserX } from 'lucide-react'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 
@@ -30,7 +30,7 @@ export default async function DashboardOverviewPage() {
   const session = await auth()
   const officeId = session?.user?.officeId ?? ''
 
-  const [totalEmails, unreadEmails, pendingDrafts, totalClients] = await Promise.all([
+  const [totalEmails, unreadEmails, pendingDrafts, totalClients, unknownSendersCount] = await Promise.all([
     officeId
       ? prisma.inboundEmail.count({ where: { emailAccount: { officeId } } })
       : Promise.resolve(0),
@@ -47,6 +47,14 @@ export default async function DashboardOverviewPage() {
       : Promise.resolve(0),
     officeId
       ? prisma.client.count({ where: { officeId, deletedAt: null } })
+      : Promise.resolve(0),
+
+    officeId
+      ? prisma.inboundEmail.groupBy({
+          by: ['fromEmail'],
+          where: { emailAccount: { officeId }, clientId: null },
+          _count: { id: true },
+        }).then((rows) => rows.length)
       : Promise.resolve(0),
   ])
 
@@ -65,7 +73,7 @@ export default async function DashboardOverviewPage() {
         <div className="mx-auto max-w-4xl space-y-6">
 
           {/* Stats grid */}
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
             <StatCard
               label="Emails recebidos"
               value={totalEmails}
@@ -89,6 +97,12 @@ export default async function DashboardOverviewPage() {
               value={totalClients}
               icon={<Users className="h-4 w-4 stroke-[1.75] text-green-600" />}
               accent="bg-green-50"
+            />
+            <StatCard
+              label="Por identificar"
+              value={unknownSendersCount}
+              icon={<UserX className="h-4 w-4 stroke-[1.75] text-amber-600" />}
+              accent="bg-amber-50"
             />
           </div>
 
@@ -117,6 +131,18 @@ export default async function DashboardOverviewPage() {
                 <Users className="h-3.5 w-3.5 stroke-[1.75] text-gray-400" />
                 Clientes
               </Link>
+              {unknownSendersCount > 0 && (
+                <Link
+                  href="/inbox"
+                  className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-[13px] font-semibold text-amber-800 transition-colors duration-150 hover:bg-amber-100"
+                >
+                  <UserX className="h-3.5 w-3.5 stroke-[1.75] text-amber-600" />
+                  Identificar remetentes
+                  <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-amber-200 px-1.5 text-[10px] font-bold text-amber-800">
+                    {unknownSendersCount}
+                  </span>
+                </Link>
+              )}
             </div>
           </div>
 
