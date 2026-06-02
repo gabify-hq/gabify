@@ -12,6 +12,10 @@ Does not replace accounting software — organises the operational chaos before 
 
 ## ⚠️ Sacred rules
 
+### 0. Plan before executing
+
+**Always present a step-by-step plan before executing any task. Wait for explicit approval before proceeding.**
+
 ### 1. Code is always in English
 
 **All code, variable names, comments, tests, types, database fields, API responses, error messages in code — always in English.**
@@ -80,7 +84,7 @@ Every action that affects the outside world (send email, notify client, file doc
 
 ## Stack
 
-- **Next.js 14** App Router + TypeScript (strict mode)
+- **Next.js 16** App Router + TypeScript (strict mode) — uses `src/proxy.ts` (not `middleware.ts`)
 - **PostgreSQL** + Prisma ORM (migrations only, never `db push` in prod)
 - **BullMQ** + Redis (email sync + document parse workers)
 - **Cloudflare R2** (attachments — signed URLs, never public)

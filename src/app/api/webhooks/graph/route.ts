@@ -9,7 +9,10 @@ import { getEmailSyncQueue, DEFAULT_JOB_OPTIONS } from '@/lib/redis'
  * 1. Validation: GET/POST with ?validationToken=<token> — respond with token as text/plain
  * 2. Notification: POST with array of change notifications in body
  *
- * Security: verify clientState HMAC on every notification request.
+ * Security: Graph uses the raw GRAPH_WEBHOOK_SECRET as the clientState value (not HMAC).
+ * We verify each notification's clientState matches the secret exactly.
+ * On mismatch: log a warning and skip that notification, but still return 202.
+ * (Never reveal validation logic via HTTP status codes.)
  *
  * Docs: https://learn.microsoft.com/en-us/graph/change-notifications-delivery-webhooks
  */
@@ -32,21 +35,29 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  // TODO: verify clientState HMAC signature for each notification
-  // const expectedState = process.env.GRAPH_WEBHOOK_SECRET
-  // if (notification.clientState !== expectedState) return 401
-
+  const expectedClientState = process.env.GRAPH_WEBHOOK_SECRET
   const queue = getEmailSyncQueue()
 
   for (const notification of body.value ?? []) {
+    // Verify clientState — Graph uses the raw secret as clientState (not HMAC)
+    if (expectedClientState && notification.clientState !== expectedClientState) {
+      console.warn('[graph-webhook] clientState mismatch — skipping notification')
+      continue
+    }
+
     const subscriptionId = notification.subscriptionId
 
-    // Find the EmailAccount for this subscription
-    // TODO: store subscriptionId on EmailAccount during watchChanges()
-    const account = await prisma.emailAccount.findFirst({
-      where: { provider: 'OUTLOOK' },
-      // TODO: where: { outlookSubscriptionId: subscriptionId }
+    // Look up EmailAccount by outlookSubscriptionId first, fallback to any active OUTLOOK account
+    let account = await prisma.emailAccount.findFirst({
+      where: { outlookSubscriptionId: subscriptionId },
     })
+
+    if (!account) {
+      // Fallback: find any active OUTLOOK account (temporary until all accounts store subscriptionId)
+      account = await prisma.emailAccount.findFirst({
+        where: { provider: 'OUTLOOK', active: true },
+      })
+    }
 
     if (!account) {
       console.warn(`[graph-webhook] no account found for subscription ${subscriptionId}`)

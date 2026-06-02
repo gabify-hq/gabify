@@ -4,7 +4,6 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { Paperclip } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { StatusBadge } from './status-badge'
 import { useDashboardStore } from '@/lib/dashboard-store'
 import type { MockEmail, MockEmailAction } from '@/lib/mock-data'
 import { formatRelativeTime } from '@/lib/mock-data'
@@ -14,108 +13,162 @@ interface EmailListProps {
   actions: MockEmailAction[]
 }
 
+interface ResolvedStatus {
+  label: string
+  pillClass: string
+  barClass: string
+}
+
+function resolveStatus(
+  email: MockEmail,
+  actionStatus: string | null,
+): ResolvedStatus | null {
+  if (actionStatus === 'PENDING_REVIEW') {
+    return {
+      label: 'Rascunho pendente',
+      pillClass: 'bg-amber-50 text-amber-700 ring-1 ring-amber-200',
+      barClass: 'bg-amber-400',
+    }
+  }
+  if (actionStatus === 'APPROVED') {
+    return {
+      label: 'Aprovado',
+      pillClass: 'bg-green-50 text-green-700 ring-1 ring-green-200',
+      barClass: 'bg-green-500',
+    }
+  }
+  if (actionStatus === 'EDITED_SENT') {
+    return {
+      label: 'Enviado',
+      pillClass: 'bg-green-50 text-green-700 ring-1 ring-green-200',
+      barClass: 'bg-green-500',
+    }
+  }
+  if (actionStatus === 'REJECTED') {
+    return {
+      label: 'Rejeitado',
+      pillClass: 'bg-gray-100 text-gray-500 ring-1 ring-gray-200',
+      barClass: 'bg-gray-300',
+    }
+  }
+  if (email.status === 'PROCESSED') {
+    return {
+      label: 'Processado',
+      pillClass: 'bg-gray-100 text-gray-500 ring-1 ring-gray-200',
+      barClass: 'bg-gray-300',
+    }
+  }
+  if (email.status === 'UNREAD') {
+    return {
+      label: '',
+      pillClass: '',
+      barClass: 'bg-blue-500',
+    }
+  }
+  return null
+}
+
 export function EmailList({ emails, actions }: EmailListProps) {
   const pathname = usePathname()
   const store = useDashboardStore()
   const emailToAction = new Map(actions.map((a) => [a.emailId, a]))
 
+  if (emails.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24">
+        <p className="text-sm text-gray-400">Sem emails</p>
+      </div>
+    )
+  }
+
   return (
-    <div className="flex flex-col">
-      {emails.map((email) => {
+    <div className="flex flex-col divide-y divide-gray-100">
+      {emails.map((email, index) => {
         const action = emailToAction.get(email.id)
         const persisted = action ? store.getAction(action.id) : undefined
         const actionStatus = persisted?.status ?? action?.status ?? null
-        const hasPendingDraft = actionStatus === 'PENDING_REVIEW'
-        const isSelected = pathname === `/inbox/${email.id}`
         const isUnread = email.status === 'UNREAD'
+        const isSelected = pathname === `/inbox/${email.id}`
+        const status = resolveStatus(email, actionStatus)
 
         return (
           <Link
             key={email.id}
             href={`/inbox/${email.id}`}
             className={cn(
-              'pressable relative flex flex-col gap-1.5 border-b border-zinc-800/60 px-4 py-3',
-              isSelected
-                ? 'bg-zinc-800/80'
-                : 'hover:bg-zinc-800/40',
+              'email-row-enter group relative block overflow-hidden transition-colors duration-100',
+              isSelected ? 'bg-green-50' : 'hover:bg-gray-50',
             )}
+            style={{ animationDelay: `${index * 40}ms` } as React.CSSProperties}
           >
             {/* Left status bar */}
-            <span
-              className={cn(
-                'absolute left-0 top-2 bottom-2 w-0.5 rounded-r transition-opacity duration-150',
-                isUnread && !actionStatus ? 'bg-blue-500' : '',
-                hasPendingDraft ? 'bg-amber-400' : '',
-                actionStatus === 'APPROVED' || actionStatus === 'EDITED_SENT' ? 'bg-green-500' : '',
-                actionStatus === 'REJECTED' ? 'bg-zinc-600' : '',
-                !isUnread && !actionStatus ? 'opacity-0' : '',
-              )}
-            />
+            {status?.barClass && (
+              <span
+                className={cn(
+                  'absolute left-0 top-0 bottom-0 w-[3px]',
+                  status.barClass,
+                )}
+              />
+            )}
 
-            {/* Row 1: name + time */}
-            <div className="flex items-center justify-between gap-3">
-              <span className={cn(
-                'truncate text-[13px]',
-                isUnread ? 'font-semibold text-zinc-100' : 'font-medium text-zinc-400'
-              )}>
+            <div className="px-5 py-4">
+              {/* Row 1: subject — the hero */}
+              <div className="flex items-start justify-between gap-4">
+                <p
+                  className={cn(
+                    'flex-1 text-[14px] leading-snug',
+                    isUnread
+                      ? 'font-bold text-gray-900'
+                      : 'font-medium text-gray-400',
+                  )}
+                >
+                  {email.subject}
+                </p>
+                <div className="flex shrink-0 items-center gap-2 pt-0.5">
+                  {email.hasAttachments && (
+                    <span className="flex items-center gap-1 text-gray-400">
+                      <Paperclip className="h-3 w-3 stroke-[1.5]" />
+                      <span className="data text-[10px]">{email.attachmentCount}</span>
+                    </span>
+                  )}
+                  <time className="data text-[11px] text-gray-400">
+                    {formatRelativeTime(email.receivedAt)}
+                  </time>
+                </div>
+              </div>
+
+              {/* Row 2: sender */}
+              <p
+                className={cn(
+                  'mt-1 text-[13px]',
+                  isUnread ? 'font-medium text-gray-600' : 'text-gray-400',
+                )}
+              >
                 {email.fromName}
-              </span>
-              <span className="data shrink-0 text-[11px] text-zinc-600">
-                {formatRelativeTime(email.receivedAt)}
-              </span>
-            </div>
+              </p>
 
-            {/* Row 2: subject */}
-            <p className={cn(
-              'truncate text-[12px]',
-              isUnread ? 'text-zinc-300' : 'text-zinc-600'
-            )}>
-              {email.subject}
-            </p>
+              {/* Row 3: client chip + status pill */}
+              <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                {email.clientName ? (
+                  <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-[11px] font-medium text-gray-600">
+                    {email.clientName}
+                  </span>
+                ) : (
+                  <span className="rounded-full bg-orange-50 px-2.5 py-0.5 text-[11px] font-medium text-orange-600 ring-1 ring-orange-100">
+                    Sem cliente
+                  </span>
+                )}
 
-            {/* Row 3: meta */}
-            <div className="flex flex-wrap items-center gap-2">
-              {email.clientName ? (
-                <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] font-medium text-zinc-400">
-                  {email.clientName}
-                </span>
-              ) : (
-                <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-500">
-                  Sem cliente
-                </span>
-              )}
-
-              {hasPendingDraft && (
-                <StatusBadge variant="pending" label="Rascunho pendente" />
-              )}
-              {actionStatus === 'APPROVED' && (
-                <StatusBadge variant="approved" label="Aprovado" />
-              )}
-              {actionStatus === 'EDITED_SENT' && (
-                <StatusBadge variant="approved" label="Enviado" />
-              )}
-              {actionStatus === 'REJECTED' && (
-                <StatusBadge variant="rejected" label="Rejeitado" />
-              )}
-              {email.status === 'PROCESSED' && !action && (
-                <StatusBadge variant="approved" label="Processado" />
-              )}
-              {email.hasAttachments && (
-                <span className="flex items-center gap-1 text-[11px] text-zinc-600">
-                  <Paperclip className="h-3 w-3" />
-                  <span className="data">{email.attachmentCount}</span>
-                </span>
-              )}
+                {status?.label && (
+                  <span className={cn('rounded-full px-2.5 py-0.5 text-[11px] font-semibold', status.pillClass)}>
+                    {status.label}
+                  </span>
+                )}
+              </div>
             </div>
           </Link>
         )
       })}
-
-      {emails.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-20">
-          <p className="text-[13px] text-zinc-600">Sem emails</p>
-        </div>
-      )}
     </div>
   )
 }

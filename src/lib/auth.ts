@@ -1,24 +1,38 @@
 import NextAuth from 'next-auth'
-import { PrismaAdapter } from '@auth/prisma-adapter'
 import Resend from 'next-auth/providers/resend'
 import { prisma } from '@/lib/prisma'
+import { authConfig } from '@/lib/auth.config'
+import { GabifyAdapter } from '@/lib/auth-adapter'
+import type { UserRole } from '@prisma/client'
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  adapter: PrismaAdapter(prisma),
+  pages: authConfig.pages,
+  adapter: GabifyAdapter(prisma),
+  session: { strategy: 'jwt', maxAge: 24 * 60 * 60 }, // 24h
   providers: [
     Resend({
       apiKey: process.env.RESEND_API_KEY,
       from: process.env.FROM_EMAIL ?? 'no-reply@gabify.pt',
     }),
   ],
-  pages: {
-    signIn: '/auth/signin',
-    verifyRequest: '/auth/verify',
-  },
   callbacks: {
-    session({ session, user }) {
-      session.user.id = user.id
-      // TODO: add officeId and role to session
+    async jwt({ token, user }) {
+      // `user` is only present on first sign-in — enrich token with DB fields
+      if (user?.id) {
+        const dbUser = await prisma.user.findUnique({
+          where: { id: user.id },
+          select: { officeId: true, role: true },
+        })
+        token.id = user.id
+        token.officeId = dbUser?.officeId ?? null
+        token.role = dbUser?.role ?? 'ACCOUNTANT'
+      }
+      return token
+    },
+    session({ session, token }) {
+      session.user.id = token.id as string
+      session.user.officeId = (token.officeId as string | null) ?? null
+      session.user.role = (token.role as UserRole) ?? 'ACCOUNTANT'
       return session
     },
   },
@@ -32,6 +46,9 @@ declare module 'next-auth' {
       email: string
       name?: string | null
       image?: string | null
+      officeId: string | null
+      role: UserRole
     }
   }
 }
+

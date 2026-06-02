@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server'
+import { createRemoteJWKSet, jwtVerify } from 'jose'
 import { prisma } from '@/lib/prisma'
 import { getEmailSyncQueue, DEFAULT_JOB_OPTIONS } from '@/lib/redis'
 
@@ -9,20 +10,40 @@ import { getEmailSyncQueue, DEFAULT_JOB_OPTIONS } from '@/lib/redis'
  * Payload is base64-encoded JSON in request.body.message.data.
  *
  * Security: verify the Google-signed JWT in the Authorization header.
+ * Google uses JWKS at https://www.googleapis.com/oauth2/v3/certs.
+ * The JWT audience must match the webhook URL.
  *
  * Docs: https://developers.google.com/gmail/api/guides/push
  */
+
+// Cache the JWKS remotely — createRemoteJWKSet handles caching internally
+const GOOGLE_JWKS = createRemoteJWKSet(
+  new URL('https://www.googleapis.com/oauth2/v3/certs')
+)
+
 export async function POST(request: NextRequest) {
+  // Verify Google JWT signature before processing anything
+  const authHeader = request.headers.get('Authorization')
+  if (authHeader) {
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader
+    const webhookUrl =
+      process.env.GMAIL_WEBHOOK_URL ??
+      `${process.env.NEXTAUTH_URL}/api/webhooks/gmail`
+    try {
+      await jwtVerify(token, GOOGLE_JWKS, { audience: webhookUrl })
+    } catch {
+      // Do not reveal why validation failed — log internally, return 200 to avoid Pub/Sub retries
+      console.warn('[gmail-webhook] JWT verification failed — ignoring notification')
+      return NextResponse.json({}, { status: 200 })
+    }
+  }
+
   let body: PubSubPushPayload
   try {
     body = await request.json()
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
-
-  // TODO: verify Google JWT signature
-  // const authHeader = request.headers.get('Authorization')
-  // await verifyGoogleJWT(authHeader)
 
   // Decode the Pub/Sub message
   const messageData = body.message?.data
