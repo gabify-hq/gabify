@@ -2,6 +2,7 @@ import { Users } from 'lucide-react'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { NewClientDialog } from '@/components/dashboard/new-client-dialog'
+import { EditClientDialog } from '@/components/dashboard/edit-client-dialog'
 import { cn } from '@/lib/utils'
 
 export default async function ClientsPage() {
@@ -19,6 +20,7 @@ export default async function ClientsPage() {
           email: true,
           emailDomains: true,
           knownEmails: true,
+          notes: true,
           createdAt: true,
           _count: { select: { inboundEmails: true } },
         },
@@ -55,7 +57,7 @@ export default async function ClientsPage() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50">
-                  {['Nome', 'NIF', 'Email', 'Domínios / Emails conhecidos', 'Emails'].map((h) => (
+                  {['Nome', 'NIF', 'Email', 'Domínios / Emails conhecidos', 'Emails', ''].map((h) => (
                     <th
                       key={h}
                       className="px-5 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-gray-400"
@@ -125,6 +127,11 @@ export default async function ClientsPage() {
                       <span className="data text-[12px] text-gray-500">
                         {client._count.inboundEmails}
                       </span>
+                    </td>
+
+                    {/* Edit action */}
+                    <td className="px-3 py-3">
+                      <EditClientDialog client={client} />
                     </td>
                   </tr>
                 ))}
