@@ -29,6 +29,7 @@ export type ActionStatus =
 export type DocumentType =
   | 'INVOICE_RECEIVED'
   | 'INVOICE_ISSUED'
+  | 'INVOICE_RECEIPT'
   | 'RECEIPT'
   | 'BANK_STATEMENT'
   | 'PAYROLL'
