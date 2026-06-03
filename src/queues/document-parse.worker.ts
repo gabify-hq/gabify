@@ -151,7 +151,17 @@ export const documentParseWorker = new Worker<DocumentParseJobData>(
         // Gather all classified documents for this email to provide context in the draft
         const emailDocs = await prisma.emailAttachment.findMany({
           where: { inboundEmailId: attachment.inboundEmail.id },
-          select: { filename: true, document: { select: { type: true } } },
+          select: {
+            filename: true,
+            document: {
+              select: {
+                type: true,
+                extractedDate: true,
+                extractedAmount: true,
+                extractedVATNumber: true,
+              },
+            },
+          },
         })
 
         const receivedDocuments: ReceivedDocument[] = emailDocs
@@ -160,6 +170,11 @@ export const documentParseWorker = new Worker<DocumentParseJobData>(
             filename: a.filename,
             type: a.document!.type,
             typeLabel: DOCUMENT_TYPE_LABELS[a.document!.type as keyof typeof DOCUMENT_TYPE_LABELS] ?? a.document!.type,
+            extractedDate: a.document!.extractedDate
+              ? a.document!.extractedDate.toLocaleDateString('pt-PT')
+              : null,
+            extractedAmount: a.document!.extractedAmount ?? null,
+            extractedVATNumber: a.document!.extractedVATNumber ?? null,
           }))
 
         await generateAndStoreDraft({
