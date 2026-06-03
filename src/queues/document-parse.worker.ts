@@ -190,8 +190,9 @@ export const documentParseWorker = new Worker<DocumentParseJobData>(
     })
 
     // 7. Attempt draft generation if confidence threshold is met.
-    // Extracted into checkAndGenerateDraft() so we can also call it from the early-exit path.
-    await checkAndGenerateDraft(attachment, officeId)
+    // Pass classificationResult.confidence explicitly — attachment.document was loaded before
+    // classification ran, so attachment.document?.confidence is stale (null or old value).
+    await checkAndGenerateDraft(attachment, officeId, classificationResult.confidence)
 
     return { documentId: document.id, type: classificationResult.type }
   },
@@ -230,9 +231,11 @@ async function checkAndGenerateDraft(
     }
     document: { confidence: number | null } | null
   },
-  officeId: string
+  officeId: string,
+  // Pass explicitly when attachment.document is stale (loaded before classification ran)
+  classifiedConfidence?: number
 ): Promise<void> {
-  const confidence = attachment.document?.confidence ?? 0
+  const confidence = classifiedConfidence ?? attachment.document?.confidence ?? 0
   if (confidence < DRAFT_CONFIDENCE_THRESHOLD) return
 
   const existingDraft = await prisma.emailAction.findFirst({
