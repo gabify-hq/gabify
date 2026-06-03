@@ -363,8 +363,18 @@ Notas importantes:
 - Fatura normal (tipo FT na AT) → INVOICE_RECEIVED
 - Documentos certificados AT sem NIF adquirente → RECEIPT
 - Talões de supermercado sem NIF → RECEIPT
-- O campo extractedAmount é o total final do documento (após descontos, com IVA incluído)
 - O campo extractedVATNumber é o NIF do emitente (9 dígitos)
+
+REGRA CRÍTICA para extractedAmount — valor TOTAL FINAL pago (com IVA, após todos os descontos):
+- Procura a linha com a palavra "TOTAL" seguida do valor final (ex: "TOTAL: Eur 66,49" ou "TOTAL A PAGAR: 66,49")
+- Em recibos portugueses, o layout da secção de impostos é:
+    TAXA    IVA      INCID.
+    13%     5,36     41,23     ← bases tributáveis por taxa, IGNORA
+    TOTAL INCIDÊNCIAS: 57,41   ← soma das bases SEM IVA, IGNORA
+    DESCONTOS: 19,11            ← descontos já aplicados, IGNORA
+    TOTAL:  Eur 66,49           ← ESTE é o valor correcto ✓
+- NUNCA uses "TOTAL INCIDÊNCIAS", "Base Tributável", "Subtotal" nem valores de IVA isolados
+- O total correcto = base tributável + IVA = aparece DEPOIS da linha DESCONTOS (se existir)
 
 Responde APENAS em JSON, sem texto adicional:
 {
@@ -390,7 +400,12 @@ BANK_STATEMENT, PAYROLL,
 TAX_DOCUMENT, AT_COMMUNICATION, SOCIAL_SECURITY, CONTRACT,
 BALANCE_SHEET, INCOME_STATEMENT, OTHER
 
-Nota: se o texto contiver "FATURA-RECIBO" ou "FR" no cabeçalho do documento → INVOICE_RECEIPT.
+Notas:
+- Se o texto contiver "FATURA-RECIBO" ou tipo "FR" no cabeçalho → INVOICE_RECEIPT
+- extractedAmount = valor TOTAL FINAL pago (com IVA, após descontos)
+  NUNCA uses "TOTAL INCIDÊNCIAS" (base sem IVA) nem subtotais
+  Em recibos PT: o valor correcto está na linha "TOTAL:" ou "TOTAL A PAGAR:", APÓS a linha "DESCONTOS:" se existir
+- extractedVATNumber = NIF do emitente (9 dígitos)
 
 Responde APENAS em JSON, sem texto adicional:
 {
