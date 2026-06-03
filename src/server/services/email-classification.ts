@@ -149,6 +149,77 @@ export async function classifyImage(
 }
 
 /**
+ * Classifies a scanned PDF by sending the raw PDF buffer to Claude's native PDF support.
+ * Claude reads the PDF directly (including scanned pages via its own OCR).
+ */
+export async function classifyPdfDocument(
+  buffer: Buffer,
+  documentId: string
+): Promise<ClassificationResult> {
+  const response = await anthropic.messages.create({
+    model: CLAUDE_MODEL,
+    max_tokens: CLASSIFICATION_MAX_TOKENS,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'document' as const,
+            source: {
+              type: 'base64' as const,
+              media_type: 'application/pdf' as const,
+              data: buffer.toString('base64'),
+            },
+          },
+          {
+            type: 'text',
+            text: buildClassificationPromptForImage(),
+          },
+        ],
+      },
+    ],
+  })
+
+  const content = response.content[0]
+  if (content.type !== 'text') {
+    throw new Error('Unexpected response type from Claude PDF classification')
+  }
+
+  let result: ClassificationResult
+  try {
+    const jsonText = content.text.trim().replace(/^```json?\n?/, '').replace(/\n?```$/, '')
+    const parsed: unknown = JSON.parse(jsonText)
+    result = Array.isArray(parsed) ? (parsed[0] as ClassificationResult) : (parsed as ClassificationResult)
+  } catch {
+    throw new Error(`Failed to parse PDF classification response: ${content.text}`)
+  }
+
+  const status = result.confidence >= CONFIDENCE_AUTO ? 'CLASSIFIED' : 'NEEDS_REVIEW'
+
+  await prisma.document.update({
+    where: { id: documentId },
+    data: {
+      type: result.type as DocumentType,
+      status,
+      confidence: result.confidence,
+      reasoning: result.reasoning,
+      extractedDate: result.extractedDate ? parsePtDate(result.extractedDate) : null,
+      extractedAmount: result.extractedAmount ?? null,
+      extractedVATNumber: result.extractedVATNumber ?? null,
+      aiModel: CLAUDE_MODEL,
+    },
+  })
+
+  return result
+}
+
+export interface ReceivedDocument {
+  filename: string
+  type: string
+  typeLabel: string
+}
+
+/**
  * Generates an email draft reply using Claude AI.
  * Returns the draft text — NEVER sends automatically.
  * Caller is responsible for creating EmailAction + AuditLog.
@@ -159,10 +230,11 @@ export async function generateEmailDraft(params: {
   bodyText: string | null
   clientName: string | null
   accountantName: string
+  receivedDocuments?: ReceivedDocument[]
 }): Promise<string> {
-  const { subject, bodyText, clientName, accountantName } = params
+  const { subject, bodyText, clientName, accountantName, receivedDocuments } = params
 
-  const prompt = buildDraftPrompt({ subject, bodyText, clientName, accountantName })
+  const prompt = buildDraftPrompt({ subject, bodyText, clientName, accountantName, receivedDocuments })
 
   const response = await anthropic.messages.create({
     model: CLAUDE_MODEL,
@@ -228,8 +300,14 @@ function buildDraftPrompt(params: {
   bodyText: string | null
   clientName: string | null
   accountantName: string
+  receivedDocuments?: ReceivedDocument[]
 }): string {
-  const { subject, bodyText, clientName, accountantName } = params
+  const { subject, bodyText, clientName, accountantName, receivedDocuments } = params
+
+  const docsSection = receivedDocuments && receivedDocuments.length > 0
+    ? `\nDocumentos recebidos e classificados neste email:\n${receivedDocuments.map(d => `- ${d.filename} → ${d.typeLabel}`).join('\n')}\n`
+    : ''
+
   return `És um assistente de um contabilista português. Gera um rascunho de resposta ao email abaixo.
 
 Regras:
@@ -241,7 +319,8 @@ Regras:
 - Termina com "Com os melhores cumprimentos,\n${accountantName}"
 - Datas no formato DD/MM/YYYY
 - Responde APENAS o corpo do email, sem assunto ou metadados
-
+- Se foram recebidos documentos, confirma a receção no rascunho — não peças documentos que já foram enviados
+${docsSection}
 ${clientName ? `Cliente: ${clientName}` : ''}
 ${subject ? `Assunto: ${subject}` : ''}
 

@@ -165,7 +165,7 @@ describe('extractText', () => {
 
       const result = await extractText(Buffer.from(''), 'big.xlsx')
 
-      const rowCount = result.split('\n').filter(l => l.startsWith('row')).length
+      const rowCount = (result ?? '').split('\n').filter(l => l.startsWith('row')).length
       expect(rowCount).toBeLessThanOrEqual(100)
     })
   })
@@ -276,8 +276,8 @@ describe('extractText', () => {
       const result = await extractText(Buffer.from(''), 'big.pdf')
 
       expect(result).toHaveLength(8000 + '\n[truncated]'.length)
-      expect(result.endsWith('\n[truncated]')).toBe(true)
-      expect(result.startsWith('a'.repeat(8000))).toBe(true)
+      expect(result!.endsWith('\n[truncated]')).toBe(true)
+      expect(result!.startsWith('a'.repeat(8000))).toBe(true)
     })
 
     it('truncates DOCX output longer than 8000 chars', async () => {
@@ -287,7 +287,7 @@ describe('extractText', () => {
       const result = await extractText(Buffer.from(''), 'big.docx')
 
       expect(result).toHaveLength(8000 + '\n[truncated]'.length)
-      expect(result.endsWith('\n[truncated]')).toBe(true)
+      expect(result!.endsWith('\n[truncated]')).toBe(true)
     })
 
     it('truncates TXT output longer than 8000 chars', async () => {
@@ -297,7 +297,7 @@ describe('extractText', () => {
       const result = await extractText(buffer, 'big.txt')
 
       expect(result).toHaveLength(8000 + '\n[truncated]'.length)
-      expect(result.endsWith('\n[truncated]')).toBe(true)
+      expect(result!.endsWith('\n[truncated]')).toBe(true)
     })
 
     it('does not truncate output of exactly 8000 chars', async () => {

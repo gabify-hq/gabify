@@ -3,7 +3,8 @@ import { redisConnection, QUEUE_DOCUMENT_PARSE } from '@/lib/redis'
 import { prisma } from '@/lib/prisma'
 import { createEmailProvider } from '@/server/email-providers'
 import { uploadToR2, buildAttachmentKey } from '@/lib/r2'
-import { classifyDocument, classifyImage, generateEmailDraft } from '@/server/services/email-classification'
+import { classifyDocument, classifyImage, classifyPdfDocument, generateEmailDraft, type ReceivedDocument } from '@/server/services/email-classification'
+import { DOCUMENT_TYPE_LABELS } from '@/lib/mock-data'
 import { CLAUDE_MODEL } from '@/lib/anthropic'
 import { extractText } from '@/lib/text-extractor'
 
@@ -80,9 +81,12 @@ export const documentParseWorker = new Worker<DocumentParseJobData>(
       data: { r2Key, uploadedAt: new Date() },
     })
 
-    // 3. Extract text content (skipped for images — Claude Vision handles those)
+    // 3. Extract text content
     const isImage = VISION_MIME_TYPES.has(attachment.mimeType)
+    const isPdf = attachment.mimeType === 'application/pdf' || attachment.filename.toLowerCase().endsWith('.pdf')
+    // extractText returns null for images (caller handles) and scanned PDFs (no text layer)
     const textContent = isImage ? null : await extractText(buffer, attachment.filename)
+    const isScannedPdf = isPdf && textContent === null
 
     // 4. Create Document record (pending classification) — upsert for idempotency
     // (job may retry after classifyDocument fails; document already exists in that case)
@@ -98,10 +102,15 @@ export const documentParseWorker = new Worker<DocumentParseJobData>(
       update: { textContent, r2Key },
     })
 
-    // 5. Classify with Claude AI — Vision for images, text for everything else
+    // 5. Classify with Claude AI:
+    //    - Images → Claude Vision (base64 image block)
+    //    - Scanned PDFs → Claude PDF native (base64 document block, Claude does OCR)
+    //    - Text documents → text classification
     const classificationResult = isImage
       ? await classifyImage(buffer, attachment.mimeType, document.id)
-      : await classifyDocument(textContent ?? '', document.id)
+      : isScannedPdf
+        ? await classifyPdfDocument(buffer, document.id)
+        : await classifyDocument(textContent ?? '', document.id)
 
     // 6. Create AuditLog entry — AI action must be logged before any external effect
     await prisma.auditLog.create({
@@ -120,14 +129,36 @@ export const documentParseWorker = new Worker<DocumentParseJobData>(
       },
     })
 
-    // 7. Wire draft generation — only if confidence is high enough
+    // 7. Wire draft generation — only if confidence is high enough and no draft exists yet
     const DRAFT_CONFIDENCE_THRESHOLD = 0.7
     if (classificationResult.confidence >= DRAFT_CONFIDENCE_THRESHOLD) {
-      await generateAndStoreDraft({
-        inboundEmail: attachment.inboundEmail,
-        clientName: attachment.inboundEmail.client?.name ?? null,
-        officeId,
+      const existingDraft = await prisma.emailAction.findFirst({
+        where: { inboundEmailId: attachment.inboundEmail.id, type: 'DRAFT_REPLY' },
+        select: { id: true },
       })
+
+      if (!existingDraft) {
+        // Gather all classified documents for this email to provide context in the draft
+        const emailDocs = await prisma.emailAttachment.findMany({
+          where: { inboundEmailId: attachment.inboundEmail.id },
+          select: { filename: true, document: { select: { type: true } } },
+        })
+
+        const receivedDocuments: ReceivedDocument[] = emailDocs
+          .filter((a) => a.document?.type)
+          .map((a) => ({
+            filename: a.filename,
+            type: a.document!.type,
+            typeLabel: DOCUMENT_TYPE_LABELS[a.document!.type as keyof typeof DOCUMENT_TYPE_LABELS] ?? a.document!.type,
+          }))
+
+        await generateAndStoreDraft({
+          inboundEmail: attachment.inboundEmail,
+          clientName: attachment.inboundEmail.client?.name ?? null,
+          officeId,
+          receivedDocuments,
+        })
+      }
     }
 
     return { documentId: document.id, type: classificationResult.type }
@@ -158,8 +189,9 @@ async function generateAndStoreDraft(params: {
   }
   clientName: string | null
   officeId: string
+  receivedDocuments?: ReceivedDocument[]
 }): Promise<void> {
-  const { inboundEmail, clientName, officeId } = params
+  const { inboundEmail, clientName, officeId, receivedDocuments } = params
 
   try {
     // Look up the office owner name to use as the accountant signature
@@ -187,6 +219,7 @@ async function generateAndStoreDraft(params: {
       bodyText: inboundEmail.bodyText,
       clientName,
       accountantName,
+      receivedDocuments,
     })
 
     const emailAction = await prisma.emailAction.create({
