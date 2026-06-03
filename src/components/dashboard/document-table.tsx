@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { FileText, ExternalLink } from 'lucide-react'
+import { FileText, Eye, Download } from 'lucide-react'
 import {
   Table,
   TableBody,
@@ -198,13 +198,27 @@ export function DocumentTable({ documents, hideClientFilter = false }: DocumentT
                   />
                 </TableCell>
                 <TableCell className="py-2.5">
-                  <button
-                    className="pressable rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
-                    title="Ver documento"
-                    onClick={() => setPreviewDoc(doc)}
-                  >
-                    <ExternalLink className="h-3.5 w-3.5 stroke-[1.75]" />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      className="pressable rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
+                      title="Pré-visualizar"
+                      onClick={() => setPreviewDoc(doc)}
+                    >
+                      <Eye className="h-3.5 w-3.5 stroke-[1.75]" />
+                    </button>
+                    <button
+                      className="pressable rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
+                      title="Descarregar"
+                      onClick={async () => {
+                        const res = await fetch(`/api/documents/${doc.id}`)
+                        if (!res.ok) return
+                        const { data } = await res.json()
+                        window.open(data.url, '_blank')
+                      }}
+                    >
+                      <Download className="h-3.5 w-3.5 stroke-[1.75]" />
+                    </button>
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
