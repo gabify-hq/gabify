@@ -71,8 +71,8 @@ describe('atQRDocTypeToDocumentType', () => {
     expect(atQRDocTypeToDocumentType('FT')).toBe('INVOICE_RECEIVED')
   })
 
-  it('maps FR (Fatura-Recibo) to INVOICE_RECEIVED', () => {
-    expect(atQRDocTypeToDocumentType('FR')).toBe('INVOICE_RECEIVED')
+  it('maps FR (Fatura-Recibo) to INVOICE_RECEIPT', () => {
+    expect(atQRDocTypeToDocumentType('FR')).toBe('INVOICE_RECEIPT')
   })
 
   it('maps FS (Fatura Simplificada) to RECEIPT', () => {

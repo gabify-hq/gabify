@@ -50,9 +50,10 @@ enum ActionStatus {
 }
 
 enum DocumentType {
-  INVOICE_RECEIVED
-  INVOICE_ISSUED
-  RECEIPT
+  INVOICE_RECEIVED    // Fatura recebida de fornecedor
+  INVOICE_ISSUED      // Fatura emitida pelo cliente
+  INVOICE_RECEIPT     // Fatura-Recibo (AT doc type FR — combina fatura + recibo de pagamento)
+  RECEIPT             // Talão / recibo simples / fatura simplificada sem NIF adquirente
   BANK_STATEMENT
   PAYROLL
   TAX_DOCUMENT

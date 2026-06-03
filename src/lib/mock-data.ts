@@ -378,6 +378,7 @@ Dr. António Ferreira`,
 export const DOCUMENT_TYPE_LABELS: Record<DocumentType, string> = {
   INVOICE_RECEIVED: 'Fatura recebida',
   INVOICE_ISSUED: 'Fatura emitida',
+  INVOICE_RECEIPT: 'Fatura-Recibo',
   RECEIPT: 'Recibo',
   BANK_STATEMENT: 'Extrato bancário',
   PAYROLL: 'Recibo de vencimento',

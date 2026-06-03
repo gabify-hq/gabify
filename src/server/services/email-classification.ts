@@ -300,8 +300,9 @@ function buildClassificationPromptForImage(): string {
 Analisa o documento em anexo e classifica-o.
 
 Tipos válidos e exemplos:
-- INVOICE_RECEIVED — fatura, fatura-recibo ou nota de débito/crédito recebida (ex: restaurante, fornecedor, combustível)
+- INVOICE_RECEIVED — fatura recebida de fornecedor (ex: FT com NIF comprador)
 - INVOICE_ISSUED — fatura emitida pelo cliente a terceiros
+- INVOICE_RECEIPT — Fatura-Recibo (documento AT tipo FR: combina fatura + recibo de pagamento; ex: restaurante, combustível, serviços)
 - RECEIPT — talão de caixa, recibo simples, fatura simplificada sem NIF do adquirente
 - BANK_STATEMENT — extracto bancário
 - PAYROLL — recibo de vencimento, processamento salarial
@@ -314,8 +315,9 @@ Tipos válidos e exemplos:
 - OTHER — qualquer outro documento
 
 Notas importantes:
-- "Fatura-Recibo" (FATURA-RECIBO) é um documento fiscal com NIF → INVOICE_RECEIVED
-- Documentos certificados AT (com QR code ou ATCUD) com NIF → INVOICE_RECEIVED
+- "Fatura-Recibo" (FATURA-RECIBO, tipo FR na AT) → INVOICE_RECEIPT
+- Fatura normal (tipo FT na AT) → INVOICE_RECEIVED
+- Documentos certificados AT sem NIF adquirente → RECEIPT
 - Talões de supermercado sem NIF → RECEIPT
 - O campo extractedAmount é o total final do documento (após descontos, com IVA incluído)
 - O campo extractedVATNumber é o NIF do emitente (9 dígitos)
@@ -336,9 +338,15 @@ function buildClassificationPrompt(textContent: string): string {
 Analisa o seguinte texto e classifica o documento.
 
 Tipos válidos:
-INVOICE_RECEIVED, INVOICE_ISSUED, RECEIPT, BANK_STATEMENT, PAYROLL,
+INVOICE_RECEIVED (fatura de fornecedor),
+INVOICE_ISSUED (fatura emitida pelo cliente),
+INVOICE_RECEIPT (Fatura-Recibo AT tipo FR — combina fatura + recibo),
+RECEIPT (talão/recibo simples sem NIF adquirente),
+BANK_STATEMENT, PAYROLL,
 TAX_DOCUMENT, AT_COMMUNICATION, SOCIAL_SECURITY, CONTRACT,
 BALANCE_SHEET, INCOME_STATEMENT, OTHER
+
+Nota: se o texto contiver "FATURA-RECIBO" ou "FR" no cabeçalho do documento → INVOICE_RECEIPT.
 
 Responde APENAS em JSON, sem texto adicional:
 {

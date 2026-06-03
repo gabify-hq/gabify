@@ -95,7 +95,7 @@ export function atQRDocTypeToDocumentType(docTypeCode: string): string {
   switch (docTypeCode) {
     case 'FT': return 'INVOICE_RECEIVED'    // Fatura
     case 'FS': return 'RECEIPT'             // Fatura Simplificada (sem NIF comprador)
-    case 'FR': return 'INVOICE_RECEIVED'    // Fatura-Recibo (combina fatura + recibo)
+    case 'FR': return 'INVOICE_RECEIPT'     // Fatura-Recibo (combina fatura + recibo de pagamento)
     case 'NC': return 'INVOICE_RECEIVED'    // Nota de Crédito
     case 'ND': return 'INVOICE_RECEIVED'    // Nota de Débito
     case 'GR': return 'OTHER'               // Guia de Remessa
