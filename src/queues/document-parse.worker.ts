@@ -48,8 +48,10 @@ export const documentParseWorker = new Worker<DocumentParseJobData>(
       },
     })
 
-    if (attachment.document) {
-      console.log(`[document-parse] attachment ${attachmentId} already processed, skipping`)
+    // Skip only if fully classified/reviewed — allow retry for stuck PENDING_CLASSIFICATION
+    const DONE_STATUSES = new Set(['CLASSIFIED', 'REVIEWED'])
+    if (attachment.document && DONE_STATUSES.has(attachment.document.status)) {
+      console.log(`[document-parse] attachment ${attachmentId} already processed (${attachment.document.status}), skipping`)
       return
     }
 
@@ -82,15 +84,18 @@ export const documentParseWorker = new Worker<DocumentParseJobData>(
     const isImage = VISION_MIME_TYPES.has(attachment.mimeType)
     const textContent = isImage ? null : await extractText(buffer, attachment.filename)
 
-    // 4. Create Document record (pending classification)
-    const document = await prisma.document.create({
-      data: {
+    // 4. Create Document record (pending classification) — upsert for idempotency
+    // (job may retry after classifyDocument fails; document already exists in that case)
+    const document = await prisma.document.upsert({
+      where: { attachmentId },
+      create: {
         attachmentId,
         clientId: attachment.inboundEmail.clientId,
         status: 'PENDING_CLASSIFICATION',
         textContent,
         r2Key,
       },
+      update: { textContent, r2Key },
     })
 
     // 5. Classify with Claude AI — Vision for images, text for everything else

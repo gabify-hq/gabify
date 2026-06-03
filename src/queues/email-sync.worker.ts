@@ -64,12 +64,11 @@ export const emailSyncWorker = new Worker<EmailSyncJobData>(
         await assignClientToEmail(email.id, match)
       }
 
-      // 5. Queue document parsing for new attachments
+      // 5. Queue document parsing for attachments without a Document record
+      // Note: do NOT filter on uploadedAt/r2Key — those may be set from a failed previous run
       const attachments = await prisma.emailAttachment.findMany({
         where: {
           inboundEmail: { emailAccountId },
-          uploadedAt: null,
-          r2Key: null,
           document: null,
         },
         select: { id: true, inboundEmailId: true },

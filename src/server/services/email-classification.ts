@@ -37,7 +37,11 @@ export async function classifyDocument(
 
   let result: ClassificationResult
   try {
-    result = JSON.parse(content.text)
+    // Strip markdown code fences if Claude wraps the response
+    const jsonText = content.text.trim().replace(/^```json?\n?/, '').replace(/\n?```$/, '')
+    // Claude occasionally returns an array for multi-page docs — take the first item
+    const parsed: unknown = JSON.parse(jsonText)
+    result = Array.isArray(parsed) ? (parsed[0] as ClassificationResult) : (parsed as ClassificationResult)
   } catch {
     throw new Error(`Failed to parse classification response: ${content.text}`)
   }
