@@ -328,7 +328,9 @@ Regras:
 - Termina com "Com os melhores cumprimentos,\n${accountantName}"
 - Datas no formato DD/MM/YYYY
 - Responde APENAS o corpo do email, sem assunto ou metadados
-- Se foram recebidos documentos, confirma a receção no rascunho — não peças documentos que já foram enviados
+- Se foram recebidos documentos, confirma a receção — não peças documentos que já foram enviados
+- Responde APENAS ao que foi perguntado — não acrescentes perguntas, pedidos ou informações que o cliente não solicitou
+- Se o cliente pediu confirmação, confirma e termina — não elabores nem peças dados adicionais
 ${docsSection}
 ${clientName ? `Cliente: ${clientName}` : ''}
 ${subject ? `Assunto: ${subject}` : ''}
