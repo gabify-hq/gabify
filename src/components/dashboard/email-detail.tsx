@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Check, X, Pencil, ChevronLeft, Paperclip } from 'lucide-react'
+import { Check, X, Pencil, ChevronLeft, Paperclip, Download } from 'lucide-react'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { Textarea } from '@/components/ui/textarea'
@@ -108,7 +108,19 @@ export function EmailDetail({ email, action, attachments = [] }: EmailDetailProp
                     >
                       <Paperclip className="h-3.5 w-3.5 shrink-0 stroke-[1.5] text-gray-400" />
                       <span className="truncate text-[12px] text-gray-700">{att.filename}</span>
-                      <span className="ml-auto shrink-0 text-[10px] text-gray-400">{att.mimeType}</span>
+                      <span className="shrink-0 text-[10px] text-gray-400">{att.mimeType}</span>
+                      <button
+                        className="ml-auto shrink-0 rounded p-1 text-gray-400 transition-colors hover:bg-gray-200 hover:text-gray-700"
+                        title="Descarregar"
+                        onClick={async () => {
+                          const res = await fetch(`/api/attachments/${att.id}`)
+                          if (!res.ok) return
+                          const { data } = await res.json()
+                          window.open(data.url, '_blank')
+                        }}
+                      >
+                        <Download className="h-3.5 w-3.5 stroke-[1.5]" />
+                      </button>
                     </div>
                   ))}
                 </div>
