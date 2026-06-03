@@ -40,9 +40,12 @@ import AdmZip from 'adm-zip'
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 describe('extractText', () => {
+  // Long enough to exceed PDF_MIN_TEXT_CHARS (50) so the text-layer path is exercised
+  const LONG_PDF_TEXT = 'Este é o conteúdo extraído do PDF pelo pdf-parse com texto suficiente para classificação.'
+
   beforeEach(() => {
     vi.clearAllMocks()
-    mockGetText.mockResolvedValue({ text: 'extracted pdf text' })
+    mockGetText.mockResolvedValue({ text: LONG_PDF_TEXT })
     vi.mocked(mammoth.extractRawText).mockResolvedValue({ value: 'extracted docx text', messages: [] })
   })
 
@@ -54,7 +57,7 @@ describe('extractText', () => {
 
       expect(PDFParse).toHaveBeenCalledWith({ data: buffer })
       expect(mockGetText).toHaveBeenCalledOnce()
-      expect(result).toBe('extracted pdf text')
+      expect(result).toBe(LONG_PDF_TEXT)
     })
 
     it('works with uppercase extension (.PDF)', async () => {
@@ -62,7 +65,13 @@ describe('extractText', () => {
       const result = await extractText(buffer, 'INVOICE.PDF')
 
       expect(PDFParse).toHaveBeenCalledWith({ data: buffer })
-      expect(result).toBe('extracted pdf text')
+      expect(result).toBe(LONG_PDF_TEXT)
+    })
+
+    it('returns null for scanned PDF (text shorter than 50 chars)', async () => {
+      mockGetText.mockResolvedValue({ text: 'short' })
+      const result = await extractText(Buffer.from('fake pdf'), 'scanned.pdf')
+      expect(result).toBeNull()
     })
   })
 
@@ -191,7 +200,8 @@ describe('extractText', () => {
   // ZIP
   describe('.zip files', () => {
     it('extracts and concatenates text from each inner file', async () => {
-      mockGetText.mockResolvedValue({ text: 'fatura pdf content' })
+      const longPdfContent = 'Conteúdo do PDF da fatura com texto suficientemente longo para passar o limite mínimo de caracteres.'
+      mockGetText.mockResolvedValue({ text: longPdfContent })
 
       const mockEntries = [
         {
@@ -210,7 +220,7 @@ describe('extractText', () => {
       const result = await extractText(Buffer.from('fake zip'), 'documentos.zip')
 
       expect(result).toContain('[fatura.pdf]')
-      expect(result).toContain('fatura pdf content')
+      expect(result).toContain(longPdfContent)
       expect(result).toContain('[recibo.txt]')
       expect(result).toContain('recibo content')
     })
@@ -311,12 +321,13 @@ describe('extractText', () => {
     })
 
     it('does not truncate output shorter than 8000 chars', async () => {
-      const shortText = 'short content'
-      mockGetText.mockResolvedValue({ text: shortText })
+      // Must be > PDF_MIN_TEXT_CHARS (50) to exercise the text-layer path
+      const mediumText = 'Este é um documento PDF com conteúdo suficiente mas inferior ao limite de oito mil caracteres.'
+      mockGetText.mockResolvedValue({ text: mediumText })
 
       const result = await extractText(Buffer.from(''), 'short.pdf')
 
-      expect(result).toBe(shortText)
+      expect(result).toBe(mediumText)
     })
   })
 })
