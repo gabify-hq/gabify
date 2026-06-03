@@ -217,6 +217,9 @@ export interface ReceivedDocument {
   filename: string
   type: string
   typeLabel: string
+  extractedDate?: string | null     // DD/MM/YYYY
+  extractedAmount?: number | null
+  extractedVATNumber?: string | null // NIF 9 dígitos
 }
 
 /**
@@ -305,7 +308,13 @@ function buildDraftPrompt(params: {
   const { subject, bodyText, clientName, accountantName, receivedDocuments } = params
 
   const docsSection = receivedDocuments && receivedDocuments.length > 0
-    ? `\nDocumentos recebidos e classificados neste email:\n${receivedDocuments.map(d => `- ${d.filename} → ${d.typeLabel}`).join('\n')}\n`
+    ? `\nDocumentos recebidos e classificados neste email:\n${receivedDocuments.map(d => {
+        const meta: string[] = [`tipo: ${d.typeLabel}`]
+        if (d.extractedDate) meta.push(`data: ${d.extractedDate}`)
+        if (d.extractedAmount != null) meta.push(`valor: €${d.extractedAmount.toFixed(2)}`)
+        if (d.extractedVATNumber) meta.push(`NIF: ${d.extractedVATNumber}`)
+        return `- ${d.filename} (${meta.join(', ')})`
+      }).join('\n')}\n`
     : ''
 
   return `És um assistente de um contabilista português. Gera um rascunho de resposta ao email abaixo.
