@@ -139,7 +139,8 @@ export const documentParseWorker = new Worker<DocumentParseJobData>(
       },
     })
 
-    // 7. Wire draft generation — only if confidence is high enough and no draft exists yet
+    // 7. Wire draft generation — wait until ALL attachments for this email are classified
+    // so the draft has full context. Skip if any attachment still has no Document record.
     const DRAFT_CONFIDENCE_THRESHOLD = 0.7
     if (classificationResult.confidence >= DRAFT_CONFIDENCE_THRESHOLD) {
       const existingDraft = await prisma.emailAction.findFirst({
@@ -148,7 +149,7 @@ export const documentParseWorker = new Worker<DocumentParseJobData>(
       })
 
       if (!existingDraft) {
-        // Gather all classified documents for this email to provide context in the draft
+        // Gather all attachments for this email — check if all have been classified
         const emailDocs = await prisma.emailAttachment.findMany({
           where: { inboundEmailId: attachment.inboundEmail.id },
           select: {
@@ -156,6 +157,7 @@ export const documentParseWorker = new Worker<DocumentParseJobData>(
             document: {
               select: {
                 type: true,
+                status: true,
                 extractedDate: true,
                 extractedAmount: true,
                 extractedVATNumber: true,
@@ -164,25 +166,31 @@ export const documentParseWorker = new Worker<DocumentParseJobData>(
           },
         })
 
-        const receivedDocuments: ReceivedDocument[] = emailDocs
-          .filter((a) => a.document?.type)
-          .map((a) => ({
-            filename: a.filename,
-            type: a.document!.type,
-            typeLabel: DOCUMENT_TYPE_LABELS[a.document!.type as keyof typeof DOCUMENT_TYPE_LABELS] ?? a.document!.type,
-            extractedDate: a.document!.extractedDate
-              ? a.document!.extractedDate.toLocaleDateString('pt-PT')
-              : null,
-            extractedAmount: a.document!.extractedAmount ?? null,
-            extractedVATNumber: a.document!.extractedVATNumber ?? null,
-          }))
+        // If any attachment still has no document, another job will handle draft generation
+        const allClassified = emailDocs.every((a) => a.document !== null)
+        if (!allClassified) {
+          console.log(`[document-parse] skipping draft — not all attachments classified yet for email ${attachment.inboundEmail.id}`)
+        } else {
+          const receivedDocuments: ReceivedDocument[] = emailDocs
+            .filter((a) => a.document?.type)
+            .map((a) => ({
+              filename: a.filename,
+              type: a.document!.type,
+              typeLabel: DOCUMENT_TYPE_LABELS[a.document!.type as keyof typeof DOCUMENT_TYPE_LABELS] ?? a.document!.type,
+              extractedDate: a.document!.extractedDate
+                ? a.document!.extractedDate.toLocaleDateString('pt-PT')
+                : null,
+              extractedAmount: a.document!.extractedAmount ?? null,
+              extractedVATNumber: a.document!.extractedVATNumber ?? null,
+            }))
 
-        await generateAndStoreDraft({
-          inboundEmail: attachment.inboundEmail,
-          clientName: attachment.inboundEmail.client?.name ?? null,
-          officeId,
-          receivedDocuments,
-        })
+          await generateAndStoreDraft({
+            inboundEmail: attachment.inboundEmail,
+            clientName: attachment.inboundEmail.client?.name ?? null,
+            officeId,
+            receivedDocuments,
+          })
+        }
       }
     }
 
