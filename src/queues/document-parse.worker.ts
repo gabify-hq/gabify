@@ -3,10 +3,12 @@ import { redisConnection, QUEUE_DOCUMENT_PARSE } from '@/lib/redis'
 import { prisma } from '@/lib/prisma'
 import { createEmailProvider } from '@/server/email-providers'
 import { uploadToR2, buildAttachmentKey } from '@/lib/r2'
-import { classifyDocument, classifyImage, classifyPdfDocument, generateEmailDraft, type ReceivedDocument } from '@/server/services/email-classification'
+import { classifyDocument, classifyImage, classifyPdfDocument, classifyFromATQR, generateEmailDraft, type ReceivedDocument } from '@/server/services/email-classification'
 import { DOCUMENT_TYPE_LABELS } from '@/lib/mock-data'
 import { CLAUDE_MODEL } from '@/lib/anthropic'
 import { extractText } from '@/lib/text-extractor'
+import { extractQRCodeFromImage } from '@/lib/qr-reader'
+import { parseATFiscalQR } from '@/lib/at-fiscal-qr'
 
 // Claude Vision supports these image types — everything else uses text extraction
 const VISION_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp'])
@@ -102,16 +104,40 @@ export const documentParseWorker = new Worker<DocumentParseJobData>(
       update: { textContent, r2Key },
     })
 
-    // 5. Classify with Claude AI:
-    //    - Images → Claude Vision (base64 image block)
-    //    - Scanned PDFs → Claude PDF native (base64 document block, Claude does OCR)
-    //    - Text documents → text classification
+    // 5. Classify the document:
+    //
+    //    Priority order for images (JPEG, PNG, etc.):
+    //      a) AT fiscal QR code — authoritative machine-readable data, confidence 0.99
+    //      b) Claude Vision — fallback when no QR code found
+    //
+    //    Portuguese certified documents (Fatura, Fatura-Recibo, Fatura Simplificada)
+    //    always embed an AT QR code. Reading it is faster, cheaper, and more accurate
+    //    than trying to OCR the amount and type from the image.
+    //
+    //    Scanned PDFs → Claude PDF native (handles OCR internally)
+    //    Text documents → text classification
     const isZip = attachment.filename.toLowerCase().endsWith('.zip')
-    const classificationResult = isImage
-      ? await classifyImage(buffer, attachment.mimeType, document.id)
-      : isScannedPdf
-        ? await classifyPdfDocument(buffer, document.id)
-        : await classifyDocument(textContent ?? '', document.id)
+
+    let classificationResult
+    if (isImage) {
+      // Try AT QR code first
+      const qrData = await extractQRCodeFromImage(buffer)
+      if (qrData) {
+        const atData = parseATFiscalQR(qrData)
+        if (atData) {
+          console.log(`[document-parse] AT QR code found for ${attachment.filename}: ${atData.docTypeCode} €${atData.totalAmount} NIF:${atData.nifEmitter}`)
+          classificationResult = await classifyFromATQR(atData, document.id)
+        }
+      }
+      // Fall back to Claude Vision if no AT QR code
+      if (!classificationResult) {
+        classificationResult = await classifyImage(buffer, attachment.mimeType, document.id)
+      }
+    } else if (isScannedPdf) {
+      classificationResult = await classifyPdfDocument(buffer, document.id)
+    } else {
+      classificationResult = await classifyDocument(textContent ?? '', document.id)
+    }
 
     // ZIP files contain multiple documents — extractedAmount from Claude is meaningless
     // (picks a random value from one of the inner files). Clear it to avoid misleading data.

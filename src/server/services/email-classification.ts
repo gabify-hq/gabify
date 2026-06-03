@@ -1,6 +1,8 @@
 import { anthropic, CLAUDE_MODEL, CLASSIFICATION_MAX_TOKENS, DRAFT_MAX_TOKENS } from '@/lib/anthropic'
 import { prisma } from '@/lib/prisma'
 import type { ClassificationResult, DocumentType } from '@/types'
+import type { ATQRData } from '@/lib/at-fiscal-qr'
+import { atQRDocTypeToDocumentType, atQRDateToPT, atQRDocTypeLabel } from '@/lib/at-fiscal-qr'
 
 // Claude Vision only supports these image types
 const VISION_MEDIA_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp'])
@@ -213,6 +215,44 @@ export async function classifyPdfDocument(
   return result
 }
 
+/**
+ * Classifies a document directly from AT fiscal QR code data.
+ * QR code data is authoritative — confidence is 0.99, no AI call needed.
+ * Returns the ClassificationResult and persists to DB.
+ */
+export async function classifyFromATQR(
+  atData: ATQRData,
+  documentId: string
+): Promise<ClassificationResult> {
+  const type = atQRDocTypeToDocumentType(atData.docTypeCode) as DocumentType
+  const confidence = 0.99
+  const datePT = atQRDateToPT(atData.dateRaw)
+  const reasoning = `QR code AT fiscal: ${atQRDocTypeLabel(atData.docTypeCode)} (${atData.docId || atData.docTypeCode})`
+
+  await prisma.document.update({
+    where: { id: documentId },
+    data: {
+      type,
+      status: 'CLASSIFIED',
+      confidence,
+      reasoning,
+      extractedDate: datePT ? parsePtDate(datePT) : null,
+      extractedAmount: atData.totalAmount ?? null,
+      extractedVATNumber: atData.nifEmitter || null,
+      aiModel: 'at-qr-code',
+    },
+  })
+
+  return {
+    type,
+    confidence,
+    reasoning,
+    extractedDate: datePT ?? undefined,
+    extractedAmount: atData.totalAmount ?? undefined,
+    extractedVATNumber: atData.nifEmitter || undefined,
+  }
+}
+
 export interface ReceivedDocument {
   filename: string
   type: string
@@ -257,12 +297,28 @@ export async function generateEmailDraft(params: {
 
 function buildClassificationPromptForImage(): string {
   return `És um classificador de documentos para um gabinete de contabilidade português.
-Analisa a imagem em anexo e classifica o documento que vês.
+Analisa o documento em anexo e classifica-o.
 
-Tipos válidos:
-INVOICE_RECEIVED, INVOICE_ISSUED, RECEIPT, BANK_STATEMENT, PAYROLL,
-TAX_DOCUMENT, AT_COMMUNICATION, SOCIAL_SECURITY, CONTRACT,
-BALANCE_SHEET, INCOME_STATEMENT, OTHER
+Tipos válidos e exemplos:
+- INVOICE_RECEIVED — fatura, fatura-recibo ou nota de débito/crédito recebida (ex: restaurante, fornecedor, combustível)
+- INVOICE_ISSUED — fatura emitida pelo cliente a terceiros
+- RECEIPT — talão de caixa, recibo simples, fatura simplificada sem NIF do adquirente
+- BANK_STATEMENT — extracto bancário
+- PAYROLL — recibo de vencimento, processamento salarial
+- TAX_DOCUMENT — declaração AT, IRS, IRC, IVA, IMI, etc.
+- AT_COMMUNICATION — notificação ou comunicação da Autoridade Tributária
+- SOCIAL_SECURITY — recibo ou declaração da Segurança Social
+- CONTRACT — contrato ou acordo
+- BALANCE_SHEET — balanço ou demonstração de posição financeira
+- INCOME_STATEMENT — demonstração de resultados
+- OTHER — qualquer outro documento
+
+Notas importantes:
+- "Fatura-Recibo" (FATURA-RECIBO) é um documento fiscal com NIF → INVOICE_RECEIVED
+- Documentos certificados AT (com QR code ou ATCUD) com NIF → INVOICE_RECEIVED
+- Talões de supermercado sem NIF → RECEIPT
+- O campo extractedAmount é o total final do documento (após descontos, com IVA incluído)
+- O campo extractedVATNumber é o NIF do emitente (9 dígitos)
 
 Responde APENAS em JSON, sem texto adicional:
 {
