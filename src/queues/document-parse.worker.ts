@@ -106,11 +106,21 @@ export const documentParseWorker = new Worker<DocumentParseJobData>(
     //    - Images → Claude Vision (base64 image block)
     //    - Scanned PDFs → Claude PDF native (base64 document block, Claude does OCR)
     //    - Text documents → text classification
+    const isZip = attachment.filename.toLowerCase().endsWith('.zip')
     const classificationResult = isImage
       ? await classifyImage(buffer, attachment.mimeType, document.id)
       : isScannedPdf
         ? await classifyPdfDocument(buffer, document.id)
         : await classifyDocument(textContent ?? '', document.id)
+
+    // ZIP files contain multiple documents — extractedAmount from Claude is meaningless
+    // (picks a random value from one of the inner files). Clear it to avoid misleading data.
+    if (isZip && classificationResult.extractedAmount != null) {
+      await prisma.document.update({
+        where: { id: document.id },
+        data: { extractedAmount: null },
+      })
+    }
 
     // 6. Create AuditLog entry — AI action must be logged before any external effect
     await prisma.auditLog.create({
