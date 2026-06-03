@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Check, X, Pencil, ChevronLeft, Paperclip, Download } from 'lucide-react'
+import { Check, X, Pencil, ChevronLeft, Paperclip, Download, AlertTriangle } from 'lucide-react'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { Textarea } from '@/components/ui/textarea'
@@ -93,6 +93,17 @@ export function EmailDetail({ email, action, attachments = [] }: EmailDetailProp
             <pre className="whitespace-pre-wrap font-sans text-[13px] leading-relaxed text-gray-700">
               {email.bodyText}
             </pre>
+
+            {/* Google Drive link warning — Gmail sometimes replaces large attachments with Drive links.
+                These are not MIME attachments and cannot be processed automatically. */}
+            {attachments.length === 0 && email.bodyText && /drive\.google\.com\/file/i.test(email.bodyText) && (
+              <div className="mt-5 flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-3">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 stroke-[1.75] text-amber-500" />
+                <p className="text-[12px] text-amber-700">
+                  O Gmail substituiu o anexo por um link do Google Drive. O Gabify não consegue processar ficheiros partilhados desta forma — o ficheiro tem de ser enviado como anexo directamente no email.
+                </p>
+              </div>
+            )}
 
             {/* Attachments */}
             {attachments.length > 0 && (

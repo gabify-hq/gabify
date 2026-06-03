@@ -29,6 +29,7 @@
     "@types/pg": "^8.20.0",
     "adm-zip": "^0.5.17",
     "bullmq": "^5.77.6",
+    "canvas": "^3.2.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "googleapis": "^173.0.0",
@@ -41,6 +42,7 @@
     "next": "16.2.6",
     "next-auth": "^5.0.0-beta.31",
     "pdf-parse": "^2.4.5",
+    "pdfjs-dist": "^6.0.227",
     "pg": "^8.21.0",
     "prisma": "^7.8.0",
     "react": "19.2.4",
@@ -79,6 +81,7 @@
     "sharp@0.34.5": true,
     "esbuild@0.28.0": true,
     "msgpackr-extract@3.0.4": true,
-    "msw@2.14.6": true
+    "msw@2.14.6": true,
+    "canvas@3.2.3": true
   }
 }
