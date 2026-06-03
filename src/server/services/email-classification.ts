@@ -216,6 +216,50 @@ export async function classifyPdfDocument(
 }
 
 /**
+ * Classifies a document based on filename patterns — no AI call needed.
+ * Currently handles:
+ *   - SAFT files: NIF-YEAR-MONTH-SAFT.xml → AT_COMMUNICATION, extracts NIF + period
+ *
+ * Returns null if the filename doesn't match any known pattern.
+ */
+export async function classifyFromFilename(
+  filename: string,
+  documentId: string
+): Promise<ClassificationResult | null> {
+  // SAFT-PT: NIF-YEAR-MONTH-SAFT.xml  (e.g. 514282320-2026-04-SAFT.xml)
+  const saftMatch = filename.match(/^(\d{9})-(\d{4})-(\d{2})-SAFT\.xml$/i)
+  if (saftMatch) {
+    const [, nif, year, month] = saftMatch
+    const datePT = `01/${month}/${year}` // first day of the covered period
+    const reasoning = `Ficheiro SAF-T da AT (NIF ${nif}, período ${month}/${year})`
+
+    await prisma.document.update({
+      where: { id: documentId },
+      data: {
+        type: 'AT_COMMUNICATION' as DocumentType,
+        status: 'CLASSIFIED',
+        confidence: 0.99,
+        reasoning,
+        extractedDate: parsePtDate(datePT),
+        extractedAmount: null,
+        extractedVATNumber: nif,
+        aiModel: 'filename-pattern',
+      },
+    })
+
+    return {
+      type: 'AT_COMMUNICATION',
+      confidence: 0.99,
+      reasoning,
+      extractedDate: datePT,
+      extractedVATNumber: nif,
+    }
+  }
+
+  return null
+}
+
+/**
  * Classifies a document directly from AT fiscal QR code data.
  * QR code data is authoritative — confidence is 0.99, no AI call needed.
  * Returns the ClassificationResult and persists to DB.

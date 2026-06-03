@@ -3,11 +3,11 @@ import { redisConnection, QUEUE_DOCUMENT_PARSE } from '@/lib/redis'
 import { prisma } from '@/lib/prisma'
 import { createEmailProvider } from '@/server/email-providers'
 import { uploadToR2, buildAttachmentKey } from '@/lib/r2'
-import { classifyDocument, classifyImage, classifyPdfDocument, classifyFromATQR, generateEmailDraft, type ReceivedDocument } from '@/server/services/email-classification'
+import { classifyDocument, classifyImage, classifyPdfDocument, classifyFromATQR, classifyFromFilename, generateEmailDraft, type ReceivedDocument } from '@/server/services/email-classification'
 import { DOCUMENT_TYPE_LABELS } from '@/lib/mock-data'
 import { CLAUDE_MODEL } from '@/lib/anthropic'
 import { extractText } from '@/lib/text-extractor'
-import { extractQRCodeFromImage } from '@/lib/qr-reader'
+import { extractQRCodeFromImage, extractQRCodeFromPDF } from '@/lib/qr-reader'
 import { parseATFiscalQR } from '@/lib/at-fiscal-qr'
 
 // Claude Vision supports these image types — everything else uses text extraction
@@ -53,8 +53,13 @@ export const documentParseWorker = new Worker<DocumentParseJobData>(
 
     // Skip only if fully classified/reviewed — allow retry for stuck PENDING_CLASSIFICATION
     const DONE_STATUSES = new Set(['CLASSIFIED', 'REVIEWED'])
-    if (attachment.document && DONE_STATUSES.has(attachment.document.status)) {
-      console.log(`[document-parse] attachment ${attachmentId} already processed (${attachment.document.status}), skipping`)
+    const alreadyClassified = attachment.document && DONE_STATUSES.has(attachment.document.status)
+
+    if (alreadyClassified) {
+      console.log(`[document-parse] attachment ${attachmentId} already classified (${attachment.document!.status}), checking draft`)
+      // Still attempt draft generation in case the job previously failed before reaching that step.
+      // This is the idempotency fix: classification skip must not prevent draft generation.
+      await checkAndGenerateDraft(attachment, officeId)
       return
     }
 
@@ -104,39 +109,58 @@ export const documentParseWorker = new Worker<DocumentParseJobData>(
       update: { textContent, r2Key },
     })
 
-    // 5. Classify the document:
+    // 5. Classify the document.
     //
-    //    Priority order for images (JPEG, PNG, etc.):
-    //      a) AT fiscal QR code — authoritative machine-readable data, confidence 0.99
-    //      b) Claude Vision — fallback when no QR code found
-    //
-    //    Portuguese certified documents (Fatura, Fatura-Recibo, Fatura Simplificada)
-    //    always embed an AT QR code. Reading it is faster, cheaper, and more accurate
-    //    than trying to OCR the amount and type from the image.
-    //
-    //    Scanned PDFs → Claude PDF native (handles OCR internally)
-    //    Text documents → text classification
+    // Priority order:
+    //   a) Filename pattern (SAFT, known formats) — authoritative, no AI needed
+    //   b) AT fiscal QR code from image — machine-readable, confidence 0.99
+    //   c) AT fiscal QR code from PDF — render page 1 to image, then QR extract
+    //   d) Claude Vision (images) / Claude PDF native (scanned PDFs) / text (text docs)
     const isZip = attachment.filename.toLowerCase().endsWith('.zip')
 
     let classificationResult
-    if (isImage) {
-      // Try AT QR code first
-      const qrData = await extractQRCodeFromImage(buffer)
-      if (qrData) {
-        const atData = parseATFiscalQR(qrData)
-        if (atData) {
-          console.log(`[document-parse] AT QR code found for ${attachment.filename}: ${atData.docTypeCode} €${atData.totalAmount} NIF:${atData.nifEmitter}`)
-          classificationResult = await classifyFromATQR(atData, document.id)
+
+    // a) Filename-based classification (SAFT, etc.)
+    classificationResult = await classifyFromFilename(attachment.filename, document.id)
+    if (classificationResult) {
+      console.log(`[document-parse] filename pattern match for ${attachment.filename}: ${classificationResult.type}`)
+    }
+
+    if (!classificationResult) {
+      if (isImage) {
+        // b) AT QR code from image
+        const qrData = await extractQRCodeFromImage(buffer)
+        if (qrData) {
+          const atData = parseATFiscalQR(qrData)
+          if (atData) {
+            console.log(`[document-parse] AT QR code (image) for ${attachment.filename}: ${atData.docTypeCode} €${atData.totalAmount} NIF:${atData.nifEmitter}`)
+            classificationResult = await classifyFromATQR(atData, document.id)
+          }
         }
+        // d) Fall back to Claude Vision
+        if (!classificationResult) {
+          classificationResult = await classifyImage(buffer, attachment.mimeType, document.id)
+        }
+      } else if (isPdf) {
+        // c) Try AT QR code from PDF (rendered page 1) before Claude
+        const pdfQrData = await extractQRCodeFromPDF(buffer)
+        if (pdfQrData) {
+          const atData = parseATFiscalQR(pdfQrData)
+          if (atData) {
+            console.log(`[document-parse] AT QR code (PDF) for ${attachment.filename}: ${atData.docTypeCode} €${atData.totalAmount} NIF:${atData.nifEmitter}`)
+            classificationResult = await classifyFromATQR(atData, document.id)
+          }
+        }
+        // d) Fall back: scanned PDF → Claude PDF native; text PDF → text classification
+        if (!classificationResult) {
+          classificationResult = isScannedPdf
+            ? await classifyPdfDocument(buffer, document.id)
+            : await classifyDocument(textContent ?? '', document.id)
+        }
+      } else {
+        // d) Text documents (XML, DOCX, TXT, XLSX, ZIP contents)
+        classificationResult = await classifyDocument(textContent ?? '', document.id)
       }
-      // Fall back to Claude Vision if no AT QR code
-      if (!classificationResult) {
-        classificationResult = await classifyImage(buffer, attachment.mimeType, document.id)
-      }
-    } else if (isScannedPdf) {
-      classificationResult = await classifyPdfDocument(buffer, document.id)
-    } else {
-      classificationResult = await classifyDocument(textContent ?? '', document.id)
     }
 
     // ZIP files contain multiple documents — extractedAmount from Claude is meaningless
@@ -165,60 +189,9 @@ export const documentParseWorker = new Worker<DocumentParseJobData>(
       },
     })
 
-    // 7. Wire draft generation — wait until ALL attachments for this email are classified
-    // so the draft has full context. Skip if any attachment still has no Document record.
-    const DRAFT_CONFIDENCE_THRESHOLD = 0.7
-    if (classificationResult.confidence >= DRAFT_CONFIDENCE_THRESHOLD) {
-      const existingDraft = await prisma.emailAction.findFirst({
-        where: { inboundEmailId: attachment.inboundEmail.id, type: 'DRAFT_REPLY' },
-        select: { id: true },
-      })
-
-      if (!existingDraft) {
-        // Gather all attachments for this email — check if all have been classified
-        const emailDocs = await prisma.emailAttachment.findMany({
-          where: { inboundEmailId: attachment.inboundEmail.id },
-          select: {
-            filename: true,
-            document: {
-              select: {
-                type: true,
-                status: true,
-                extractedDate: true,
-                extractedAmount: true,
-                extractedVATNumber: true,
-              },
-            },
-          },
-        })
-
-        // If any attachment still has no document, another job will handle draft generation
-        const allClassified = emailDocs.every((a) => a.document !== null)
-        if (!allClassified) {
-          console.log(`[document-parse] skipping draft — not all attachments classified yet for email ${attachment.inboundEmail.id}`)
-        } else {
-          const receivedDocuments: ReceivedDocument[] = emailDocs
-            .filter((a) => a.document?.type)
-            .map((a) => ({
-              filename: a.filename,
-              type: a.document!.type,
-              typeLabel: DOCUMENT_TYPE_LABELS[a.document!.type as keyof typeof DOCUMENT_TYPE_LABELS] ?? a.document!.type,
-              extractedDate: a.document!.extractedDate
-                ? a.document!.extractedDate.toLocaleDateString('pt-PT')
-                : null,
-              extractedAmount: a.document!.extractedAmount ?? null,
-              extractedVATNumber: a.document!.extractedVATNumber ?? null,
-            }))
-
-          await generateAndStoreDraft({
-            inboundEmail: attachment.inboundEmail,
-            clientName: attachment.inboundEmail.client?.name ?? null,
-            officeId,
-            receivedDocuments,
-          })
-        }
-      }
-    }
+    // 7. Attempt draft generation if confidence threshold is met.
+    // Extracted into checkAndGenerateDraft() so we can also call it from the early-exit path.
+    await checkAndGenerateDraft(attachment, officeId)
 
     return { documentId: document.id, type: classificationResult.type }
   },
@@ -233,6 +206,85 @@ documentParseWorker.on('failed', (job, err) => {
 })
 
 // ── Helpers ──
+
+const DRAFT_CONFIDENCE_THRESHOLD = 0.7
+
+/**
+ * Checks whether a draft should be generated for the email associated with this attachment,
+ * and generates one if all conditions are met:
+ *   - No draft exists yet for this email
+ *   - All attachments for this email are classified
+ *   - The current attachment's document has confidence >= threshold
+ *
+ * Safe to call multiple times — idempotent via the existingDraft check.
+ */
+async function checkAndGenerateDraft(
+  attachment: {
+    inboundEmail: {
+      id: string
+      subject: string | null
+      fromEmail: string
+      bodyText: string | null
+      emailAccount: { officeId: string }
+      client: { name: string } | null
+    }
+    document: { confidence: number | null } | null
+  },
+  officeId: string
+): Promise<void> {
+  const confidence = attachment.document?.confidence ?? 0
+  if (confidence < DRAFT_CONFIDENCE_THRESHOLD) return
+
+  const existingDraft = await prisma.emailAction.findFirst({
+    where: { inboundEmailId: attachment.inboundEmail.id, type: 'DRAFT_REPLY' },
+    select: { id: true },
+  })
+  if (existingDraft) return
+
+  // All attachments must be classified before generating draft (for full context)
+  const emailDocs = await prisma.emailAttachment.findMany({
+    where: { inboundEmailId: attachment.inboundEmail.id },
+    select: {
+      filename: true,
+      document: {
+        select: {
+          type: true,
+          status: true,
+          confidence: true,
+          extractedDate: true,
+          extractedAmount: true,
+          extractedVATNumber: true,
+        },
+      },
+    },
+  })
+
+  const allClassified = emailDocs.every((a) => a.document !== null)
+  if (!allClassified) {
+    console.log(`[document-parse] skipping draft — not all attachments classified yet for email ${attachment.inboundEmail.id}`)
+    return
+  }
+
+  const receivedDocuments: ReceivedDocument[] = emailDocs
+    .filter((a) => a.document?.type)
+    .map((a) => ({
+      filename: a.filename,
+      type: a.document!.type,
+      typeLabel: DOCUMENT_TYPE_LABELS[a.document!.type as keyof typeof DOCUMENT_TYPE_LABELS] ?? a.document!.type,
+      extractedDate: a.document!.extractedDate
+        ? a.document!.extractedDate.toLocaleDateString('pt-PT')
+        : null,
+      extractedAmount: a.document!.extractedAmount ?? null,
+      extractedVATNumber: a.document!.extractedVATNumber ?? null,
+    }))
+
+  await generateAndStoreDraft({
+    inboundEmail: attachment.inboundEmail,
+    clientName: attachment.inboundEmail.client?.name ?? null,
+    officeId,
+    receivedDocuments,
+  })
+}
 
 /**
  * Generates a draft reply for an inbound email and persists it as an EmailAction + AuditLog.
