@@ -69,6 +69,7 @@ export async function classifyDocument(
       extractedAmount: result.extractedAmount ?? null,
       extractedVATNumber: result.extractedVATNumber ?? null,
       aiModel: CLAUDE_MODEL,
+      classificationSource: 'claude-text',
     },
   })
 
@@ -144,6 +145,7 @@ export async function classifyImage(
       extractedAmount: result.extractedAmount ?? null,
       extractedVATNumber: result.extractedVATNumber ?? null,
       aiModel: CLAUDE_MODEL,
+      classificationSource: 'claude-vision',
     },
   })
 
@@ -209,6 +211,7 @@ export async function classifyPdfDocument(
       extractedAmount: result.extractedAmount ?? null,
       extractedVATNumber: result.extractedVATNumber ?? null,
       aiModel: CLAUDE_MODEL,
+      classificationSource: 'claude-pdf',
     },
   })
 
@@ -244,6 +247,7 @@ export async function classifyFromFilename(
         extractedAmount: null,
         extractedVATNumber: nif,
         aiModel: 'filename-pattern',
+        classificationSource: 'filename-pattern',
       },
     })
 
@@ -284,6 +288,7 @@ export async function classifyFromATQR(
       extractedAmount: atData.totalAmount ?? null,
       extractedVATNumber: atData.nifEmitter || null,
       aiModel: 'at-qr-code',
+      classificationSource: 'at-qr-code',
     },
   })
 

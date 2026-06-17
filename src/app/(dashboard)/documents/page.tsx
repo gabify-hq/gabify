@@ -30,6 +30,7 @@ export default async function DocumentsPage() {
           extractedDate: true,
           extractedAmount: true,
           extractedVATNumber: true,
+          classificationSource: true,
           createdAt: true,
           clientId: true,
           client: { select: { name: true } },
@@ -78,6 +79,7 @@ export default async function DocumentsPage() {
       r2Key: doc.r2Key ?? '',
       createdAt: doc.createdAt,
       period,
+      classificationSource: doc.classificationSource ?? null,
     }
   })
 

@@ -65,6 +65,7 @@ export default async function ClientPage({ params }: ClientPageProps) {
       extractedDate: true,
       extractedAmount: true,
       extractedVATNumber: true,
+      classificationSource: true,
       createdAt: true,
       attachment: { select: { filename: true } },
     },
@@ -90,6 +91,7 @@ export default async function ClientPage({ params }: ClientPageProps) {
       extractedAmount: doc.extractedAmount ?? null,
       extractedVATNumber: doc.extractedVATNumber ?? null,
       r2Key: doc.r2Key ?? null,
+      classificationSource: doc.classificationSource ?? null,
     }
   })
 

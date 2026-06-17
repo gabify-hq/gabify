@@ -28,6 +28,14 @@ import type { MockDocument } from '@/lib/mock-data'
 import { MOCK_CLIENTS, DOCUMENT_TYPE_LABELS } from '@/lib/mock-data'
 import { cn } from '@/lib/utils'
 
+const SOURCE_LABEL: Record<string, string> = {
+  'at-qr-code':       'QR Code AT',
+  'filename-pattern': 'Padrão de ficheiro',
+  'claude-vision':    'Vision IA',
+  'claude-pdf':       'PDF IA',
+  'claude-text':      'Texto IA',
+}
+
 interface DocumentTableProps {
   documents: MockDocument[]
   hideClientFilter?: boolean
@@ -274,6 +282,14 @@ export function DocumentTable({ documents, hideClientFilter = false }: DocumentT
                 <dd className={cn('data font-bold', confidenceClass(previewDoc.confidence))}>
                   {Math.round(previewDoc.confidence * 100)}%
                 </dd>
+                {previewDoc.classificationSource && (
+                  <>
+                    <dt className="text-gray-400">Origem</dt>
+                    <dd className="font-semibold text-gray-800">
+                      {SOURCE_LABEL[previewDoc.classificationSource] ?? previewDoc.classificationSource}
+                    </dd>
+                  </>
+                )}
               </dl>
               <div className="rounded-xl bg-gray-50 p-3">
                 <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-gray-400">
