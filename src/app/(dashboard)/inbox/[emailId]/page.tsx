@@ -22,7 +22,7 @@ export default async function EmailPage({ params }: EmailPageProps) {
     },
     include: {
       client: { select: { name: true } },
-      attachments: { select: { id: true } },
+      attachments: { select: { id: true, filename: true, mimeType: true } },
       actions: {
         orderBy: { createdAt: 'desc' },
         take: 1,
@@ -71,5 +71,11 @@ export default async function EmailPage({ params }: EmailPageProps) {
       }
     : undefined
 
-  return <EmailDetail email={email} action={action} />
+  const attachments = raw.attachments.map((a) => ({
+    id: a.id,
+    filename: a.filename,
+    mimeType: a.mimeType,
+  }))
+
+  return <EmailDetail email={email} action={action} attachments={attachments} />
 }

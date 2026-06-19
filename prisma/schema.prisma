@@ -50,9 +50,10 @@ enum ActionStatus {
 }
 
 enum DocumentType {
-  INVOICE_RECEIVED
-  INVOICE_ISSUED
-  RECEIPT
+  INVOICE_RECEIVED    // Fatura recebida de fornecedor
+  INVOICE_ISSUED      // Fatura emitida pelo cliente
+  INVOICE_RECEIPT     // Fatura-Recibo (AT doc type FR — combina fatura + recibo de pagamento)
+  RECEIPT             // Talão / recibo simples / fatura simplificada sem NIF adquirente
   BANK_STATEMENT
   PAYROLL
   TAX_DOCUMENT
@@ -388,7 +389,8 @@ model Document {
   extractedVATNumber String?  // NIF extracted from document
   textContent  String?        @db.Text  // extracted text used for classification
   r2Key        String?        // same as attachment r2Key (denormalized for convenience)
-  aiModel      String?
+  aiModel              String?
+  classificationSource String?  // how classification was obtained: at-qr-code | filename-pattern | claude-vision | claude-pdf | claude-text
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
 

@@ -19,15 +19,33 @@ vi.mock('mammoth', () => ({
   },
 }))
 
+vi.mock('xlsx', () => ({
+  read: vi.fn(),
+  utils: {
+    sheet_to_csv: vi.fn(),
+  },
+}))
+
+vi.mock('adm-zip', () => {
+  const MockAdmZip = vi.fn()
+  MockAdmZip.prototype.getEntries = vi.fn()
+  return { default: MockAdmZip }
+})
+
 import { PDFParse } from 'pdf-parse'
 import mammoth from 'mammoth'
+import * as XLSX from 'xlsx'
+import AdmZip from 'adm-zip'
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 describe('extractText', () => {
+  // Long enough to exceed PDF_MIN_TEXT_CHARS (50) so the text-layer path is exercised
+  const LONG_PDF_TEXT = 'Este é o conteúdo extraído do PDF pelo pdf-parse com texto suficiente para classificação.'
+
   beforeEach(() => {
     vi.clearAllMocks()
-    mockGetText.mockResolvedValue({ text: 'extracted pdf text' })
+    mockGetText.mockResolvedValue({ text: LONG_PDF_TEXT })
     vi.mocked(mammoth.extractRawText).mockResolvedValue({ value: 'extracted docx text', messages: [] })
   })
 
@@ -39,7 +57,7 @@ describe('extractText', () => {
 
       expect(PDFParse).toHaveBeenCalledWith({ data: buffer })
       expect(mockGetText).toHaveBeenCalledOnce()
-      expect(result).toBe('extracted pdf text')
+      expect(result).toBe(LONG_PDF_TEXT)
     })
 
     it('works with uppercase extension (.PDF)', async () => {
@@ -47,7 +65,13 @@ describe('extractText', () => {
       const result = await extractText(buffer, 'INVOICE.PDF')
 
       expect(PDFParse).toHaveBeenCalledWith({ data: buffer })
-      expect(result).toBe('extracted pdf text')
+      expect(result).toBe(LONG_PDF_TEXT)
+    })
+
+    it('returns null for scanned PDF (text shorter than 50 chars)', async () => {
+      mockGetText.mockResolvedValue({ text: 'short' })
+      const result = await extractText(Buffer.from('fake pdf'), 'scanned.pdf')
+      expect(result).toBeNull()
     })
   })
 
@@ -101,30 +125,152 @@ describe('extractText', () => {
   })
 
   // XLSX / XLS
-  describe('.xlsx files', () => {
-    it('returns unsupported placeholder for .xlsx', async () => {
-      const result = await extractText(Buffer.from(''), 'report.xlsx')
-      expect(result).toBe('[XLSX: text extraction not supported]')
+  describe('.xlsx and .xls files', () => {
+    beforeEach(() => {
+      vi.mocked(XLSX.read).mockReturnValue({
+        SheetNames: ['Movimentos'],
+        Sheets: { Movimentos: {} },
+      } as never)
+      vi.mocked(XLSX.utils.sheet_to_csv).mockReturnValue(
+        'Data\tDescrição\tDébito\tCrédito\tSaldo\n01/01/2024\tTransferência\t\t1000.00\t5000.00'
+      )
     })
 
-    it('returns unsupported placeholder for .xls', async () => {
-      const result = await extractText(Buffer.from(''), 'report.xls')
-      expect(result).toBe('[XLSX: text extraction not supported]')
+    it('reads workbook and returns sheet content for .xlsx', async () => {
+      const buffer = Buffer.from('fake xlsx bytes')
+      const result = await extractText(buffer, 'movimentos.xlsx')
+
+      expect(XLSX.read).toHaveBeenCalledWith(buffer, { type: 'buffer' })
+      expect(result).toContain('[Folha: Movimentos]')
+      expect(result).toContain('Data\tDescrição\tDébito')
+    })
+
+    it('reads workbook and returns sheet content for .xls', async () => {
+      const buffer = Buffer.from('fake xls bytes')
+      const result = await extractText(buffer, 'relatorio.xls')
+
+      expect(XLSX.read).toHaveBeenCalledWith(buffer, { type: 'buffer' })
+      expect(result).toContain('[Folha: Movimentos]')
+    })
+
+    it('concatenates multiple sheets', async () => {
+      vi.mocked(XLSX.read).mockReturnValue({
+        SheetNames: ['Janeiro', 'Fevereiro'],
+        Sheets: { Janeiro: {}, Fevereiro: {} },
+      } as never)
+      vi.mocked(XLSX.utils.sheet_to_csv)
+        .mockReturnValueOnce('Data\tValor\n01/01/2024\t100')
+        .mockReturnValueOnce('Data\tValor\n01/02/2024\t200')
+
+      const result = await extractText(Buffer.from(''), 'relatorio.xlsx')
+
+      expect(result).toContain('[Folha: Janeiro]')
+      expect(result).toContain('[Folha: Fevereiro]')
+    })
+
+    it('limits to first 100 rows per sheet', async () => {
+      const manyRows = Array.from({ length: 200 }, (_, i) => `row${i}\tval${i}`).join('\n')
+      vi.mocked(XLSX.utils.sheet_to_csv).mockReturnValue(manyRows)
+
+      const result = await extractText(Buffer.from(''), 'big.xlsx')
+
+      const rowCount = (result ?? '').split('\n').filter(l => l.startsWith('row')).length
+      expect(rowCount).toBeLessThanOrEqual(100)
+    })
+  })
+
+  // XML
+  describe('.xml files', () => {
+    it('returns raw XML content as UTF-8 text', async () => {
+      const xmlContent = '<?xml version="1.0"?><AuditFile><Header><TaxRegistrationNumber>123456789</TaxRegistrationNumber></Header></AuditFile>'
+      const buffer = Buffer.from(xmlContent, 'utf-8')
+      const result = await extractText(buffer, 'SAFT-PT.xml')
+
+      expect(result).toBe(xmlContent)
+    })
+
+    it('handles uppercase extension (.XML)', async () => {
+      const content = '<root><element>value</element></root>'
+      const result = await extractText(Buffer.from(content, 'utf-8'), 'export.XML')
+
+      expect(result).toBe(content)
+    })
+  })
+
+  // ZIP
+  describe('.zip files', () => {
+    it('extracts and concatenates text from each inner file', async () => {
+      const longPdfContent = 'Conteúdo do PDF da fatura com texto suficientemente longo para passar o limite mínimo de caracteres.'
+      mockGetText.mockResolvedValue({ text: longPdfContent })
+
+      const mockEntries = [
+        {
+          isDirectory: false,
+          entryName: 'fatura.pdf',
+          getData: () => Buffer.from('fake pdf'),
+        },
+        {
+          isDirectory: false,
+          entryName: 'recibo.txt',
+          getData: () => Buffer.from('recibo content', 'utf-8'),
+        },
+      ]
+      vi.mocked(AdmZip.prototype.getEntries).mockReturnValue(mockEntries as never)
+
+      const result = await extractText(Buffer.from('fake zip'), 'documentos.zip')
+
+      expect(result).toContain('[fatura.pdf]')
+      expect(result).toContain(longPdfContent)
+      expect(result).toContain('[recibo.txt]')
+      expect(result).toContain('recibo content')
+    })
+
+    it('skips directory entries', async () => {
+      const mockEntries = [
+        { isDirectory: true, entryName: 'subdir/', getData: () => Buffer.from('') },
+        {
+          isDirectory: false,
+          entryName: 'doc.txt',
+          getData: () => Buffer.from('file content', 'utf-8'),
+        },
+      ]
+      vi.mocked(AdmZip.prototype.getEntries).mockReturnValue(mockEntries as never)
+
+      const result = await extractText(Buffer.from('fake zip'), 'archive.zip')
+
+      expect(result).not.toContain('[subdir/]')
+      expect(result).toContain('[doc.txt]')
+    })
+
+    it('returns empty string for empty zip', async () => {
+      vi.mocked(AdmZip.prototype.getEntries).mockReturnValue([])
+
+      const result = await extractText(Buffer.from('fake zip'), 'empty.zip')
+
+      expect(result).toBe('')
+    })
+  })
+
+  // Images — handled by Claude Vision in worker, not here
+  describe('image files', () => {
+    it('returns placeholder for .png (handled by Claude Vision)', async () => {
+      const result = await extractText(Buffer.from(''), 'scan.png')
+      expect(result).toBe('[.png: text extraction not supported]')
+    })
+
+    it('returns placeholder for .jpg', async () => {
+      const result = await extractText(Buffer.from(''), 'photo.jpg')
+      expect(result).toBe('[.jpg: text extraction not supported]')
+    })
+
+    it('returns placeholder for .jpeg', async () => {
+      const result = await extractText(Buffer.from(''), 'photo.jpeg')
+      expect(result).toBe('[.jpeg: text extraction not supported]')
     })
   })
 
   // Unknown extensions
   describe('unknown extensions', () => {
-    it('returns extension-specific placeholder for .png', async () => {
-      const result = await extractText(Buffer.from(''), 'scan.png')
-      expect(result).toBe('[.png: text extraction not supported]')
-    })
-
-    it('returns extension-specific placeholder for .jpg', async () => {
-      const result = await extractText(Buffer.from(''), 'photo.jpg')
-      expect(result).toBe('[.jpg: text extraction not supported]')
-    })
-
     it('returns extension-specific placeholder for files without extension', async () => {
       const result = await extractText(Buffer.from(''), 'README')
       expect(result).toBe('[: text extraction not supported]')
@@ -140,8 +286,8 @@ describe('extractText', () => {
       const result = await extractText(Buffer.from(''), 'big.pdf')
 
       expect(result).toHaveLength(8000 + '\n[truncated]'.length)
-      expect(result.endsWith('\n[truncated]')).toBe(true)
-      expect(result.startsWith('a'.repeat(8000))).toBe(true)
+      expect(result!.endsWith('\n[truncated]')).toBe(true)
+      expect(result!.startsWith('a'.repeat(8000))).toBe(true)
     })
 
     it('truncates DOCX output longer than 8000 chars', async () => {
@@ -151,7 +297,7 @@ describe('extractText', () => {
       const result = await extractText(Buffer.from(''), 'big.docx')
 
       expect(result).toHaveLength(8000 + '\n[truncated]'.length)
-      expect(result.endsWith('\n[truncated]')).toBe(true)
+      expect(result!.endsWith('\n[truncated]')).toBe(true)
     })
 
     it('truncates TXT output longer than 8000 chars', async () => {
@@ -161,7 +307,7 @@ describe('extractText', () => {
       const result = await extractText(buffer, 'big.txt')
 
       expect(result).toHaveLength(8000 + '\n[truncated]'.length)
-      expect(result.endsWith('\n[truncated]')).toBe(true)
+      expect(result!.endsWith('\n[truncated]')).toBe(true)
     })
 
     it('does not truncate output of exactly 8000 chars', async () => {
@@ -175,12 +321,13 @@ describe('extractText', () => {
     })
 
     it('does not truncate output shorter than 8000 chars', async () => {
-      const shortText = 'short content'
-      mockGetText.mockResolvedValue({ text: shortText })
+      // Must be > PDF_MIN_TEXT_CHARS (50) to exercise the text-layer path
+      const mediumText = 'Este é um documento PDF com conteúdo suficiente mas inferior ao limite de oito mil caracteres.'
+      mockGetText.mockResolvedValue({ text: mediumText })
 
       const result = await extractText(Buffer.from(''), 'short.pdf')
 
-      expect(result).toBe(shortText)
+      expect(result).toBe(mediumText)
     })
   })
 })

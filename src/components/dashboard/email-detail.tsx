@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Check, X, Pencil, ChevronLeft } from 'lucide-react'
+import { Check, X, Pencil, ChevronLeft, Paperclip, Download, AlertTriangle } from 'lucide-react'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { Textarea } from '@/components/ui/textarea'
@@ -10,12 +10,19 @@ import { useDashboardStore } from '@/lib/dashboard-store'
 import type { MockEmail, MockEmailAction } from '@/lib/mock-data'
 import { formatDateTime } from '@/lib/mock-data'
 
+interface EmailAttachment {
+  id: string
+  filename: string
+  mimeType: string
+}
+
 interface EmailDetailProps {
   email: MockEmail
   action: MockEmailAction | undefined
+  attachments?: EmailAttachment[]
 }
 
-export function EmailDetail({ email, action }: EmailDetailProps) {
+export function EmailDetail({ email, action, attachments = [] }: EmailDetailProps) {
   const store = useDashboardStore()
   const persisted = action ? store.getAction(action.id) : undefined
   const currentStatus = persisted?.status ?? action?.status ?? null
@@ -86,6 +93,50 @@ export function EmailDetail({ email, action }: EmailDetailProps) {
             <pre className="whitespace-pre-wrap font-sans text-[13px] leading-relaxed text-gray-700">
               {email.bodyText}
             </pre>
+
+            {/* Google Drive link warning — Gmail sometimes replaces large attachments with Drive links.
+                These are not MIME attachments and cannot be processed automatically. */}
+            {attachments.length === 0 && email.bodyText && /drive\.google\.com\/file/i.test(email.bodyText) && (
+              <div className="mt-5 flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-3">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 stroke-[1.75] text-amber-500" />
+                <p className="text-[12px] text-amber-700">
+                  O Gmail substituiu o anexo por um link do Google Drive. O Gabify não consegue processar ficheiros partilhados desta forma — o ficheiro tem de ser enviado como anexo directamente no email.
+                </p>
+              </div>
+            )}
+
+            {/* Attachments */}
+            {attachments.length > 0 && (
+              <div className="mt-5 border-t border-gray-100 pt-4">
+                <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-gray-400">
+                  Anexos ({attachments.length})
+                </p>
+                <div className="flex flex-col gap-1.5">
+                  {attachments.map((att) => (
+                    <div
+                      key={att.id}
+                      className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2"
+                    >
+                      <Paperclip className="h-3.5 w-3.5 shrink-0 stroke-[1.5] text-gray-400" />
+                      <span className="truncate text-[12px] text-gray-700">{att.filename}</span>
+                      <span className="shrink-0 text-[10px] text-gray-400">{att.mimeType}</span>
+                      <button
+                        className="ml-auto shrink-0 rounded p-1 text-gray-400 transition-colors hover:bg-gray-200 hover:text-gray-700"
+                        title="Descarregar"
+                        onClick={async () => {
+                          const res = await fetch(`/api/attachments/${att.id}`)
+                          if (!res.ok) return
+                          const { data } = await res.json()
+                          window.open(data.url, '_blank')
+                        }}
+                      >
+                        <Download className="h-3.5 w-3.5 stroke-[1.5]" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

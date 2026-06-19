@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { FileText, ExternalLink } from 'lucide-react'
+import { FileText, Eye, Download } from 'lucide-react'
 import {
   Table,
   TableBody,
@@ -27,6 +27,14 @@ import { StatusPill } from './status-badge'
 import type { MockDocument } from '@/lib/mock-data'
 import { MOCK_CLIENTS, DOCUMENT_TYPE_LABELS } from '@/lib/mock-data'
 import { cn } from '@/lib/utils'
+
+const SOURCE_LABEL: Record<string, string> = {
+  'at-qr-code':       'QR Code Fiscal AT',
+  'filename-pattern': 'Nome do ficheiro',
+  'claude-vision':    'Visão artificial (imagem)',
+  'claude-pdf':       'Leitura de PDF',
+  'claude-text':      'Análise de texto',
+}
 
 interface DocumentTableProps {
   documents: MockDocument[]
@@ -145,6 +153,9 @@ export function DocumentTable({ documents, hideClientFilter = false }: DocumentT
               <TableHead className="h-9 text-right text-[10px] font-bold uppercase tracking-wider text-gray-400">
                 Valor
               </TableHead>
+              <TableHead className="h-9 text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                Origem
+              </TableHead>
               <TableHead className="h-9 text-right text-[10px] font-bold uppercase tracking-wider text-gray-400">
                 Conf.
               </TableHead>
@@ -163,7 +174,7 @@ export function DocumentTable({ documents, hideClientFilter = false }: DocumentT
                 <TableCell className="py-2.5">
                   <div className="flex items-center gap-2">
                     <FileText className="h-3.5 w-3.5 shrink-0 stroke-[1.5] text-gray-400" />
-                    <span className="max-w-[220px] truncate text-[12px] font-medium text-gray-700">
+                    <span className="max-w-[220px] truncate text-[12px] font-medium text-gray-700" spellCheck={false}>
                       {doc.filename}
                     </span>
                   </div>
@@ -186,6 +197,15 @@ export function DocumentTable({ documents, hideClientFilter = false }: DocumentT
                       : <span className="font-normal text-gray-300">-</span>}
                   </span>
                 </TableCell>
+                <TableCell className="py-2.5">
+                  {doc.classificationSource ? (
+                    <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
+                      {SOURCE_LABEL[doc.classificationSource] ?? doc.classificationSource}
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-gray-300">—</span>
+                  )}
+                </TableCell>
                 <TableCell className="py-2.5 text-right">
                   <span className={cn('data text-[12px] font-bold', confidenceClass(doc.confidence))}>
                     {Math.round(doc.confidence * 100)}%
@@ -198,13 +218,27 @@ export function DocumentTable({ documents, hideClientFilter = false }: DocumentT
                   />
                 </TableCell>
                 <TableCell className="py-2.5">
-                  <button
-                    className="pressable rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
-                    title="Ver documento"
-                    onClick={() => setPreviewDoc(doc)}
-                  >
-                    <ExternalLink className="h-3.5 w-3.5 stroke-[1.75]" />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      className="pressable rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
+                      title="Pré-visualizar"
+                      onClick={() => setPreviewDoc(doc)}
+                    >
+                      <Eye className="h-3.5 w-3.5 stroke-[1.75]" />
+                    </button>
+                    <button
+                      className="pressable rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
+                      title="Descarregar"
+                      onClick={async () => {
+                        const res = await fetch(`/api/documents/${doc.id}`)
+                        if (!res.ok) return
+                        const { data } = await res.json()
+                        window.open(data.url, '_blank')
+                      }}
+                    >
+                      <Download className="h-3.5 w-3.5 stroke-[1.75]" />
+                    </button>
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
@@ -260,6 +294,14 @@ export function DocumentTable({ documents, hideClientFilter = false }: DocumentT
                 <dd className={cn('data font-bold', confidenceClass(previewDoc.confidence))}>
                   {Math.round(previewDoc.confidence * 100)}%
                 </dd>
+                {previewDoc.classificationSource && (
+                  <>
+                    <dt className="text-gray-400">Origem</dt>
+                    <dd className="font-semibold text-gray-800">
+                      {SOURCE_LABEL[previewDoc.classificationSource] ?? previewDoc.classificationSource}
+                    </dd>
+                  </>
+                )}
               </dl>
               <div className="rounded-xl bg-gray-50 p-3">
                 <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-gray-400">

@@ -1,9 +1,89 @@
 import { FileText } from 'lucide-react'
+import { auth } from '@/lib/auth'
+import { prisma } from '@/lib/prisma'
 import { DocumentTable } from '@/components/dashboard/document-table'
-import { MOCK_DOCUMENTS } from '@/lib/mock-data'
+import { DOCUMENT_TYPE_LABELS } from '@/lib/mock-data'
+import type { MockDocument } from '@/lib/mock-data'
+import type { DocumentType } from '@/types'
 
-export default function DocumentsPage() {
-  const needsReview = MOCK_DOCUMENTS.filter((d) => d.status === 'NEEDS_REVIEW').length
+export default async function DocumentsPage() {
+  const session = await auth()
+  const officeId = session?.user?.officeId ?? ''
+
+  const dbDocuments = officeId
+    ? await prisma.document.findMany({
+        where: {
+          attachment: {
+            inboundEmail: {
+              emailAccount: { officeId },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 200,
+        select: {
+          id: true,
+          type: true,
+          status: true,
+          confidence: true,
+          r2Key: true,
+          extractedDate: true,
+          extractedAmount: true,
+          extractedVATNumber: true,
+          classificationSource: true,
+          createdAt: true,
+          clientId: true,
+          client: { select: { name: true } },
+          attachment: {
+            select: {
+              filename: true,
+            },
+          },
+        },
+      })
+    : []
+
+  // Map DB records to the shape DocumentTable expects
+  const documents: MockDocument[] = dbDocuments.map((doc) => {
+    const type = (doc.type ?? 'OTHER') as DocumentType
+    const confidence = doc.confidence ?? 0
+
+    // Derive period from extractedDate or createdAt
+    const dateRef = doc.extractedDate ?? doc.createdAt
+    const period = dateRef
+      ? `${String(dateRef.getMonth() + 1).padStart(2, '0')}/${dateRef.getFullYear()}`
+      : '-'
+
+    // Map DB status to the 3 display states the table knows
+    const status: MockDocument['status'] =
+      doc.status === 'CLASSIFIED'
+        ? 'CLASSIFIED'
+        : doc.status === 'NEEDS_REVIEW' || doc.status === 'PENDING_CLASSIFICATION'
+          ? 'NEEDS_REVIEW'
+          : 'REVIEWED'
+
+    return {
+      id: doc.id,
+      clientId: doc.clientId ?? '',
+      clientName: doc.client?.name ?? 'Sem cliente',
+      filename: doc.attachment?.filename ?? doc.id,
+      type,
+      typeLabel: DOCUMENT_TYPE_LABELS[type] ?? type,
+      confidence,
+      status,
+      extractedDate: doc.extractedDate
+        ? doc.extractedDate.toLocaleDateString('pt-PT')
+        : null,
+      extractedAmount: doc.extractedAmount ?? null,
+      extractedVATNumber: doc.extractedVATNumber ?? null,
+      r2Key: doc.r2Key ?? '',
+      createdAt: doc.createdAt,
+      period,
+      classificationSource: doc.classificationSource ?? null,
+    }
+  })
+
+  const needsReview = documents.filter((d) => d.status === 'NEEDS_REVIEW').length
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -13,7 +93,7 @@ export default function DocumentsPage() {
           <FileText className="h-4 w-4 stroke-[1.75] text-gray-400" />
           <h1 className="text-[13px] font-semibold text-gray-800">Documentos</h1>
           <span className="data rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-400">
-            {MOCK_DOCUMENTS.length}
+            {documents.length}
           </span>
         </div>
         {needsReview > 0 && (
@@ -27,7 +107,7 @@ export default function DocumentsPage() {
       </div>
 
       <div className="flex-1 overflow-y-auto px-5 py-4">
-        <DocumentTable documents={MOCK_DOCUMENTS} />
+        <DocumentTable documents={documents} />
       </div>
     </div>
   )
