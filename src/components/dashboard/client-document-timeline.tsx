@@ -39,11 +39,11 @@ interface ClientDocumentTimelineProps {
 }
 
 const SOURCE_LABEL: Record<string, string> = {
-  'at-qr-code':       'QR Code AT',
-  'filename-pattern': 'Padrão de ficheiro',
-  'claude-vision':    'Vision IA',
-  'claude-pdf':       'PDF IA',
-  'claude-text':      'Texto IA',
+  'at-qr-code':       'QR Code Fiscal AT',
+  'filename-pattern': 'Nome do ficheiro',
+  'claude-vision':    'Visão artificial (imagem)',
+  'claude-pdf':       'Leitura de PDF',
+  'claude-text':      'Análise de texto',
 }
 
 // ── Type badge colours ─────────────────────────────────────────────────────────

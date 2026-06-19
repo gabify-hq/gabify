@@ -124,7 +124,8 @@ export async function classifyImage(
 
   let result: ClassificationResult
   try {
-    result = JSON.parse(content.text)
+    const jsonText = content.text.trim().replace(/^```json?\n?/, '').replace(/\n?```$/, '')
+    result = JSON.parse(jsonText)
   } catch {
     throw new Error(`Failed to parse Vision classification response: ${content.text}`)
   }

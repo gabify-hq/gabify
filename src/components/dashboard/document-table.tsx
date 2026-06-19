@@ -29,11 +29,11 @@ import { MOCK_CLIENTS, DOCUMENT_TYPE_LABELS } from '@/lib/mock-data'
 import { cn } from '@/lib/utils'
 
 const SOURCE_LABEL: Record<string, string> = {
-  'at-qr-code':       'QR Code AT',
-  'filename-pattern': 'Padrão de ficheiro',
-  'claude-vision':    'Vision IA',
-  'claude-pdf':       'PDF IA',
-  'claude-text':      'Texto IA',
+  'at-qr-code':       'QR Code Fiscal AT',
+  'filename-pattern': 'Nome do ficheiro',
+  'claude-vision':    'Visão artificial (imagem)',
+  'claude-pdf':       'Leitura de PDF',
+  'claude-text':      'Análise de texto',
 }
 
 interface DocumentTableProps {
@@ -153,6 +153,9 @@ export function DocumentTable({ documents, hideClientFilter = false }: DocumentT
               <TableHead className="h-9 text-right text-[10px] font-bold uppercase tracking-wider text-gray-400">
                 Valor
               </TableHead>
+              <TableHead className="h-9 text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                Origem
+              </TableHead>
               <TableHead className="h-9 text-right text-[10px] font-bold uppercase tracking-wider text-gray-400">
                 Conf.
               </TableHead>
@@ -171,7 +174,7 @@ export function DocumentTable({ documents, hideClientFilter = false }: DocumentT
                 <TableCell className="py-2.5">
                   <div className="flex items-center gap-2">
                     <FileText className="h-3.5 w-3.5 shrink-0 stroke-[1.5] text-gray-400" />
-                    <span className="max-w-[220px] truncate text-[12px] font-medium text-gray-700">
+                    <span className="max-w-[220px] truncate text-[12px] font-medium text-gray-700" spellCheck={false}>
                       {doc.filename}
                     </span>
                   </div>
@@ -193,6 +196,15 @@ export function DocumentTable({ documents, hideClientFilter = false }: DocumentT
                       ? `€${doc.extractedAmount.toLocaleString('pt-PT', { minimumFractionDigits: 2 })}`
                       : <span className="font-normal text-gray-300">-</span>}
                   </span>
+                </TableCell>
+                <TableCell className="py-2.5">
+                  {doc.classificationSource ? (
+                    <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
+                      {SOURCE_LABEL[doc.classificationSource] ?? doc.classificationSource}
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-gray-300">—</span>
+                  )}
                 </TableCell>
                 <TableCell className="py-2.5 text-right">
                   <span className={cn('data text-[12px] font-bold', confidenceClass(doc.confidence))}>
