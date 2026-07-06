@@ -1,51 +1,44 @@
-import { Prisma } from '@prisma/client'
+import { Prisma, type Document } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { createEmailProvider } from '@/server/email-providers'
-import { uploadToR2, buildAttachmentKey } from '@/lib/r2'
-import {
-  classifyDocument,
-  classifyImage,
-  classifyPdfDocument,
-  classifyFromATQR,
-  classifyFromFilename,
-  generateEmailDraft,
-  type ReceivedDocument,
-} from '@/server/services/email-classification'
+import { uploadToR2, downloadFromR2, buildAttachmentKey } from '@/lib/r2'
+import { generateEmailDraft, type ReceivedDocument } from '@/server/services/email-classification'
+import { runExtractionCascade } from '@/server/services/extraction'
+import { decideSplit, executeSplit } from '@/server/services/pdf-split'
+import { sha256 } from '@/server/services/upload-service'
 import { DOCUMENT_TYPE_LABELS } from '@/lib/document-types'
 import { CLAUDE_MODEL } from '@/lib/anthropic'
 import { extractText } from '@/lib/text-extractor'
-import { extractQRCodeFromImage, extractQRCodeFromPDF } from '@/lib/qr-reader'
-import { parseATFiscalQR } from '@/lib/at-fiscal-qr'
 import { QUEUE_DOCUMENT_PARSE } from '@/lib/redis'
 import { createJobLog, updateJobLog } from './job-log'
 
-// Claude Vision supports these image types — everything else uses text extraction
 const VISION_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp'])
+const DONE_STATUSES = new Set(['CLASSIFIED', 'REVIEWED', 'SPLIT'])
 
 export interface DocumentParseJobData {
-  attachmentId: string
-  emailAccountId: string
   officeId: string
+  /** Email path: attachment to download from the provider */
+  attachmentId?: string
+  emailAccountId?: string
+  /** Manual/ingest/split path: existing Document with the file already in R2 */
+  documentId?: string
 }
 
 /**
- * Document parsing and classification pipeline (extracted from the worker so it
- * is testable without BullMQ/Redis).
- *
- * Flow: download → R2 upload → text extraction → classification cascade
- * (filename → AT QR → Claude) → AuditLog → draft generation. Logs to JobLog
- * (spec rule 6) and is idempotent.
+ * Document parsing pipeline — one cascade for every source (S2.1: uploads run
+ * the SAME pipeline as email attachments). Logs to JobLog and is idempotent.
  */
 export async function processDocumentParse(
   data: DocumentParseJobData,
   jobId: string
 ): Promise<{ documentId: string; type: string } | undefined> {
-  const { attachmentId, emailAccountId, officeId } = data
-  const jobLogId = await createJobLog(officeId, QUEUE_DOCUMENT_PARSE, jobId, data)
+  const jobLogId = await createJobLog(data.officeId, QUEUE_DOCUMENT_PARSE, jobId, data)
 
   try {
     await updateJobLog(jobLogId, 'RUNNING')
-    const result = await runParse(data)
+    const result = data.documentId
+      ? await runParseForDocument(data.documentId, data.officeId)
+      : await runParseForAttachment(data.attachmentId!, data.officeId)
     await updateJobLog(jobLogId, 'COMPLETED', result ?? { skipped: true })
     return result
   } catch (error) {
@@ -55,33 +48,52 @@ export async function processDocumentParse(
   }
 }
 
-async function runParse(
-  data: DocumentParseJobData
-): Promise<{ documentId: string; type: string } | undefined> {
-  const { attachmentId, officeId } = data
+// ── Manual/ingest/split path ─────────────────────────────────────────────────
 
+async function runParseForDocument(
+  documentId: string,
+  officeId: string
+): Promise<{ documentId: string; type: string } | undefined> {
+  const document = await prisma.document.findFirst({
+    where: { id: documentId, officeId },
+  })
+  if (!document || DONE_STATUSES.has(document.status)) return undefined
+  if (!document.r2Key) throw new Error(`document ${documentId} has no r2Key`)
+
+  const buffer = await downloadFromR2(document.r2Key)
+  const filename = document.originalFilename ?? `${document.id}.bin`
+  const mimeType = document.mimeType ?? 'application/octet-stream'
+
+  const outcome = await runSharedPipeline(document, buffer, filename, mimeType)
+  if (!outcome) return { documentId, type: 'SPLIT' }
+
+  await writeClassificationAudit(officeId, documentId, outcome.type, outcome.confidence)
+  return { documentId, type: outcome.type }
+}
+
+// ── Email attachment path ────────────────────────────────────────────────────
+
+async function runParseForAttachment(
+  attachmentId: string,
+  officeId: string
+): Promise<{ documentId: string; type: string } | undefined> {
   const attachment = await prisma.emailAttachment.findUniqueOrThrow({
     where: { id: attachmentId },
     include: {
-      inboundEmail: {
-        include: { emailAccount: true, client: true },
-      },
+      inboundEmail: { include: { emailAccount: true, client: true } },
       document: true,
     },
   })
 
-  // Skip only if fully classified/reviewed — allow retry for stuck PENDING_CLASSIFICATION
-  const DONE_STATUSES = new Set(['CLASSIFIED', 'REVIEWED'])
   const alreadyClassified =
     attachment.document && DONE_STATUSES.has(attachment.document.status)
-
   if (alreadyClassified) {
-    // Still attempt draft generation in case the job previously failed before that step.
+    // Idempotency: classification skip must not prevent draft generation
     await maybeGenerateDraftForEmail(attachment.inboundEmail.id, officeId)
     return undefined
   }
 
-  // 1. Download attachment
+  // 1. Download attachment from the provider
   const account = attachment.inboundEmail.emailAccount
   const provider = createEmailProvider(account)
   const buffer = await provider.getAttachment(
@@ -98,114 +110,123 @@ async function runParse(
     attachmentId,
     ext
   )
-
   await uploadToR2(r2Key, buffer, attachment.mimeType)
-
   await prisma.emailAttachment.update({
     where: { id: attachmentId },
     data: { r2Key, uploadedAt: new Date() },
   })
 
-  // 3. Extract text content
-  const isImage = VISION_MIME_TYPES.has(attachment.mimeType)
-  const isPdf =
-    attachment.mimeType === 'application/pdf' ||
-    attachment.filename.toLowerCase().endsWith('.pdf')
-  const textContent = isImage ? null : await extractText(buffer, attachment.filename)
-  const isScannedPdf = isPdf && textContent === null
-
-  // 4. Create Document record (pending classification) — upsert for idempotency
+  // 3. Ensure the Document row (upsert — job may retry)
   const document = await prisma.document.upsert({
     where: { attachmentId },
     create: {
+      officeId,
       attachmentId,
+      source: 'EMAIL',
       clientId: attachment.inboundEmail.clientId,
       status: 'PENDING_CLASSIFICATION',
-      textContent,
       r2Key,
+      originalFilename: attachment.filename,
+      mimeType: attachment.mimeType,
+      sizeBytes: buffer.length,
+      contentSha256: sha256(buffer),
     },
-    update: { textContent, r2Key },
+    update: { r2Key },
   })
 
-  // 5. Classification cascade: filename → AT QR (image/PDF) → Claude
-  const isZip = attachment.filename.toLowerCase().endsWith('.zip')
+  const outcome = await runSharedPipeline(document, buffer, attachment.filename, attachment.mimeType)
+  if (!outcome) return { documentId: document.id, type: 'SPLIT' }
 
-  let classificationResult = await classifyFromFilename(attachment.filename, document.id)
+  await writeClassificationAudit(officeId, document.id, outcome.type, outcome.confidence)
 
-  if (!classificationResult) {
-    if (isImage) {
-      const qrData = await extractQRCodeFromImage(buffer)
-      if (qrData) {
-        const atData = parseATFiscalQR(qrData)
-        if (atData) {
-          classificationResult = await classifyFromATQR(atData, document.id)
-        }
+  // Draft generation only applies to the email path
+  await maybeGenerateDraftForEmail(attachment.inboundEmail.id, officeId, outcome.confidence)
+
+  return { documentId: document.id, type: outcome.type }
+}
+
+// ── Shared pipeline: text → split → extraction cascade ──────────────────────
+
+async function runSharedPipeline(
+  document: Document,
+  buffer: Buffer,
+  filename: string,
+  mimeType: string
+): Promise<{ type: string; confidence: number } | null> {
+  const isImage = VISION_MIME_TYPES.has(mimeType)
+  const isPdf = mimeType === 'application/pdf' || filename.toLowerCase().endsWith('.pdf')
+
+  // Text extraction (images handled by Vision; scanned PDFs return null)
+  const textContent = isImage ? null : await extractText(buffer, filename)
+  let current = await prisma.document.update({
+    where: { id: document.id },
+    data: { textContent },
+  })
+
+  // Multi-invoice split (S2.2/A6) — PDFs only, before classification
+  if (isPdf && current.parentDocumentId === null) {
+    const pageCount = await countPdfPages(buffer)
+    if (pageCount > 1) {
+      const decision = await decideSplit({ document: current, buffer, pageCount })
+      if (decision.action === 'split') {
+        await executeSplit({ document: current, buffer, boundaries: decision.boundaries })
+        return null // parent is SPLIT — children take over
       }
-      if (!classificationResult) {
-        classificationResult = await classifyImage(buffer, attachment.mimeType, document.id)
+      if (decision.action === 'too-large') {
+        current = await prisma.document.update({
+          where: { id: current.id },
+          data: { flags: { push: 'TOO_LARGE_FOR_AUTOSPLIT' } },
+        })
       }
-    } else if (isPdf) {
-      const pdfQrData = await extractQRCodeFromPDF(buffer)
-      if (pdfQrData) {
-        const atData = parseATFiscalQR(pdfQrData)
-        if (atData) {
-          classificationResult = await classifyFromATQR(atData, document.id)
-        }
-      }
-      if (!classificationResult) {
-        classificationResult = isScannedPdf
-          ? await classifyPdfDocument(buffer, document.id)
-          : await classifyDocument(textContent ?? '', document.id)
-      }
-    } else {
-      classificationResult = await classifyDocument(textContent ?? '', document.id)
+      // low-confidence: suggestion persisted in the split cache; continue as single doc
     }
   }
 
-  // ZIP files contain multiple documents — extractedAmount from Claude is meaningless
-  if (isZip && classificationResult.extractedAmount != null) {
-    await prisma.document.update({
-      where: { id: document.id },
-      data: { extractedAmount: null },
-    })
-  }
+  const outcome = await runExtractionCascade({
+    document: current,
+    buffer,
+    filename,
+    mimeType,
+  })
+  return { type: outcome.type, confidence: outcome.confidence }
+}
 
-  // 6. AuditLog for the classification (real entityId, never updated afterwards)
+async function countPdfPages(buffer: Buffer): Promise<number> {
+  try {
+    const { PDFDocument } = await import('pdf-lib')
+    const pdf = await PDFDocument.load(buffer, { ignoreEncryption: true })
+    return pdf.getPageCount()
+  } catch {
+    return 1
+  }
+}
+
+async function writeClassificationAudit(
+  officeId: string,
+  documentId: string,
+  type: string,
+  confidence: number
+): Promise<void> {
   await prisma.auditLog.create({
     data: {
       officeId,
       action: 'document_classified',
       entityType: 'Document',
-      entityId: document.id,
+      entityId: documentId,
       aiGenerated: true,
-      aiModel: document.aiModel,
-      metadata: {
-        type: classificationResult.type,
-        confidence: classificationResult.confidence,
-        attachmentId,
-      },
+      metadata: { type, confidence },
     },
   })
-
-  // 7. Attempt draft generation
-  await maybeGenerateDraftForEmail(attachment.inboundEmail.id, officeId, classificationResult.confidence)
-
-  return { documentId: document.id, type: classificationResult.type }
 }
 
-// ── Draft generation ─────────────────────────────────────────────────────────
+// ── Draft generation (email path only) ───────────────────────────────────────
 
 const DRAFT_CONFIDENCE_THRESHOLD = 0.7
 
 /**
- * Generates a draft reply for the email when all conditions hold:
- * no draft exists, every attachment is classified, and the confidence of the
- * triggering classification (or the best stored one) meets the threshold.
- *
- * Race-safe: the unique constraint EmailAction(inboundEmailId, type) guarantees
- * at most one draft even under concurrent jobs — the loser exits cleanly.
- * Audit order (A12/G5): EmailAction created first, AuditLog with the REAL id
- * BEFORE the external AI call, then the draft content is filled in.
+ * Generates a draft reply for the email when all conditions hold.
+ * Race-safe via the EmailAction(inboundEmailId, type) unique constraint;
+ * AuditLog written with the REAL id BEFORE the external AI call (A12/G5).
  */
 export async function maybeGenerateDraftForEmail(
   inboundEmailId: string,
@@ -240,8 +261,7 @@ export async function maybeGenerateDraftForEmail(
   if (!allClassified) return
 
   const bestConfidence =
-    classifiedConfidence ??
-    Math.max(0, ...docs.map((a) => a.document?.confidence ?? 0))
+    classifiedConfidence ?? Math.max(0, ...docs.map((a) => a.document?.confidence ?? 0))
   if (bestConfidence < DRAFT_CONFIDENCE_THRESHOLD) return
 
   const existingDraft = await prisma.emailAction.findFirst({

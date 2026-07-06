@@ -34,9 +34,13 @@ vi.mock('@/server/email-providers', () => ({
 
 vi.mock('@/lib/r2', () => ({
   uploadToR2: vi.fn(async () => undefined),
+  downloadFromR2: vi.fn(async () => Buffer.from('%PDF-1.4 fake')),
   buildAttachmentKey: (...parts: unknown[]) => parts.filter(Boolean).join('/'),
   getSignedDownloadUrl: vi.fn(async () => 'https://signed.example/x'),
 }))
+
+// The unified extraction cascade calls Claude directly — mock at the client level
+vi.mock('@/lib/anthropic', async () => (await import('../mocks/ai')).aiMockFactory())
 
 vi.mock('@/lib/text-extractor', () => ({
   extractText: vi.fn(async () => 'FATURA FT 2026/1 Total 100,00'),
@@ -66,6 +70,7 @@ import {
   processDocumentParse,
   maybeGenerateDraftForEmail,
 } from '@/queues/document-parse.processor'
+import { aiState, scenarioValidExtraction } from '../mocks/ai'
 
 async function seedClassifiedEmail() {
   const office = await makeOffice()
@@ -74,6 +79,7 @@ async function seedClassifiedEmail() {
   const attachment = await makeAttachment({ inboundEmailId: email.id })
   await prisma.document.create({
     data: {
+      officeId: office.id,
       attachmentId: attachment.id,
       type: 'INVOICE_RECEIVED',
       status: 'CLASSIFIED',
@@ -89,6 +95,7 @@ describe('AC-0.5 Fundação', () => {
     generateEmailDraftMock.mockClear()
     getAttachmentMock.mockReset()
     getAttachmentMock.mockResolvedValue(Buffer.from('%PDF-1.4 fake'))
+    aiState.reset()
   })
 
   it('AC-0.5.b [INV] — 2 gerações de draft concorrentes para o mesmo email → exatamente 1 draft (constraint)', async () => {
@@ -119,6 +126,7 @@ describe('AC-0.5 Fundação', () => {
     const email = await makeInboundEmail({ emailAccountId: account.id })
     const attachment = await makeAttachment({ inboundEmailId: email.id })
 
+    aiState.queue.push(scenarioValidExtraction())
     await processDocumentParse(
       { attachmentId: attachment.id, emailAccountId: account.id, officeId: office.id },
       'job-test-1'

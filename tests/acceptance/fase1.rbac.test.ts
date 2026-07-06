@@ -70,7 +70,14 @@ describe('AC-1.1 RBAC (§1.1)', () => {
         }
         if (entry !== 'route.ts') continue
         const rel = full.replace(apiDir, '').replace(/\\/g, '/')
-        if (rel.startsWith('/webhooks/') || rel.includes('[...nextauth]') || rel.startsWith('/health')) {
+        // Exemptions: webhooks and inbound-ingest adapters authenticate by
+        // signature/secret (no user session), NextAuth handles its own auth
+        if (
+          rel.startsWith('/webhooks/') ||
+          rel.startsWith('/ingest/') ||
+          rel.includes('[...nextauth]') ||
+          rel.startsWith('/health')
+        ) {
           continue
         }
         const content = readFileSync(full, 'utf-8')
@@ -113,7 +120,7 @@ describe('AC-1.1 RBAC (§1.1)', () => {
     const emailA = await makeInboundEmail({ emailAccountId: accountA.id })
     const attachmentA = await makeAttachment({ inboundEmailId: emailA.id })
     const documentA = await prisma.document.create({
-      data: { attachmentId: attachmentA.id, status: 'CLASSIFIED', type: 'INVOICE_RECEIVED', r2Key: 'x/y.pdf' },
+      data: { officeId: officeA.id, attachmentId: attachmentA.id, status: 'CLASSIFIED', type: 'INVOICE_RECEIVED', r2Key: 'x/y.pdf' },
     })
 
     setSession({ id: ownerB.id, email: ownerB.email, officeId: officeB.id, role: 'OWNER' })

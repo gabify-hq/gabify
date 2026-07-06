@@ -2,6 +2,7 @@ import { FileText } from 'lucide-react'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { DocumentTable } from '@/components/dashboard/document-table'
+import { UploadDocuments } from '@/components/dashboard/upload-documents'
 import { DOCUMENT_TYPE_LABELS } from '@/lib/document-types'
 import type { DocumentDTO } from '@/server/dto'
 import type { DocumentType } from '@/types'
@@ -114,7 +115,8 @@ export default async function DocumentsPage() {
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto px-5 py-4">
+      <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
+        <UploadDocuments clients={clients} />
         <DocumentTable documents={documents} clients={clients} />
       </div>
     </div>

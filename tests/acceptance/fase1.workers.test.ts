@@ -103,7 +103,7 @@ describe('AC-1.4.g Workers testados (§1.7)', () => {
     })
     // Already parsed — has a Document
     await prisma.document.create({
-      data: { attachmentId: attachment.id, status: 'CLASSIFIED', type: 'INVOICE_RECEIVED' },
+      data: { officeId: office.id, attachmentId: attachment.id, status: 'CLASSIFIED', type: 'INVOICE_RECEIVED' },
     })
 
     syncInboxMock.mockResolvedValue({

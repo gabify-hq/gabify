@@ -231,7 +231,7 @@ describe('AC-1.4 Higiene (§1.4–§1.7, A11, A12)', () => {
     const emailA = await makeInboundEmail({ emailAccountId: accountA.id })
     const attA = await makeAttachment({ inboundEmailId: emailA.id })
     const docA = await prisma.document.create({
-      data: { attachmentId: attA.id, status: 'CLASSIFIED', type: 'INVOICE_RECEIVED' },
+      data: { officeId: officeA.id, attachmentId: attA.id, status: 'CLASSIFIED', type: 'INVOICE_RECEIVED' },
     })
     const clientB = await makeClient({ officeId: officeB.id })
     const clientA = await makeClient({ officeId: officeA.id })

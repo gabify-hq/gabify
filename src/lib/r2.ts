@@ -66,6 +66,19 @@ export async function getSignedDownloadUrl(
 }
 
 /**
+ * Download an object from R2 into a Buffer.
+ * Used by the parse worker for manually uploaded / ingested documents.
+ */
+export async function downloadFromR2(key: string): Promise<Buffer> {
+  const response = await getR2Client().send(
+    new GetObjectCommand({ Bucket: getBucket(), Key: key })
+  )
+  const bytes = await response.Body?.transformToByteArray()
+  if (!bytes) throw new Error(`R2 object ${key} has no body`)
+  return Buffer.from(bytes)
+}
+
+/**
  * Delete an object from R2.
  */
 export async function deleteFromR2(key: string): Promise<void> {

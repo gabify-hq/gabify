@@ -40,6 +40,20 @@ Formato: slice · estado · RED confirmado · gate.
 
 **Fim da Fase 1: `npm run gate` verde — 231 testes, coverage thresholds enforced (queues 80/api 70/server 75).**
 
+## Fase 2
+
+| Slice | Estado | RED | Gate |
+|---|---|---|---|
+| Acceptance Fase 2 escrita (AC-2.1/2.2/2.3/2.4/2.5 + AC-3.1/3.2/3.3/3.4, 27 testes) + fixtures A10 geradas | DONE | ✅ 5/5 ficheiros RED (módulos inexistentes) | — |
+| S2.1 Upload manual (magic bytes A4, zip-bomb A4, 25MB/10 ficheiros, erros por ficheiro, UI drag&drop + câmara mobile) | DONE | ✅ | ✅ 6/6 |
+| S2.2 Split multi-fatura (QR determinístico por página zero-IA, cap 50 págs A6, cache sha256 A6, pdf-lib, filhos com parse próprio) | DONE | ✅ | ✅ 6/6 |
+| S2.3 Extração rica (QR I1–K8→vatBreakdown cents A1, Decimal em colunas, prompts+zod estrito, coerência ±2c, retenção, XML UBL determinístico) | DONE | ✅ | ✅ 12/12 |
+| S2.4 Import CSV/XLSX (mapeamento IA proposto → confirmação humana obrigatória AC-2.5.c, validação NIF checksum + aritmética, relatório por linha) | DONE | ✅ | ✅ 3/3 |
+| S2.5 Duplicados (normalização A8, índice único parcial SQL, colisão→DUPLICATE_SUSPECT nunca 500) + empresa errada + auto-associação por NIF adquirente | DONE | ✅ | ✅ |
+| S2.6/A5 Caixa dedicada (alias token 12 chars sem ambíguos, DMARC→quarentena SENDER_UNVERIFIED, allowlist, rate limit por endereço, adaptador de teste + rota simulate dev-only) | DONE | ✅ | ✅ 7/7 |
+
+**Fim da Fase 2: `npm run gate` verde — 265 testes (101 acceptance).**
+
 ## Decisões (latitude da spec)
 
 - Testes de aceitação correm contra PostgreSQL real (`gabify_test`) — constraints e concorrência (A3/A7/AC-0.5.b) não são verificáveis com Prisma mockado.
@@ -53,3 +67,10 @@ Formato: slice · estado · RED confirmado · gate.
 - AC-1.2 testado ao nível adapter+callback (`getSessionAndUser` + `enrichSession`) — o plumbing de cookies do NextAuth não é unit-testável sem HTTP server real.
 - `src/queues/*.worker.ts` excluídos da cobertura: são shells de wiring BullMQ (ligam ao Redis no import); toda a lógica vive nos `*.processor.ts`, 100% cobertos.
 - Anti-lockout/gestão de users em rota própria `/api/users/[userId]` com ação RBAC `user:manage` (OWNER only) — a spec não a listava; necessária para A2.
+- Pipeline unificado (Fase 2): `runExtractionCascade` substitui as funções classify* no worker — email, upload, ingest e filhos de split percorrem exatamente o mesmo caminho (`{documentId}` vs `{attachmentId}` só muda a obtenção do buffer). As funções classify* antigas mantêm-se exportadas (testes unitários), mas fora do fluxo.
+- `Document.officeId` direto (backfill na migração) — obrigatório para fontes sem cadeia de email; simplifica scoping.
+- Convenção A1 adotada: cêntimos inteiros em JSONB (`vatBreakdown`, `documentLines`), `Decimal(14,2)` em colunas (documentado em OVERVIEW).
+- Extração XML: leitura determinística leve de campos UBL (totais, NIFs, nº, data) — o parser/validador CIUS-PT completo continua fora de âmbito (§7).
+- Fixtures A10 comitadas em `tests/fixtures/generated/` (determinísticas; regeneradas pelo globalSetup se faltarem). QRs embebidos como JPEG (DCTDecode) porque o qr-reader de produção só extrai streams JPEG de PDFs.
+- Rota `/api/ingest/simulate` isenta do arch-test de RBAC (autentica por secret, como os webhooks); desativada em produção.
+- Mocks de fase0.foundation atualizados para a nova arquitetura (anthropic mockado ao nível do cliente) — invariantes AC-0.5 inalterados.

@@ -18,6 +18,16 @@
  *   R: Nº certificado AT
  */
 
+/** One VAT band from the QR (fields I/J/K — integer cents, A1). */
+export interface ATQRVatBand {
+  /** Fiscal region: PT | PT-AC | PT-MA */
+  region: string
+  /** Nominal rate label: 0 (isenta), 'reduzida', 'intermedia', 'normal' as percent when known */
+  rate: number
+  baseCents: number
+  vatCents: number
+}
+
 export interface ATQRData {
   /** NIF of the issuing entity */
   nifEmitter: string
@@ -41,6 +51,18 @@ export interface ATQRData {
   hashSnippet: string | null
   /** AT certificate number */
   certNumber: string | null
+  /** VAT bands per rate/region (I1–K8) — integer cents (A1) */
+  vatBands: ATQRVatBand[]
+  /** Field L — amount not subject to VAT, in cents */
+  notSubjectCents: number | null
+  /** Field M — stamp duty, in cents */
+  stampDutyCents: number | null
+  /** Field N — total taxes, in cents */
+  totalVatCents: number | null
+  /** Field O — grand total, in cents */
+  totalCents: number
+  /** Field P — withholding at source, in cents */
+  withholdingCents: number | null
 }
 
 /**
@@ -79,7 +101,61 @@ export function parseATFiscalQR(qrData: string): ATQRData | null {
     totalAmount,
     hashSnippet: fields['Q'] ?? null,
     certNumber: fields['R'] ?? null,
+    vatBands: parseVatBands(fields),
+    notSubjectCents: toCents(fields['L']),
+    stampDutyCents: toCents(fields['M']),
+    totalVatCents: toCents(fields['N']),
+    totalCents: toCents(fields['O']) ?? 0,
+    withholdingCents: toCents(fields['P']),
   }
+}
+
+// ── Portaria 195/2020 monetary fields (I/J/K blocks) ─────────────────────────
+
+function toCents(value: string | undefined): number | null {
+  if (!value) return null
+  const parsed = parseFloat(value)
+  if (isNaN(parsed)) return null
+  return Math.round(parsed * 100)
+}
+
+/**
+ * Parses the I (first fiscal region), J (second) and K (third) blocks into
+ * VAT bands. Layout per block: *1 region code, *2 exempt base, *3/*4 reduced
+ * base/VAT, *5/*6 intermediate base/VAT, *7/*8 standard base/VAT.
+ * PT mainland rates are used as labels; monetary values as integer cents (A1).
+ */
+function parseVatBands(fields: Record<string, string>): ATQRVatBand[] {
+  const bands: ATQRVatBand[] = []
+  const RATE_LABELS: Record<string, { reduced: number; intermediate: number; standard: number }> = {
+    'PT':    { reduced: 6, intermediate: 13, standard: 23 },
+    'PT-AC': { reduced: 4, intermediate: 9, standard: 16 },
+    'PT-MA': { reduced: 5, intermediate: 12, standard: 22 },
+  }
+
+  for (const block of ['I', 'J', 'K']) {
+    const region = fields[`${block}1`]
+    if (!region || region === '0') continue
+    const rates = RATE_LABELS[region] ?? RATE_LABELS['PT']
+
+    const exemptBase = toCents(fields[`${block}2`])
+    if (exemptBase !== null) {
+      bands.push({ region, rate: 0, baseCents: exemptBase, vatCents: 0 })
+    }
+    const pairs: Array<[string, string, number]> = [
+      [`${block}3`, `${block}4`, rates.reduced],
+      [`${block}5`, `${block}6`, rates.intermediate],
+      [`${block}7`, `${block}8`, rates.standard],
+    ]
+    for (const [baseKey, vatKey, rate] of pairs) {
+      const base = toCents(fields[baseKey])
+      const vat = toCents(fields[vatKey])
+      if (base !== null || vat !== null) {
+        bands.push({ region, rate, baseCents: base ?? 0, vatCents: vat ?? 0 })
+      }
+    }
+  }
+  return bands
 }
 
 /**
