@@ -15,7 +15,9 @@
     "dev:all": "concurrently --names \"next,email,docs,studio\" --prefix-colors \"blue,green,yellow,magenta\" \"npm run dev\" \"npm run worker:email\" \"npm run worker:documents\" \"npm run db:studio\"",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "seed:bootstrap": "tsx --env-file=.env.local scripts/seed-office.ts",
+    "gate": "tsc --noEmit && eslint src && vitest run && vitest run --coverage"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",

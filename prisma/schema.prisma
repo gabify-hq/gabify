@@ -42,11 +42,13 @@ enum ActionType {
 }
 
 enum ActionStatus {
-  PENDING_REVIEW  // waiting for accountant approval
-  APPROVED        // accountant approved
-  REJECTED        // accountant rejected
-  SENT            // approved + sent
-  EDITED_SENT     // edited by accountant then sent
+  PENDING_REVIEW       // waiting for accountant approval
+  APPROVED             // transient: approved, send in progress
+  REJECTED             // accountant rejected
+  SENT                 // legacy: approved + sent
+  EDITED_SENT          // legacy: edited by accountant then sent
+  APPROVED_SENT        // approved and reply sent successfully (A3)
+  APPROVED_SEND_FAILED // approved but sendReply failed — retry possible (A3)
 }
 
 enum DocumentType {
@@ -100,6 +102,7 @@ model Office {
   emailAccounts EmailAccount[]
   auditLogs     AuditLog[]
   jobLogs       JobLog[]
+  invitations   Invitation[]
 
   @@index([deletedAt])
 }
@@ -129,6 +132,7 @@ model User {
   docReviews       DocumentReview[]
   auditLogsCreated AuditLog[]    @relation("AuditCreator")
   auditLogsApproved AuditLog[]   @relation("AuditApprover")
+  invitationsSent  Invitation[]  @relation("InvitationInviter")
 
   @@index([officeId])
   @@index([email])
@@ -168,6 +172,29 @@ model Session {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+// ─────────────────────────────────────────
+// INVITATION (closed onboarding — S0.1, A2)
+// ─────────────────────────────────────────
+
+model Invitation {
+  id              String    @id @default(cuid())
+  officeId        String
+  email           String    // stored lowercase
+  role            UserRole
+  tokenHash       String    @unique // SHA-256 of the raw token (raw token only in the email)
+  expiresAt       DateTime  // 72h from creation/resend
+  acceptedAt      DateTime?
+  revokedAt       DateTime?
+  invitedByUserId String
+  createdAt       DateTime  @default(now())
+
+  office    Office @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  invitedBy User   @relation("InvitationInviter", fields: [invitedByUserId], references: [id])
+
+  @@index([officeId, email])
+  @@index([email])
 }
 
 model VerificationToken {
@@ -343,6 +370,8 @@ model EmailAction {
   aiModel        String?      // Claude model used
   aiPromptTokens Int?
   sentAt         DateTime?
+  sendAttempts   Int          @default(0) // send tries (approve + retries, max per A3)
+  sendError      String?      @db.Text    // last sendReply failure message
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
@@ -350,6 +379,8 @@ model EmailAction {
   review       EmailReview?
   auditLog     AuditLog?
 
+  // One action per type per email — prevents the concurrent draft race (achado #10)
+  @@unique([inboundEmailId, type])
   @@index([inboundEmailId])
   @@index([status])
 }
@@ -362,8 +393,9 @@ model EmailReview {
   id            String       @id @default(cuid())
   emailActionId String       @unique
   reviewerId    String
-  decision      ActionStatus // APPROVED | REJECTED | EDITED_SENT
+  decision      ActionStatus // APPROVED | REJECTED
   notes         String?
+  editedBody    String?      @db.Text // accountant-edited body at approval time
   reviewedAt    DateTime     @default(now())
 
   emailAction EmailAction @relation(fields: [emailActionId], references: [id], onDelete: Cascade)

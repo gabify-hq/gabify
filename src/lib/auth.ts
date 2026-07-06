@@ -13,6 +13,22 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     Resend({
       apiKey: process.env.RESEND_API_KEY,
       from: process.env.FROM_EMAIL ?? 'no-reply@gabify.pt',
+      // Closed onboarding (S0.1/A2): the magic link is only actually sent when the
+      // email belongs to an existing user or has a pending invitation. The HTTP
+      // response is identical either way — an outsider cannot enumerate accounts.
+      async sendVerificationRequest({ identifier, url, provider }) {
+        const { canRequestMagicLink } = await import('@/server/services/invitation-service')
+        if (!(await canRequestMagicLink(identifier))) {
+          return // silent no-op — neutral response
+        }
+        const { resend, FROM_EMAIL } = await import('@/lib/resend')
+        await resend.emails.send({
+          from: (provider.from as string | undefined) ?? FROM_EMAIL,
+          to: identifier,
+          subject: 'Entrar no Gabify',
+          text: `Bom dia,\n\nPara entrar no Gabify, abra o link seguinte:\n${url}\n\nSe não pediu este email, pode ignorá-lo.`,
+        })
+      },
     }),
   ],
   callbacks: {
