@@ -1,5 +1,4 @@
 import type { ReactNode } from 'react'
-import { DashboardProvider } from '@/lib/dashboard-store'
 import { Sidebar } from '@/components/dashboard/sidebar'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
@@ -25,7 +24,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   ])
 
   return (
-    <DashboardProvider>
+    <>
       {/* Skip link for keyboard/screen-reader users */}
       <a
         href="#main-content"
@@ -41,6 +40,6 @@ export default async function DashboardLayout({ children }: { children: ReactNod
         />
         <main id="main-content" className="flex flex-1 flex-col overflow-hidden">{children}</main>
       </div>
-    </DashboardProvider>
+    </>
   )
 }

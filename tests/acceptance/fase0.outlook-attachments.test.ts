@@ -8,7 +8,7 @@ import { queuePendingAttachments } from '@/queues/email-sync.processor'
 type FetchRoute = (url: string, init?: RequestInit) => object | null
 
 /** Routes fetch calls by URL substring; unmatched URLs throw so tests stay honest. */
-function stubFetch(routes: Array<[match: string, handler: FetchRoute]>): vi.Mock {
+function stubFetch(routes: Array<[match: string, handler: FetchRoute]>) {
   const mock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     for (const [match, handler] of routes) {
@@ -148,7 +148,7 @@ describe('AC-0.3 Anexos Outlook (§0.3, A4) + campos de email (achado #19)', () 
 
     await new OutlookProvider(account).syncInbox()
 
-    const attachmentCalls = fetchMock.mock.calls.filter((c) => String(c[0]).includes('/attachments'))
+    const attachmentCalls = fetchMock.mock.calls.filter((c: unknown[]) => String(c[0]).includes('/attachments'))
     expect(attachmentCalls).toHaveLength(0)
   })
 

@@ -152,6 +152,28 @@ describe('AC-0.5 Fundação', () => {
     expect(log.error).toContain('Graph download failed')
   })
 
+  it('AC-0.2.grep [INV] — sessionStorage não aparece em código de produção (src/)', () => {
+    const srcDir = join(process.cwd(), 'src')
+    const offenders: string[] = []
+
+    function walk(dir: string): void {
+      for (const entry of readdirSync(dir)) {
+        const full = join(dir, entry)
+        if (statSync(full).isDirectory()) {
+          walk(full)
+          continue
+        }
+        if (!/\.(ts|tsx)$/.test(entry) || /\.test\./.test(entry)) continue
+        if (readFileSync(full, 'utf-8').includes('sessionStorage')) {
+          offenders.push(full)
+        }
+      }
+    }
+    walk(srcDir)
+
+    expect(offenders).toEqual([])
+  })
+
   it('AC-0.5.d [INV] — AuditLog nunca é atualizado: código de produção sem auditLog.update', () => {
     const srcDir = join(process.cwd(), 'src')
     const offenders: string[] = []

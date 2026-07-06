@@ -65,7 +65,8 @@ export default async function EmailPage({ params }: EmailPageProps) {
         emailId: raw.id,
         type: firstAction.type as MockEmailAction['type'],
         status: firstAction.status,
-        draftContent: firstAction.editedContent ?? firstAction.draftContent ?? '',
+        draftContent: firstAction.draftContent ?? '',
+        editedContent: firstAction.editedContent,
         aiModel: firstAction.aiModel ?? 'claude',
         createdAt: firstAction.createdAt,
       }

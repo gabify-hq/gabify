@@ -25,6 +25,8 @@ export type ActionStatus =
   | 'REJECTED'
   | 'SENT'
   | 'EDITED_SENT'
+  | 'APPROVED_SENT'
+  | 'APPROVED_SEND_FAILED'
 
 export type DocumentType =
   | 'INVOICE_RECEIVED'

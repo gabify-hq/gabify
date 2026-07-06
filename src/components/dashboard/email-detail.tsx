@@ -1,12 +1,12 @@
 'use client'
 
 import { useState } from 'react'
-import { Check, X, Pencil, ChevronLeft, Paperclip, Download, AlertTriangle } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { Check, X, Pencil, ChevronLeft, Paperclip, Download, AlertTriangle, RefreshCw, Loader2 } from 'lucide-react'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { Textarea } from '@/components/ui/textarea'
 import { StatusBadge } from './status-badge'
-import { useDashboardStore } from '@/lib/dashboard-store'
 import type { MockEmail, MockEmailAction } from '@/lib/mock-data'
 import { formatDateTime } from '@/lib/mock-data'
 
@@ -22,33 +22,57 @@ interface EmailDetailProps {
   attachments?: EmailAttachment[]
 }
 
+type PendingOperation = 'approve' | 'reject' | 'retry' | null
+
+/**
+ * Draft review panel. All decisions go through the server APIs — state lives in
+ * the database (EmailReview + AuditLog), never in browser storage.
+ */
 export function EmailDetail({ email, action, attachments = [] }: EmailDetailProps) {
-  const store = useDashboardStore()
-  const persisted = action ? store.getAction(action.id) : undefined
-  const currentStatus = persisted?.status ?? action?.status ?? null
-  const currentContent = persisted?.editedContent ?? action?.draftContent ?? ''
+  const router = useRouter()
+  const currentStatus = action?.status ?? null
+  const currentContent = action?.editedContent ?? action?.draftContent ?? ''
 
   const [isEditing, setIsEditing] = useState(false)
   const [draftText, setDraftText] = useState(currentContent)
-  const isPending = !currentStatus || currentStatus === 'PENDING_REVIEW'
+  const [pendingOp, setPendingOp] = useState<PendingOperation>(null)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
-  const handleApprove = () => {
+  const isPending = currentStatus === 'PENDING_REVIEW'
+  const isSendFailed = currentStatus === 'APPROVED_SEND_FAILED'
+  const isSent = currentStatus === 'APPROVED_SENT' || currentStatus === 'SENT' || currentStatus === 'EDITED_SENT' || currentStatus === 'APPROVED'
+
+  async function callDecisionApi(op: Exclude<PendingOperation, null>, body?: unknown): Promise<void> {
     if (!action) return
-    store.approveAction(action.id, draftText)
-    setIsEditing(false)
+    setPendingOp(op)
+    setErrorMessage(null)
+    try {
+      const url =
+        op === 'retry'
+          ? `/api/emails/${email.id}/draft/retry-send`
+          : `/api/emails/${email.id}/actions/${action.id}/${op}`
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body ?? {}),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        setErrorMessage(data?.error ?? 'Ocorreu um erro. Tente novamente.')
+      }
+      router.refresh()
+    } catch {
+      setErrorMessage('Sem ligação ao servidor. Tente novamente.')
+    } finally {
+      setPendingOp(null)
+      setIsEditing(false)
+    }
   }
 
-  const handleReject = () => {
-    if (!action) return
-    store.rejectAction(action.id)
-    setIsEditing(false)
-  }
-
-  const handleEditAndSend = () => {
-    if (!action) return
-    store.editAndSendAction(action.id, draftText)
-    setIsEditing(false)
-  }
+  const handleApprove = () => callDecisionApi('approve')
+  const handleReject = () => callDecisionApi('reject')
+  const handleRetry = () => callDecisionApi('retry')
+  const handleEditAndSend = () => callDecisionApi('approve', { editedBody: draftText })
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-white">
@@ -63,9 +87,10 @@ export function EmailDetail({ email, action, attachments = [] }: EmailDetailProp
         </Link>
       </div>
 
-      <div className="flex flex-1 overflow-hidden">
+      {/* Mobile-first: stacked panes; side-by-side from lg upwards */}
+      <div className="flex flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
         {/* Original email */}
-        <div className="flex flex-1 flex-col overflow-hidden border-r border-gray-200">
+        <div className="flex flex-col border-b border-gray-200 lg:flex-1 lg:overflow-hidden lg:border-b-0 lg:border-r">
           {/* Email header */}
           <div className="border-b border-gray-100 px-6 py-5">
             <h1 className="text-[15px] font-bold text-gray-900 leading-snug">
@@ -89,13 +114,12 @@ export function EmailDetail({ email, action, attachments = [] }: EmailDetailProp
           </div>
 
           {/* Email body */}
-          <div className="flex-1 overflow-y-auto px-6 py-5">
+          <div className="px-6 py-5 lg:flex-1 lg:overflow-y-auto">
             <pre className="whitespace-pre-wrap font-sans text-[13px] leading-relaxed text-gray-700">
               {email.bodyText}
             </pre>
 
-            {/* Google Drive link warning — Gmail sometimes replaces large attachments with Drive links.
-                These are not MIME attachments and cannot be processed automatically. */}
+            {/* Google Drive link warning — Gmail sometimes replaces large attachments with Drive links. */}
             {attachments.length === 0 && email.bodyText && /drive\.google\.com\/file/i.test(email.bodyText) && (
               <div className="mt-5 flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-3">
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 stroke-[1.75] text-amber-500" />
@@ -123,6 +147,7 @@ export function EmailDetail({ email, action, attachments = [] }: EmailDetailProp
                       <button
                         className="ml-auto shrink-0 rounded p-1 text-gray-400 transition-colors hover:bg-gray-200 hover:text-gray-700"
                         title="Descarregar"
+                        aria-label={`Descarregar ${att.filename}`}
                         onClick={async () => {
                           const res = await fetch(`/api/attachments/${att.id}`)
                           if (!res.ok) return
@@ -141,25 +166,17 @@ export function EmailDetail({ email, action, attachments = [] }: EmailDetailProp
         </div>
 
         {/* AI draft panel */}
-        <div className="flex w-[400px] shrink-0 flex-col bg-gray-50">
+        <div className="flex w-full shrink-0 flex-col bg-gray-50 lg:w-[400px]">
           {/* Draft header */}
           <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3.5">
             <div className="flex items-center gap-2.5">
               <span className="text-[11px] font-bold uppercase tracking-widest text-gray-400">
                 Rascunho AI
               </span>
-              {action && isPending && (
-                <StatusBadge variant="pending" label="Aguarda aprovação" />
-              )}
-              {currentStatus === 'APPROVED' && (
-                <StatusBadge variant="approved" label="Aprovado" />
-              )}
-              {currentStatus === 'EDITED_SENT' && (
-                <StatusBadge variant="approved" label="Editado e enviado" />
-              )}
-              {currentStatus === 'REJECTED' && (
-                <StatusBadge variant="rejected" label="Rejeitado" />
-              )}
+              {isPending && <StatusBadge variant="pending" label="Aguarda aprovação" />}
+              {isSent && <StatusBadge variant="approved" label="Aprovado e enviado" />}
+              {isSendFailed && <StatusBadge variant="rejected" label="Falha no envio" />}
+              {currentStatus === 'REJECTED' && <StatusBadge variant="rejected" label="Rejeitado" />}
             </div>
             {action && isPending && !isEditing && (
               <button
@@ -173,7 +190,7 @@ export function EmailDetail({ email, action, attachments = [] }: EmailDetailProp
           </div>
 
           {!action && (
-            <div className="flex flex-1 items-center justify-center">
+            <div className="flex flex-1 items-center justify-center py-16">
               <p className="text-[13px] text-gray-400">Sem rascunho gerado</p>
             </div>
           )}
@@ -181,20 +198,21 @@ export function EmailDetail({ email, action, attachments = [] }: EmailDetailProp
           {action && (
             <>
               {/* Draft content */}
-              <div className="flex-1 overflow-y-auto p-5">
+              <div className="p-5 lg:flex-1 lg:overflow-y-auto">
                 {isEditing ? (
                   <Textarea
                     value={draftText}
                     onChange={(e) => setDraftText(e.target.value)}
                     className="h-full min-h-[280px] resize-none border-gray-200 bg-white text-[13px] leading-relaxed text-gray-700 placeholder:text-gray-400 focus-visible:ring-1 focus-visible:ring-green-400"
                     autoFocus
+                    disabled={pendingOp !== null}
                   />
                 ) : (
                   <pre className={cn(
                     'whitespace-pre-wrap font-sans text-[13px] leading-relaxed',
-                    !isPending ? 'text-gray-300 line-through decoration-gray-200' : 'text-gray-700'
+                    currentStatus === 'REJECTED' ? 'text-gray-300 line-through decoration-gray-200' : 'text-gray-700'
                   )}>
-                    {persisted?.editedContent ?? draftText}
+                    {currentContent}
                   </pre>
                 )}
               </div>
@@ -203,11 +221,15 @@ export function EmailDetail({ email, action, attachments = [] }: EmailDetailProp
               <div className="border-t border-gray-100 px-5 py-2">
                 <p className="data text-[10px] text-gray-400">
                   {action.aiModel} · {formatDateTime(action.createdAt)}
-                  {persisted?.decidedAt && (
-                    <> · decisão {formatDateTime(new Date(persisted.decidedAt))}</>
-                  )}
                 </p>
               </div>
+
+              {/* Error state */}
+              {errorMessage && (
+                <div className="border-t border-red-100 bg-red-50 px-5 py-2.5">
+                  <p className="text-[12px] text-red-600">{errorMessage}</p>
+                </div>
+              )}
 
               {/* Action buttons */}
               {isPending && (
@@ -216,17 +238,23 @@ export function EmailDetail({ email, action, attachments = [] }: EmailDetailProp
                     <>
                       <button
                         onClick={handleEditAndSend}
-                        className="pressable flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-green-600 px-3 py-2.5 text-[13px] font-bold text-white shadow-sm transition-colors hover:bg-green-700"
+                        disabled={pendingOp !== null || draftText.trim() === ''}
+                        className="pressable flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-green-600 px-3 py-2.5 text-[13px] font-bold text-white shadow-sm transition-colors hover:bg-green-700 disabled:opacity-50"
                       >
-                        <Check className="h-3.5 w-3.5 stroke-[2.5]" />
+                        {pendingOp === 'approve' ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Check className="h-3.5 w-3.5 stroke-[2.5]" />
+                        )}
                         Guardar e enviar
                       </button>
                       <button
                         onClick={() => {
-                          setDraftText(persisted?.editedContent ?? action.draftContent)
+                          setDraftText(currentContent)
                           setIsEditing(false)
                         }}
-                        className="pressable rounded-lg border border-gray-200 px-3 py-2 text-[13px] font-medium text-gray-500 transition-colors hover:border-gray-300 hover:text-gray-700"
+                        disabled={pendingOp !== null}
+                        className="pressable rounded-lg border border-gray-200 px-3 py-2 text-[13px] font-medium text-gray-500 transition-colors hover:border-gray-300 hover:text-gray-700 disabled:opacity-50"
                       >
                         Cancelar
                       </button>
@@ -235,16 +263,26 @@ export function EmailDetail({ email, action, attachments = [] }: EmailDetailProp
                     <>
                       <button
                         onClick={handleApprove}
-                        className="pressable flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-green-600 px-3 py-2.5 text-[13px] font-bold text-white shadow-sm transition-colors hover:bg-green-700"
+                        disabled={pendingOp !== null}
+                        className="pressable flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-green-600 px-3 py-2.5 text-[13px] font-bold text-white shadow-sm transition-colors hover:bg-green-700 disabled:opacity-50"
                       >
-                        <Check className="h-3.5 w-3.5 stroke-[2.5]" />
+                        {pendingOp === 'approve' ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Check className="h-3.5 w-3.5 stroke-[2.5]" />
+                        )}
                         Aprovar
                       </button>
                       <button
                         onClick={handleReject}
-                        className="pressable flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[13px] font-semibold text-red-600 transition-colors hover:bg-red-100"
+                        disabled={pendingOp !== null}
+                        className="pressable flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[13px] font-semibold text-red-600 transition-colors hover:bg-red-100 disabled:opacity-50"
                       >
-                        <X className="h-3.5 w-3.5 stroke-[2.5]" />
+                        {pendingOp === 'reject' ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <X className="h-3.5 w-3.5 stroke-[2.5]" />
+                        )}
                         Rejeitar
                       </button>
                     </>
@@ -252,11 +290,31 @@ export function EmailDetail({ email, action, attachments = [] }: EmailDetailProp
                 </div>
               )}
 
-              {!isPending && (
+              {/* Send failed: retry */}
+              {isSendFailed && (
+                <div className="flex flex-col gap-2 border-t border-gray-200 bg-white px-5 py-3.5">
+                  <p className="text-[12px] text-red-600">
+                    A resposta foi aprovada mas o envio falhou.
+                  </p>
+                  <button
+                    onClick={handleRetry}
+                    disabled={pendingOp !== null}
+                    className="pressable flex items-center justify-center gap-1.5 rounded-lg bg-green-600 px-3 py-2.5 text-[13px] font-bold text-white shadow-sm transition-colors hover:bg-green-700 disabled:opacity-50"
+                  >
+                    {pendingOp === 'retry' ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-3.5 w-3.5 stroke-[2]" />
+                    )}
+                    Tentar enviar novamente
+                  </button>
+                </div>
+              )}
+
+              {(isSent || currentStatus === 'REJECTED') && (
                 <div className="border-t border-gray-200 px-5 py-3">
                   <p className="text-center text-[12px] text-gray-400">
-                    {currentStatus === 'APPROVED' && 'Email aprovado e enviado.'}
-                    {currentStatus === 'EDITED_SENT' && 'Rascunho editado e enviado.'}
+                    {isSent && 'Email aprovado e enviado.'}
                     {currentStatus === 'REJECTED' && 'Rascunho rejeitado.'}
                   </p>
                 </div>

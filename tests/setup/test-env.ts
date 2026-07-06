@@ -12,7 +12,7 @@ export const TEST_DATABASE_URL =
 export function applyTestEnv(): void {
   process.env.DATABASE_URL = TEST_DATABASE_URL
   process.env.REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379'
-  process.env.NODE_ENV = 'test'
+  ;(process.env as Record<string, string>).NODE_ENV = 'test'
   process.env.AUTH_SECRET = process.env.AUTH_SECRET ?? 'test-auth-secret'
   process.env.NEXTAUTH_URL = process.env.NEXTAUTH_URL ?? 'http://localhost:3000'
   process.env.TOKEN_ENCRYPTION_KEY =

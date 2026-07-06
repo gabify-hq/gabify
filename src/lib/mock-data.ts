@@ -50,6 +50,7 @@ export interface MockEmailAction {
   type: 'DRAFT_REPLY' | 'REQUEST_DOCS' | 'ARCHIVE'
   status: ActionStatus
   draftContent: string
+  editedContent?: string | null
   aiModel: string
   createdAt: Date
 }
