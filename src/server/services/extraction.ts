@@ -312,7 +312,11 @@ function coherenceDeltaCents(fields: StructuredFields): number | null {
   const bases = fields.vatBreakdown.reduce((acc, b) => acc + b.baseCents, 0)
   const vats = fields.vatBreakdown.reduce((acc, b) => acc + b.vatCents, 0)
   const withholding = fields.withholdingCents ?? 0
-  return Math.abs(bases + vats - withholding - fields.totalCents)
+  // Both conventions are coherent: gross total (AT QR field O) OR net-of-withholding
+  // total (recibos verdes state the amount actually received)
+  const grossDelta = Math.abs(bases + vats - fields.totalCents)
+  const netDelta = Math.abs(bases + vats - withholding - fields.totalCents)
+  return Math.min(grossDelta, netDelta)
 }
 
 async function applyStructuredExtraction(
@@ -323,8 +327,9 @@ async function applyStructuredExtraction(
   type: DocumentType
 ): Promise<ExtractionOutcome> {
   const flags = new Set(document.flags)
-  let status: 'CLASSIFIED' | 'NEEDS_REVIEW' =
-    confidence >= CONFIDENCE_CLASSIFIED ? 'CLASSIFIED' : 'NEEDS_REVIEW'
+  // S3.1 state mapping: high confidence + coherent + no flags → PRE_VALIDATED
+  let status: 'PRE_VALIDATED' | 'NEEDS_REVIEW' =
+    confidence >= CONFIDENCE_CLASSIFIED && flags.size === 0 ? 'PRE_VALIDATED' : 'NEEDS_REVIEW'
 
   // Arithmetic coherence: Σbases + ΣIVA − retenção = total, tolerance 2 cents (A1)
   const delta = coherenceDeltaCents(fields)
@@ -487,6 +492,73 @@ export async function runPostExtractionChecks(documentId: string): Promise<void>
         ...updates,
         flags: Array.from(flags),
         ...(statusToReview ? { status: 'NEEDS_REVIEW' } : {}),
+      },
+    })
+  }
+
+  // Supplier registry upsert (AC-3.5) + explicit supplier rules (S3.2)
+  if (doc.supplierNif) {
+    await prisma.supplier.upsert({
+      where: { officeId_nif: { officeId: doc.officeId, nif: doc.supplierNif } },
+      create: {
+        officeId: doc.officeId,
+        nif: doc.supplierNif,
+        name: doc.supplierName,
+        documentCount: 1,
+        lastSeenAt: new Date(),
+      },
+      update: {
+        name: doc.supplierName ?? undefined,
+        documentCount: { increment: 1 },
+        lastSeenAt: new Date(),
+      },
+    })
+
+    await applySupplierRule(doc.id)
+  }
+}
+
+/**
+ * Applies the most specific active SupplierRule (S3.2): defaults for type,
+ * account and VAT treatment. With `autoValidate`, confidence ≥ 0.85 and NO
+ * flags, the document goes straight to VALIDATED with an audit entry — a
+ * flagged document (duplicate, DMARC, arithmetic) NEVER skips the queue.
+ */
+async function applySupplierRule(documentId: string): Promise<void> {
+  const { findRuleForSupplier } = await import('./supplier-rule-service')
+  const doc = await prisma.document.findUniqueOrThrow({ where: { id: documentId } })
+  if (!doc.supplierNif) return
+
+  const rule = await findRuleForSupplier(doc.officeId, doc.supplierNif, doc.clientId)
+  if (!rule) return
+
+  const canAutoValidate =
+    rule.autoValidate &&
+    (doc.confidence ?? 0) >= CONFIDENCE_CLASSIFIED &&
+    doc.flags.length === 0 &&
+    doc.status === 'PRE_VALIDATED'
+
+  await prisma.document.update({
+    where: { id: doc.id },
+    data: {
+      ...(rule.defaultDocumentType ? { type: rule.defaultDocumentType } : {}),
+      ...(rule.defaultAccountCode
+        ? { accountCode: rule.defaultAccountCode, sncSource: 'RULE' }
+        : {}),
+      ...(rule.defaultVatTreatment ? { vatTreatment: rule.defaultVatTreatment } : {}),
+      appliedRuleId: rule.id,
+      ...(canAutoValidate ? { status: 'VALIDATED', version: { increment: 1 } } : {}),
+    },
+  })
+
+  if (canAutoValidate) {
+    await prisma.auditLog.create({
+      data: {
+        officeId: doc.officeId,
+        action: 'AUTO_VALIDATED_BY_RULE',
+        entityType: 'Document',
+        entityId: doc.id,
+        metadata: { ruleId: rule.id, supplierNif: doc.supplierNif },
       },
     })
   }

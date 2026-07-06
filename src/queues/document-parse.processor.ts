@@ -13,7 +13,7 @@ import { QUEUE_DOCUMENT_PARSE } from '@/lib/redis'
 import { createJobLog, updateJobLog } from './job-log'
 
 const VISION_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp'])
-const DONE_STATUSES = new Set(['CLASSIFIED', 'REVIEWED', 'SPLIT'])
+const DONE_STATUSES = new Set(['CLASSIFIED', 'REVIEWED', 'SPLIT', 'PRE_VALIDATED', 'VALIDATED', 'EXPORTED'])
 
 export interface DocumentParseJobData {
   officeId: string
