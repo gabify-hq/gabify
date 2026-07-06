@@ -54,6 +54,23 @@ Formato: slice · estado · RED confirmado · gate.
 
 **Fim da Fase 2: `npm run gate` verde — 265 testes (101 acceptance).**
 
+## Fase 3
+
+| Slice | Estado | RED | Gate |
+|---|---|---|---|
+| Acceptance Fase 3 escrita (AC-4.1/4.2, AC-3.5, AC-5.1, AC-6.1/6.2/6.3/6.5 — 23 testes) | DONE | ✅ 3/3 ficheiros RED | — |
+| S3.1 Fila de revisão (optimistic locking `version`/`expectedVersion` A7, DocumentReview 1:N com before/after, bulk com relatório por item, resolve-duplicate, split-approve, reject=soft-delete, reopen A9) + UI mobile-first `/review` | DONE | ✅ | ✅ |
+| S3.2 SupplierRule (cliente > global, autoValidate só sem flags, aprendizagem ≥3 correções → sugestão, NUNCA criada sem clique) + Supplier registry (AC-3.5) | DONE | ✅ | ✅ |
+| S3.3 Export ZIP+CSV+XLSX (estrutura Cliente/Ano/Mês/Tipo, CSV pt-PT BOM `;` vírgula A9, linha por taxa, resumo_iva em cêntimos A1, ExportDocument N:M, re-export includeExported, AuditLog antes do URL, signed URL 15min) | DONE | ✅ | ✅ |
+| S3.4 SNC v1 (seed 28 contas via service, HISTORY→IA validada por zod, code inventado descartado + NEEDS_REVIEW, gate A13 contas sensíveis 1.ª ocorrência, accountOverrides no export) | DONE | ✅ | ✅ |
+| E2E AC-6.5.a (caixa dedicada → QR zero-IA → regra auto-valida → export com valores exatos) | DONE | ✅ | ✅ |
+
+**Fim da Fase 3: `npm run gate` verde — 288 testes (124 acceptance).**
+
+## Fase 4 — NÃO EXECUTADA
+
+Por regra 13 da spec (fases por ordem de valor; melhor 0–3 impecáveis do que 0–5 a meio) e capacidade de contexto, a Fase 4 (dashboard operacional, chasing v1, página de convites, settings de office) ficou por executar. As APIs subjacentes existem (convites, supplier rules, exports); falta a camada de UI de gestão. Ver HANDOFF.md.
+
 ## Decisões (latitude da spec)
 
 - Testes de aceitação correm contra PostgreSQL real (`gabify_test`) — constraints e concorrência (A3/A7/AC-0.5.b) não são verificáveis com Prisma mockado.

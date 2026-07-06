@@ -113,6 +113,26 @@ Documents marked **"Rever"** (Review) are ones where the AI was less confident �
 
 ---
 
+## Getting documents into Gabify
+
+Besides email, there are three more ways documents arrive:
+
+- **Manual upload** — drag files onto the Documents page (or tap "Fotografar" on your phone to photograph a paper receipt). Gabify checks every file is really what it claims to be before accepting it.
+- **A dedicated email address per client** — each client can get their own private Gabify address (e.g. `padaria-x7k2m9@...`). Anything sent there lands directly in that client's file, no guessing needed. Suspicious senders are quarantined for your review, never processed silently.
+- **Spreadsheet import** — upload a CSV/Excel of entries; Gabify proposes how the columns map, you confirm, and only then are the rows imported. Rows with invalid NIFs or totals that don't add up are reported line by line.
+
+## What Gabify reads from each document
+
+For Portuguese invoices with the official AT QR code, Gabify reads the fiscal data directly from the QR — supplier and buyer NIFs, document number, ATCUD, date, VAT broken down by rate, withholding and totals. That data is authoritative: no AI involved, no cost, no guessing. For everything else, AI extracts the same fields and Gabify double-checks the arithmetic (bases + VAT − withholding must equal the total) — anything that doesn't add up goes to your review queue.
+
+A PDF containing several invoices is automatically split into individual documents. Duplicates and documents addressed to a different client are flagged, never silently accepted.
+
+## The review queue and export
+
+Documents that Gabify is confident about arrive **pre-validated** — one click (or one bulk click) validates them. Everything uncertain waits for you. You can teach Gabify per-supplier rules ("invoices from this supplier always go to account 6221, validate automatically") — rules are only ever created by you, and a flagged document never skips the queue, rule or no rule.
+
+When a period is done, export it: a ZIP organised as Client/Year/Month/Type with every PDF, plus a `lancamentos.csv` that opens correctly in Portuguese Excel and an Excel file with proper numeric cells — ready to enter your accounting software. Exported documents are locked; only the firm owner can reopen one, with a mandatory reason, and everything is logged.
+
 ## Coming soon
 
 ### Client Portal

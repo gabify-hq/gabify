@@ -73,6 +73,10 @@ Document        ──1 DocumentReview
 
 ### Cross-cutting schema decisions
 
+**Money (ADDENDUM A1)** — monetary values are NEVER floats: `Decimal @db.Decimal(14,2)` in columns; **integer cents** inside JSONB (`vatBreakdown`, `documentLines`). All arithmetic (coherence checks, export sums, VAT summary) runs on integer cents or decimal.js; coherence tolerance is 2 cents.
+
+**Document pipeline** — one extraction cascade for every source (email attachment, manual upload, dedicated ingest mailbox, split children): AT fiscal QR (authoritative, zero AI) → UBL/XML (deterministic) → Claude with a strict Zod schema. States: `NEEDS_REVIEW → PRE_VALIDATED → VALIDATED → EXPORTED` (+ `SPLIT` lateral); reviews use optimistic locking (`version` + `expectedVersion`, A7).
+
 **Soft deletes** — `deletedAt DateTime?` on Office, User, Client. All queries filter `where: { deletedAt: null }`. No hard deletes.
 
 **Immutable AuditLog** — no `updatedAt`. Written once, never modified. Entry created before any AI-triggered external action.
