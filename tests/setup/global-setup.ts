@@ -33,4 +33,8 @@ export default async function globalSetup(): Promise<void> {
     env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL },
     stdio: 'pipe',
   })
+
+  // Synthetic fixtures (A10) — generated on demand, deterministic
+  const { ensureFixtures } = await import('../fixtures/generate')
+  await ensureFixtures()
 }

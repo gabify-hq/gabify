@@ -72,6 +72,13 @@ enum DocumentStatus {
   CLASSIFIED
   NEEDS_REVIEW            // low confidence classification
   REVIEWED                // accountant confirmed classification
+  SPLIT                   // multi-invoice parent — children carry the data (S2.2)
+}
+
+enum DocumentSource {
+  EMAIL          // attachment from a synced inbox
+  MANUAL_UPLOAD  // web/mobile upload (S2.1)
+  IMPORT         // spreadsheet import (S2.4)
 }
 
 enum JobStatus {
@@ -104,6 +111,10 @@ model Office {
   jobLogs       JobLog[]
   invitations   Invitation[]
   emailThreads  EmailThread[]
+  documents     Document[]
+  ingestAliases ClientIngestAlias[]
+  importBatches ImportBatch[]
+  splitCaches   DocumentSplitCache[]
 
   @@index([deletedAt])
 }
@@ -226,9 +237,14 @@ model Client {
   emailDomains String[]  // e.g. ["empresa.pt", "empresa.com"]
   knownEmails  String[]  // e.g. ["joao@empresa.pt", "faturacao@empresa.pt"]
 
+  // Optional sender allowlist for the dedicated ingest address (A5):
+  // when non-empty, senders outside these domains are quarantined
+  allowedSenderDomains String[]
+
   office       Office         @relation(fields: [officeId], references: [id], onDelete: Restrict)
   inboundEmails InboundEmail[]
   documents    Document[]
+  ingestAliases ClientIngestAlias[]
 
   @@index([officeId])
   @@index([deletedAt])
@@ -415,29 +431,132 @@ model EmailReview {
 
 model Document {
   id           String         @id @default(cuid())
-  attachmentId String         @unique
+  officeId     String         // direct tenant scope — required for non-email sources
+  attachmentId String?        @unique // null for MANUAL_UPLOAD / IMPORT documents
   clientId     String?
+  source       DocumentSource @default(EMAIL)
   type         DocumentType   @default(OTHER)
   status       DocumentStatus @default(PENDING_CLASSIFICATION)
   confidence   Float?         // AI classification confidence (0.0-1.0)
   reasoning    String?        // AI reasoning (one sentence in PT)
   extractedDate DateTime?
-  extractedAmount Float?
-  extractedVATNumber String?  // NIF extracted from document
+  extractedAmount Float?      // legacy display field — rich data lives in totalAmount
+  extractedVATNumber String?  // NIF extracted from document (legacy — see supplierNif)
   textContent  String?        @db.Text  // extracted text used for classification
-  r2Key        String?        // same as attachment r2Key (denormalized for convenience)
+  r2Key        String?        // R2 object key of the underlying file
   aiModel              String?
-  classificationSource String?  // how classification was obtained: at-qr-code | filename-pattern | claude-vision | claude-pdf | claude-text
+  classificationSource String?  // at-qr-code | filename-pattern | claude-vision | claude-pdf | claude-text
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
 
-  attachment   EmailAttachment @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
+  // ── Upload metadata (S2.1) ──
+  uploadedByUserId String?
+  originalFilename String?
+  mimeType         String?
+  sizeBytes        Int?
+  contentSha256    String?   // for split cache and duplicate detection
+
+  // ── Rich extraction (S2.3, A1: money = Decimal in columns, cents in JSONB) ──
+  supplierName      String?
+  supplierNif       String?
+  documentNumber    String?  // normalized: trim, collapsed spaces, uppercase (A8)
+  documentNumberRaw String?  // original, when different from normalized
+  issueDate         DateTime?
+  dueDate           DateTime?
+  currency          String   @default("EUR")
+  totalAmount       Decimal? @db.Decimal(14, 2)
+  netAmount         Decimal? @db.Decimal(14, 2)
+  vatAmount         Decimal? @db.Decimal(14, 2)
+  withholdingAmount Decimal? @db.Decimal(14, 2)
+  vatBreakdown      Json?    // [{region, rate, baseCents, vatCents}] — integer cents (A1)
+  documentLines     Json?    // [{description, qty, unitPriceCents, vatRate, totalCents}]
+  buyerNif          String?
+  atcud             String?
+  extractionSource  String?  // QR | XML | AI_VISION | AI_PDF | AI_TEXT | IMPORT
+
+  // ── Multi-invoice split (S2.2, A6) ──
+  parentDocumentId String?
+  pageStart        Int?
+  pageEnd          Int?
+
+  // ── Review flags (S2.5, A5, A6) ──
+  flags             String[] // DUPLICATE_SUSPECT | WRONG_CLIENT_SUSPECT | SENDER_UNVERIFIED | TOO_LARGE_FOR_AUTOSPLIT | ARITHMETIC_MISMATCH
+  duplicateOfId     String?
+  suggestedClientId String?
+
+  office       Office          @relation(fields: [officeId], references: [id], onDelete: Restrict)
+  attachment   EmailAttachment? @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
   client       Client?         @relation(fields: [clientId], references: [id])
   review       DocumentReview?
+  parent       Document?       @relation("DocumentSplit", fields: [parentDocumentId], references: [id])
+  children     Document[]      @relation("DocumentSplit")
 
+  @@index([officeId, status])
+  @@index([officeId, supplierNif, documentNumber])
   @@index([clientId])
   @@index([type])
   @@index([status])
+  @@index([parentDocumentId])
+  @@index([contentSha256])
+}
+
+// ─────────────────────────────────────────
+// CLIENT INGEST ALIAS (dedicated inbox address — S2.6, A5)
+// ─────────────────────────────────────────
+
+model ClientIngestAlias {
+  id        String   @id @default(cuid())
+  officeId  String
+  clientId  String
+  alias     String   @unique // {slug}-{token10+} — local part of the ingest address
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  office Office @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([officeId])
+  @@index([clientId])
+}
+
+// ─────────────────────────────────────────
+// IMPORT BATCH (spreadsheet import with human-confirmed mapping — S2.4)
+// ─────────────────────────────────────────
+
+model ImportBatch {
+  id               String   @id @default(cuid())
+  officeId         String
+  createdByUserId  String
+  filename         String
+  clientId         String?
+  proposedMapping  Json     // AI-proposed column → field mapping
+  confirmedMapping Json?    // set only after human confirmation (AC-2.5.c)
+  status           String   @default("PENDING_CONFIRMATION") // PENDING_CONFIRMATION | IMPORTED | CANCELLED
+  rowsData         Json     // parsed rows awaiting confirmation
+  report           Json?    // per-row errors after import
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  office Office @relation(fields: [officeId], references: [id], onDelete: Cascade)
+
+  @@index([officeId])
+}
+
+// ─────────────────────────────────────────
+// SPLIT CACHE (A6 — split result per file hash, avoids repeat AI calls)
+// ─────────────────────────────────────────
+
+model DocumentSplitCache {
+  id         String   @id @default(cuid())
+  officeId   String
+  sha256     String
+  boundaries Json     // [{startPage, endPage}]
+  method     String   // qr-deterministic | ai
+  createdAt  DateTime @default(now())
+
+  office Office @relation(fields: [officeId], references: [id], onDelete: Cascade)
+
+  @@unique([officeId, sha256])
 }
 
 // ─────────────────────────────────────────
