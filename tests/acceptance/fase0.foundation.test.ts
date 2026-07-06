@@ -18,7 +18,11 @@ vi.mock('@/lib/redis', () => ({
   redisConnection: {},
 }))
 
-const getAttachmentMock = vi.fn(async () => Buffer.from('%PDF-1.4 fake'))
+const { getAttachmentMock, generateEmailDraftMock } = vi.hoisted(() => ({
+  getAttachmentMock: vi.fn(async () => Buffer.from('%PDF-1.4 fake')),
+  generateEmailDraftMock: vi.fn(async () => 'Rascunho gerado em teste'),
+}))
+
 vi.mock('@/server/email-providers', () => ({
   createEmailProvider: () => ({
     syncInbox: vi.fn(),
@@ -43,7 +47,6 @@ vi.mock('@/lib/qr-reader', () => ({
   extractQRCodeFromPDF: vi.fn(async () => null),
 }))
 
-const generateEmailDraftMock = vi.fn(async () => 'Rascunho gerado em teste')
 vi.mock('@/server/services/email-classification', () => ({
   classifyDocument: vi.fn(async (_text: string, documentId: string) => {
     await prisma.document.update({

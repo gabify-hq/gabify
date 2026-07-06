@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { Inbox, AlertCircle } from 'lucide-react'
 import { EmailList } from '@/components/dashboard/email-list'
 import { AssociateSenderDialog } from '@/components/dashboard/associate-sender-dialog'
@@ -148,9 +149,9 @@ export default async function InboxPage() {
               <AlertCircle className="h-3.5 w-3.5 shrink-0 text-amber-600" aria-hidden="true" />
               <p className="text-[12px] font-semibold text-amber-800">
                 {unknownSenders.length} remetente{unknownSenders.length !== 1 ? 's' : ''} por identificar —{' '}
-                <a href="/clients" className="underline hover:text-amber-900">
+                <Link href="/clients" className="underline hover:text-amber-900">
                   crie clientes primeiro
-                </a>
+                </Link>
               </p>
             </div>
           </div>

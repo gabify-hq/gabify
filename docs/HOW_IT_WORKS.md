@@ -72,7 +72,21 @@ For each draft, you can:
 - **Edit** — modify the text, then send with your changes
 - **Reject** — discard the draft, handle manually
 
-Only after you approve does anything get sent. Every decision is recorded with a timestamp.
+Only after you approve does anything get sent. Every decision is recorded permanently — who decided, what was decided, and when. If a reply fails to send (for example, your email provider is briefly unavailable), Gabify shows the failure clearly and lets you retry with one click. Your decision is never lost, even if you close the browser.
+
+A draft can only be decided once: two colleagues cannot accidentally approve and reject the same draft at the same time — the first decision wins and the second person sees the updated state.
+
+---
+
+## Joining Gabify — invitations only
+
+Nobody can create an account in your firm's Gabify by themselves. Access works like this:
+
+1. The firm's owner invites a colleague by email, choosing their permission level (owner, accountant, or read-only).
+2. The colleague receives an invitation link, valid for 72 hours.
+3. They sign in with their email — no password, just a secure link sent to their inbox.
+
+Invitations can be revoked or re-sent at any time. If someone who was never invited tries to sign in, nothing happens — and they can't tell whether the email address exists in Gabify or not. The firm always keeps at least one owner: the last owner can never be removed or downgraded by accident.
 
 ---
 

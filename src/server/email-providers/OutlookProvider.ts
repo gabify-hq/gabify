@@ -9,6 +9,14 @@ const TOKEN_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/token'
 const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000 // 5 minutes
 const WEBHOOK_LIFETIME_MINUTES = 4230
 
+// ADDENDUM A4: attachment ingestion limits
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024 // 25MB per attachment
+const MAX_ATTACHMENTS_PER_MESSAGE = 15
+
+interface GraphRecipient {
+  emailAddress?: { address?: string; name?: string }
+}
+
 /**
  * Shape of a message returned by Microsoft Graph delta queries.
  */
@@ -16,10 +24,26 @@ interface GraphMessage {
   id: string
   subject?: string
   from?: { emailAddress?: { address?: string; name?: string } }
+  toRecipients?: GraphRecipient[]
+  ccRecipients?: GraphRecipient[]
   receivedDateTime?: string
   hasAttachments?: boolean
   body?: { content?: string; contentType?: string }
   conversationId?: string
+}
+
+interface GraphAttachment {
+  '@odata.type'?: string
+  id: string
+  name?: string
+  contentType?: string
+  size?: number
+  isInline?: boolean
+  contentId?: string
+}
+
+interface GraphAttachmentsResponse {
+  value: GraphAttachment[]
 }
 
 interface GraphDeltaResponse {
@@ -63,7 +87,7 @@ export class OutlookProvider implements EmailProvider {
     if (this.account.deltaLink) {
       url = `${GRAPH_BASE}/me/mailFolders/inbox/messages/delta?$deltaToken=${encodeURIComponent(this.account.deltaLink)}`
     } else {
-      url = `${GRAPH_BASE}/me/mailFolders/inbox/messages/delta?$select=id,subject,from,receivedDateTime,hasAttachments,body,conversationId`
+      url = `${GRAPH_BASE}/me/mailFolders/inbox/messages/delta?$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,hasAttachments,body,conversationId`
     }
 
     let newMessages = 0
@@ -74,7 +98,7 @@ export class OutlookProvider implements EmailProvider {
       const response = await this.graphGet<GraphDeltaResponse>(url, token)
 
       for (const message of response.value) {
-        const upserted = await this.upsertMessage(message)
+        const upserted = await this.upsertMessage(message, token)
         if (upserted === 'created') {
           newMessages++
         } else {
@@ -288,13 +312,19 @@ export class OutlookProvider implements EmailProvider {
     return response.json() as Promise<T>
   }
 
-  private async upsertMessage(message: GraphMessage): Promise<'created' | 'updated'> {
+  private async upsertMessage(message: GraphMessage, token: string): Promise<'created' | 'updated'> {
     const fromEmail = message.from?.emailAddress?.address ?? ''
     const fromName = message.from?.emailAddress?.name ?? null
     const receivedAt = message.receivedDateTime
       ? new Date(message.receivedDateTime)
       : new Date()
-    const bodyText = message.body?.content ?? null
+    const isHtmlBody = message.body?.contentType?.toLowerCase() === 'html'
+    const bodyHtml = isHtmlBody ? message.body?.content ?? null : null
+    const bodyText = isHtmlBody
+      ? stripHtml(message.body?.content ?? '')
+      : message.body?.content ?? null
+    const toEmails = extractAddresses(message.toRecipients)
+    const ccEmails = extractAddresses(message.ccRecipients)
 
     // Find or create the thread when we have a conversationId
     let threadId: string | null = null
@@ -328,7 +358,7 @@ export class OutlookProvider implements EmailProvider {
       select: { id: true },
     })
 
-    await prisma.inboundEmail.upsert({
+    const { id: emailId } = await prisma.inboundEmail.upsert({
       where: {
         emailAccountId_providerMessageId: {
           emailAccountId: this.account.id,
@@ -342,9 +372,10 @@ export class OutlookProvider implements EmailProvider {
         subject: message.subject ?? null,
         fromEmail,
         fromName,
-        toEmails: [],
-        ccEmails: [],
+        toEmails,
+        ccEmails,
         bodyText,
+        bodyHtml,
         receivedAt,
         status: 'UNREAD',
       },
@@ -352,12 +383,67 @@ export class OutlookProvider implements EmailProvider {
         subject: message.subject ?? null,
         fromEmail,
         fromName,
+        toEmails,
+        ccEmails,
         bodyText,
+        bodyHtml,
         threadId,
       },
+      select: { id: true },
     })
 
+    if (message.hasAttachments) {
+      await this.persistAttachmentMetadata(emailId, message.id, token)
+    }
+
     return existing ? 'updated' : 'created'
+  }
+
+  /**
+   * Fetches attachment metadata from Graph and persists EmailAttachment rows.
+   * File attachments only — inline images and attached messages are skipped,
+   * as are attachments over the 25MB cap (A4). Download of the content stays
+   * with the document-parse worker (symmetry with GmailProvider).
+   */
+  private async persistAttachmentMetadata(
+    emailId: string,
+    providerMessageId: string,
+    token: string
+  ): Promise<void> {
+    const url = `${GRAPH_BASE}/me/messages/${providerMessageId}/attachments?$select=id,name,contentType,size,isInline,contentId`
+    const response = await this.graphGet<GraphAttachmentsResponse>(url, token)
+
+    const eligible = (response.value ?? []).filter((att) => {
+      if (att['@odata.type'] !== '#microsoft.graph.fileAttachment') return false
+      if (att.isInline) return false
+      if ((att.size ?? 0) > MAX_ATTACHMENT_BYTES) {
+        console.warn(
+          `[outlook] attachment "${att.name}" on message ${providerMessageId} exceeds 25MB cap — skipped`
+        )
+        return false
+      }
+      return true
+    })
+
+    if (eligible.length > MAX_ATTACHMENTS_PER_MESSAGE) {
+      console.warn(
+        `[outlook] message ${providerMessageId} has ${eligible.length} attachments — processing first ${MAX_ATTACHMENTS_PER_MESSAGE}`
+      )
+    }
+
+    const toPersist = eligible.slice(0, MAX_ATTACHMENTS_PER_MESSAGE)
+    if (toPersist.length === 0) return
+
+    await prisma.emailAttachment.createMany({
+      data: toPersist.map((att) => ({
+        inboundEmailId: emailId,
+        providerAttachmentId: att.id,
+        filename: att.name ?? 'anexo',
+        mimeType: att.contentType ?? 'application/octet-stream',
+        sizeBytes: att.size ?? null,
+      })),
+      skipDuplicates: true,
+    })
   }
 
   private extractDeltaToken(deltaLinkUrl: string): string {
@@ -370,4 +456,26 @@ export class OutlookProvider implements EmailProvider {
     }
     return deltaLinkUrl
   }
+}
+
+// ── Module-level helpers ────────────────────────────────────────────────────
+
+function extractAddresses(recipients?: GraphRecipient[]): string[] {
+  return (recipients ?? [])
+    .map((r) => r.emailAddress?.address ?? '')
+    .filter((address) => address.length > 0)
+}
+
+/** Minimal HTML→text for message bodies — enough for classification context. */
+function stripHtml(html: string): string {
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\s+/g, ' ')
+    .trim()
 }

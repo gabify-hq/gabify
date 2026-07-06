@@ -22,20 +22,22 @@ const GOOGLE_JWKS = createRemoteJWKSet(
 )
 
 export async function POST(request: NextRequest) {
-  // Verify Google JWT signature before processing anything
+  // Fail-closed (spec rule 7): a request without a verifiable Google JWT is rejected.
   const authHeader = request.headers.get('Authorization')
-  if (authHeader) {
-    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader
-    const webhookUrl =
-      process.env.GMAIL_WEBHOOK_URL ??
-      `${process.env.NEXTAUTH_URL}/api/webhooks/gmail`
-    try {
-      await jwtVerify(token, GOOGLE_JWKS, { audience: webhookUrl })
-    } catch {
-      // Do not reveal why validation failed — log internally, return 200 to avoid Pub/Sub retries
-      console.warn('[gmail-webhook] JWT verification failed — ignoring notification')
-      return NextResponse.json({}, { status: 200 })
-    }
+  if (!authHeader) {
+    console.warn('[gmail-webhook] missing Authorization header — rejecting')
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader
+  const webhookUrl =
+    process.env.GMAIL_WEBHOOK_URL ??
+    `${process.env.NEXTAUTH_URL}/api/webhooks/gmail`
+  try {
+    await jwtVerify(token, GOOGLE_JWKS, { audience: webhookUrl })
+  } catch {
+    console.warn('[gmail-webhook] JWT verification failed — rejecting')
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   let body: PubSubPushPayload
