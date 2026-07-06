@@ -30,7 +30,7 @@ function makeRequest(body: unknown): NextRequest {
 }
 
 function makeSession(officeId = 'office-1') {
-  return { user: { officeId, id: 'user-1' } }
+  return { user: { officeId, id: 'user-1', email: 'user@test.pt', role: 'ACCOUNTANT' } }
 }
 
 function makeClient(knownEmails: string[] = []) {

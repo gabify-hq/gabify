@@ -1,5 +1,7 @@
 import { randomBytes } from 'crypto'
 import { NextResponse } from 'next/server'
+import { auth } from '@/lib/auth'
+import { can } from '@/server/authz/can'
 
 const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/gmail.readonly',
@@ -10,6 +12,18 @@ const GOOGLE_SCOPES = [
 const OAUTH_STATE_COOKIE = 'google_oauth_state'
 
 export async function GET(): Promise<NextResponse> {
+  const session = await auth()
+  if (!session?.user?.id) {
+    return NextResponse.redirect(
+      new URL('/login', process.env.NEXTAUTH_URL ?? 'http://localhost:3000'),
+    )
+  }
+  if (!can(session.user.role, 'emailAccount:connect')) {
+    return NextResponse.redirect(
+      new URL('/settings?error=sem_permissao', process.env.NEXTAUTH_URL ?? 'http://localhost:3000'),
+    )
+  }
+
   const clientId = process.env.GOOGLE_CLIENT_ID
   const nextAuthUrl = process.env.NEXTAUTH_URL
 

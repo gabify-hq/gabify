@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server'
+import { guard } from '@/server/authz/guard'
 import { z } from 'zod'
-import { auth } from '@/lib/auth'
 import { editDraft } from '@/server/services/draft-review-service'
 
 const editSchema = z.object({
@@ -11,13 +11,8 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ emailId: string }> },
 ) {
-  const session = await auth()
-  if (!session?.user?.officeId) {
-    return NextResponse.json({ error: 'Não autenticado' }, { status: 401 })
-  }
-  if (session.user.role === 'VIEWER') {
-    return NextResponse.json({ error: 'Sem permissão' }, { status: 403 })
-  }
+  const gate = await guard('draft:approve')
+  if (!gate.ok) return gate.response
 
   let body: unknown
   try {
@@ -33,7 +28,7 @@ export async function PATCH(
   const { emailId } = await params
   const result = await editDraft({
     emailId,
-    officeId: session.user.officeId,
+    officeId: gate.user.officeId,
     body: parsed.data.body,
   })
 

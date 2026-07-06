@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server'
+import { guard } from '@/server/authz/guard'
 import { z } from 'zod'
-import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { createInvitation, InvitationError } from '@/server/services/invitation-service'
 
@@ -10,13 +10,8 @@ const createInvitationSchema = z.object({
 })
 
 export async function POST(request: NextRequest) {
-  const session = await auth()
-  if (!session?.user?.officeId) {
-    return NextResponse.json({ error: 'Não autenticado' }, { status: 401 })
-  }
-  if (session.user.role !== 'OWNER') {
-    return NextResponse.json({ error: 'Sem permissão' }, { status: 403 })
-  }
+  const gate = await guard('invitation:manage', { denyStatus: 403 })
+  if (!gate.ok) return gate.response
 
   let body: unknown
   try {
@@ -35,10 +30,10 @@ export async function POST(request: NextRequest) {
 
   try {
     const { invitation } = await createInvitation({
-      officeId: session.user.officeId,
+      officeId: gate.user.officeId,
       email: parsed.data.email,
       role: parsed.data.role,
-      invitedByUserId: session.user.id,
+      invitedByUserId: gate.user.id,
     })
     return NextResponse.json(
       {
@@ -71,20 +66,15 @@ const DEFAULT_PAGE_SIZE = 50
 const MAX_PAGE_SIZE = 200
 
 export async function GET(request: NextRequest) {
-  const session = await auth()
-  if (!session?.user?.officeId) {
-    return NextResponse.json({ error: 'Não autenticado' }, { status: 401 })
-  }
-  if (session.user.role !== 'OWNER') {
-    return NextResponse.json({ error: 'Sem permissão' }, { status: 403 })
-  }
+  const gate = await guard('invitation:manage', { denyStatus: 403 })
+  if (!gate.ok) return gate.response
 
   const params = request.nextUrl.searchParams
   const take = Math.min(Number(params.get('limit')) || DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
   const cursor = params.get('cursor')
 
   const invitations = await prisma.invitation.findMany({
-    where: { officeId: session.user.officeId },
+    where: { officeId: gate.user.officeId },
     orderBy: { createdAt: 'desc' },
     take: take + 1,
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),

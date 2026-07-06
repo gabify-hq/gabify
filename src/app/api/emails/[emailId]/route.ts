@@ -1,21 +1,19 @@
 import { type NextRequest, NextResponse } from 'next/server'
-import { auth } from '@/lib/auth'
+import { guard } from '@/server/authz/guard'
 import { prisma } from '@/lib/prisma'
 
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ emailId: string }> },
 ) {
-  const session = await auth()
-  if (!session?.user?.officeId) {
-    return NextResponse.json({ error: 'Não autenticado' }, { status: 401 })
-  }
+  const gate = await guard('email:read')
+  if (!gate.ok) return gate.response
 
   const { emailId } = await params
   const email = await prisma.inboundEmail.findFirst({
     where: {
       id: emailId,
-      emailAccount: { officeId: session.user.officeId },
+      emailAccount: { officeId: gate.user.officeId },
     },
     select: {
       id: true,

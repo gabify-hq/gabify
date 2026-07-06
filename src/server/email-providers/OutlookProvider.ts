@@ -326,11 +326,15 @@ export class OutlookProvider implements EmailProvider {
     const toEmails = extractAddresses(message.toRecipients)
     const ccEmails = extractAddresses(message.ccRecipients)
 
-    // Find or create the thread when we have a conversationId
+    // Find or create the thread when we have a conversationId — scoped to the
+    // account's office (threads are never shared across tenants)
     let threadId: string | null = null
     if (message.conversationId) {
       const existingThread = await prisma.emailThread.findFirst({
-        where: { providerThreadId: message.conversationId },
+        where: {
+          providerThreadId: message.conversationId,
+          officeId: this.account.officeId,
+        },
         select: { id: true },
       })
 
@@ -339,6 +343,7 @@ export class OutlookProvider implements EmailProvider {
       } else {
         const newThread = await prisma.emailThread.create({
           data: {
+            officeId: this.account.officeId,
             providerThreadId: message.conversationId,
             subject: message.subject ?? null,
           },

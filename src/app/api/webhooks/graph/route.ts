@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getEmailSyncQueue, DEFAULT_JOB_OPTIONS } from '@/lib/redis'
+import { checkWebhookRateLimit } from '@/server/rate-limit'
 
 /**
  * Microsoft Graph Change Notification webhook.
@@ -49,6 +50,17 @@ export async function POST(request: NextRequest) {
   if (!allValid) {
     console.warn('[graph-webhook] clientState mismatch — rejecting request')
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  // Rate limit per subscription (A11 — Microsoft IPs, never per IP)
+  for (const notification of notifications) {
+    const rate = checkWebhookRateLimit(`graph:${notification.subscriptionId}`)
+    if (!rate.allowed) {
+      return NextResponse.json(
+        { error: 'Too many requests' },
+        { status: 429, headers: { 'Retry-After': String(rate.retryAfterSeconds) } },
+      )
+    }
   }
 
   const queue = getEmailSyncQueue()

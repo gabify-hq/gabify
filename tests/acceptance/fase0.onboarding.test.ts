@@ -175,7 +175,7 @@ describe('AC-0.1 Onboarding por convite (§0.1, A2)', () => {
     // Smoke: clients list scoped to the user's office returns nothing from B
     const { GET } = await import('@/app/api/clients/route')
     asSession({ id: user.id, email: user.email, officeId: user.officeId, role: user.role })
-    const res = await GET()
+    const res = await GET(jsonRequest('/api/clients', 'GET'))
     const body = await res.json()
     const items = Array.isArray(body.data) ? body.data : body.data?.items ?? []
     expect(items).toHaveLength(0)

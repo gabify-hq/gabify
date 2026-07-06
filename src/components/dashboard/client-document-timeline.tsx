@@ -9,7 +9,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
-import { DOCUMENT_TYPE_LABELS } from '@/lib/mock-data'
+import { DOCUMENT_TYPE_LABELS } from '@/lib/document-types'
 import type { DocumentType } from '@/types'
 
 // ── Types ─────────────────────────────────────────────────────────────────────

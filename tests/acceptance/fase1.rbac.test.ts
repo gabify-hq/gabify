@@ -74,7 +74,8 @@ describe('AC-1.1 RBAC (§1.1)', () => {
           continue
         }
         const content = readFileSync(full, 'utf-8')
-        if (!/\bcan\(/.test(content)) missing.push(rel)
+        // guard() is the central wrapper around can() — either counts as enforcement
+        if (!/\b(can|guard)\(/.test(content)) missing.push(rel)
       }
     }
     walk(apiDir)
@@ -134,5 +135,31 @@ describe('AC-1.1 RBAC (§1.1)', () => {
       params: Promise.resolve({ documentId: documentA.id }),
     })
     expect(rd.status).toBe(404)
+
+    const { GET: getAttachment } = await import('@/app/api/attachments/[attachmentId]/route')
+    const ra = await getAttachment(jsonRequest(`/api/attachments/${attachmentA.id}`, 'GET'), {
+      params: Promise.resolve({ attachmentId: attachmentA.id }),
+    })
+    expect(ra.status).toBe(404)
+  })
+
+  it('AC-1.1.c2 — dono do recurso obtém signed URL do anexo (200)', async () => {
+    const { officeA, ownerA } = await makeTwoOffices()
+    const accountA = await makeEmailAccount({ officeId: officeA.id })
+    const emailA = await makeInboundEmail({ emailAccountId: accountA.id })
+    const attachmentA = await makeAttachment({ inboundEmailId: emailA.id })
+    await prisma.emailAttachment.update({
+      where: { id: attachmentA.id },
+      data: { r2Key: `${officeA.id}/none/${emailA.id}/${attachmentA.id}.pdf` },
+    })
+
+    setSession({ id: ownerA.id, email: ownerA.email, officeId: officeA.id, role: 'OWNER' })
+    const { GET: getAttachment } = await import('@/app/api/attachments/[attachmentId]/route')
+    const res = await getAttachment(jsonRequest(`/api/attachments/${attachmentA.id}`, 'GET'), {
+      params: Promise.resolve({ attachmentId: attachmentA.id }),
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.data.url).toContain('http')
   })
 })

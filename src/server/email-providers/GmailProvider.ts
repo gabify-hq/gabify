@@ -384,11 +384,11 @@ export class GmailProvider implements EmailProvider {
     const ccEmails = parseAddressList(header('Cc'))
     const threadId = message.threadId
 
-    // Find or create the email thread
+    // Find or create the email thread — scoped to the account's office
     let dbThreadId: string | null = null
     if (threadId) {
       const existingThread = await prisma.emailThread.findFirst({
-        where: { providerThreadId: threadId },
+        where: { providerThreadId: threadId, officeId: this.account.officeId },
         select: { id: true },
       })
 
@@ -397,6 +397,7 @@ export class GmailProvider implements EmailProvider {
       } else {
         const newThread = await prisma.emailThread.create({
           data: {
+            officeId: this.account.officeId,
             providerThreadId: threadId,
             subject: subject ?? null,
           },

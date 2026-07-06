@@ -103,6 +103,7 @@ model Office {
   auditLogs     AuditLog[]
   jobLogs       JobLog[]
   invitations   Invitation[]
+  emailThreads  EmailThread[]
 
   @@index([deletedAt])
 }
@@ -255,6 +256,7 @@ model EmailAccount {
   outlookUserId       String?  // Graph user ID
   deltaLink             String?  @db.Text // for delta query sync
   outlookSubscriptionId String?  // Graph subscription ID from watchChanges()
+  outlookSubscriptionExpiry DateTime? // Graph subscription expiry (renewed when <48h away)
 
   // ── Gmail ──
   // Stored encrypted at service layer
@@ -288,13 +290,16 @@ model EmailAccount {
 
 model EmailThread {
   id             String    @id @default(cuid())
+  officeId       String    // multi-tenant scope — threads are never shared across offices
   providerThreadId String? // Graph conversationId / Gmail threadId
   subject        String?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
+  office Office         @relation(fields: [officeId], references: [id], onDelete: Cascade)
   emails InboundEmail[]
 
+  @@index([officeId, providerThreadId])
   @@index([providerThreadId])
 }
 

@@ -13,6 +13,7 @@ export const redisConnection = {
 // Queue names
 export const QUEUE_EMAIL_SYNC = 'email-sync'
 export const QUEUE_DOCUMENT_PARSE = 'document-parse'
+export const QUEUE_SUBSCRIPTION_RENEWAL = 'subscription-renewal'
 
 // Default job options
 export const DEFAULT_JOB_OPTIONS = {
@@ -28,6 +29,7 @@ export const DEFAULT_JOB_OPTIONS = {
 // Queue instances (lazy-created)
 let emailSyncQueue: Queue | null = null
 let documentParseQueue: Queue | null = null
+let subscriptionRenewalQueue: Queue | null = null
 
 export function getEmailSyncQueue(): Queue {
   if (!emailSyncQueue) {
@@ -41,6 +43,13 @@ export function getDocumentParseQueue(): Queue {
     documentParseQueue = new Queue(QUEUE_DOCUMENT_PARSE, { connection: redisConnection })
   }
   return documentParseQueue
+}
+
+export function getSubscriptionRenewalQueue(): Queue {
+  if (!subscriptionRenewalQueue) {
+    subscriptionRenewalQueue = new Queue(QUEUE_SUBSCRIPTION_RENEWAL, { connection: redisConnection })
+  }
+  return subscriptionRenewalQueue
 }
 
 export { Queue, Worker, QueueEvents }

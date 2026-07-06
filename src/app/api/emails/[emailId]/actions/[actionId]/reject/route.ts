@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server'
+import { guard } from '@/server/authz/guard'
 import { z } from 'zod'
-import { auth } from '@/lib/auth'
 import { rejectDraft } from '@/server/services/draft-review-service'
 
 const rejectSchema = z.object({
@@ -11,13 +11,8 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ emailId: string; actionId: string }> },
 ) {
-  const session = await auth()
-  if (!session?.user?.officeId) {
-    return NextResponse.json({ error: 'Não autenticado' }, { status: 401 })
-  }
-  if (session.user.role === 'VIEWER') {
-    return NextResponse.json({ error: 'Sem permissão' }, { status: 403 })
-  }
+  const gate = await guard('draft:reject')
+  if (!gate.ok) return gate.response
 
   let body: unknown = {}
   try {
@@ -35,8 +30,8 @@ export async function POST(
   const result = await rejectDraft({
     emailId,
     actionId,
-    officeId: session.user.officeId,
-    userId: session.user.id,
+    officeId: gate.user.officeId,
+    userId: gate.user.id,
     reason: parsed.data.reason,
   })
 

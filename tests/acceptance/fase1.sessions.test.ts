@@ -25,7 +25,7 @@ describe('AC-1.2 Sessões database (§1.2)', () => {
     expect(first).not.toBeNull()
     const s1 = enrichSession(
       { user: { email: user.email }, expires: expires.toISOString() },
-      first!.user
+      first!.user as unknown as Parameters<typeof enrichSession>[1]
     )
     expect(s1.user.role).toBe('ACCOUNTANT')
     expect(s1.user.officeId).toBe(office.id)
@@ -36,7 +36,7 @@ describe('AC-1.2 Sessões database (§1.2)', () => {
     const second = await adapter().getSessionAndUser!('tok-1')
     const s2 = enrichSession(
       { user: { email: user.email }, expires: expires.toISOString() },
-      second!.user
+      second!.user as unknown as Parameters<typeof enrichSession>[1]
     )
     expect(s2.user.role).toBe('VIEWER')
   })

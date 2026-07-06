@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from 'next/server'
 import { createRemoteJWKSet, jwtVerify } from 'jose'
 import { prisma } from '@/lib/prisma'
 import { getEmailSyncQueue, DEFAULT_JOB_OPTIONS } from '@/lib/redis'
+import { checkWebhookRateLimit } from '@/server/rate-limit'
 
 /**
  * Gmail Pub/Sub Push Notification webhook.
@@ -59,6 +60,15 @@ export async function POST(request: NextRequest) {
     notification = JSON.parse(decoded)
   } catch {
     return NextResponse.json({ error: 'Invalid message data' }, { status: 400 })
+  }
+
+  // Rate limit per account address (A11 — Google IPs, never per IP)
+  const rate = checkWebhookRateLimit(`gmail:${notification.emailAddress}`)
+  if (!rate.allowed) {
+    return NextResponse.json(
+      { error: 'Too many requests' },
+      { status: 429, headers: { 'Retry-After': String(rate.retryAfterSeconds) } },
+    )
   }
 
   // Find EmailAccount by Gmail user ID (emailAddress)

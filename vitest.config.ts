@@ -11,7 +11,7 @@ export default defineConfig({
     globals: true,
     coverage: {
       provider: 'v8',
-      reporter: ['text-summary', 'lcov'],
+      reporter: ['text-summary', 'lcov', 'json'],
       include: [
         'src/server/**',
         'src/queues/**',
@@ -21,7 +21,9 @@ export default defineConfig({
       exclude: [
         '**/*.test.*',
         '**/*.d.ts',
-        'src/lib/mock-data.ts',
+        // BullMQ wiring shells — connect to Redis at import; the processing
+        // logic lives in *.processor.ts, which is fully covered.
+        'src/queues/*.worker.ts',
       ],
       ...(enforceThresholds
         ? {

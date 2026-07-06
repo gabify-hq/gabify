@@ -7,8 +7,8 @@ import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { Textarea } from '@/components/ui/textarea'
 import { StatusBadge } from './status-badge'
-import type { MockEmail, MockEmailAction } from '@/lib/mock-data'
-import { formatDateTime } from '@/lib/mock-data'
+import type { EmailDTO, EmailActionDTO } from '@/server/dto'
+import { formatDateTime } from '@/lib/format'
 
 interface EmailAttachment {
   id: string
@@ -17,8 +17,8 @@ interface EmailAttachment {
 }
 
 interface EmailDetailProps {
-  email: MockEmail
-  action: MockEmailAction | undefined
+  email: EmailDTO
+  action: EmailActionDTO | undefined
   attachments?: EmailAttachment[]
 }
 

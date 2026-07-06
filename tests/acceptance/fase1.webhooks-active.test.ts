@@ -201,6 +201,81 @@ describe('AC-1.3 Webhooks ativos (§1.3)', () => {
     }
   })
 
+  it('S1.7 — initiate OAuth: sem sessão → login; VIEWER → sem permissão; OWNER → redirect ao provider com cookie CSRF', async () => {
+    const { GET: outlookInitiate } = await import('@/app/api/auth/outlook/initiate/route')
+    const { GET: googleInitiate } = await import('@/app/api/auth/google/initiate/route')
+
+    // No session → login redirect
+    setSession(null)
+    for (const initiate of [outlookInitiate, googleInitiate]) {
+      const res = await initiate()
+      expect([302, 307]).toContain(res.status)
+      expect(res.headers.get('location')).toContain('/login')
+    }
+
+    const office = await makeOffice()
+    const viewer = await makeUser({ officeId: office.id, role: 'VIEWER' })
+    setSession({ id: viewer.id, email: viewer.email, officeId: office.id, role: 'VIEWER' })
+    for (const initiate of [outlookInitiate, googleInitiate]) {
+      const res = await initiate()
+      expect(res.headers.get('location')).toContain('sem_permissao')
+    }
+
+    const owner = await makeUser({ officeId: office.id, role: 'OWNER' })
+    setSession({ id: owner.id, email: owner.email, officeId: office.id, role: 'OWNER' })
+
+    const outlookRes = await outlookInitiate()
+    expect(outlookRes.headers.get('location')).toContain('login.microsoftonline.com')
+    expect(outlookRes.headers.get('set-cookie')).toContain('outlook_oauth_state')
+
+    const googleRes = await googleInitiate()
+    expect(googleRes.headers.get('location')).toContain('accounts.google.com')
+    expect(googleRes.headers.get('set-cookie')).toContain('google_oauth_state')
+  })
+
+  it('S1.7 — callback Google: state inválido → erro sem conta; state válido → conta + watch persistidos', async () => {
+    const office = await makeOffice()
+    const owner = await makeUser({ officeId: office.id, role: 'OWNER' })
+    setSession({ id: owner.id, email: owner.email, officeId: office.id, role: 'OWNER' })
+
+    const { GET } = await import('@/app/api/auth/google/callback/route')
+
+    // Invalid CSRF state
+    stubFetchRoutes([])
+    const bad = await GET(
+      new NextRequest('http://localhost:3000/api/auth/google/callback?code=abc&state=WRONG', {
+        headers: { cookie: 'google_oauth_state=st-9' },
+      })
+    )
+    expect(bad.headers.get('location')).toContain('error')
+    expect(await prisma.emailAccount.count()).toBe(0)
+
+    // Happy path with mocked Google endpoints
+    stubFetchRoutes([
+      ['oauth2.googleapis.com/token', () => ({
+        access_token: 'gat-1',
+        refresh_token: 'grt-1',
+        expires_in: 3600,
+      })],
+      ['/gmail/v1/users/me/profile', () => ({ emailAddress: 'caixa@gmail.com', historyId: '77' })],
+      ['/gmail/v1/users/me/watch', () => ({
+        historyId: '78',
+        expiration: String(Date.now() + 6 * 24 * 3600 * 1000),
+      })],
+    ])
+    const good = await GET(
+      new NextRequest('http://localhost:3000/api/auth/google/callback?code=abc&state=st-9', {
+        headers: { cookie: 'google_oauth_state=st-9' },
+      })
+    )
+    expect([302, 307]).toContain(good.status)
+
+    const account = await prisma.emailAccount.findFirstOrThrow({
+      where: { officeId: office.id, provider: 'GMAIL' },
+    })
+    expect(account.gmailWatchExpiry).not.toBeNull()
+  })
+
   it('AC-1.3.e — arranque valida env de segurança: falta de GRAPH_WEBHOOK_SECRET → erro claro', () => {
     const original = process.env.GRAPH_WEBHOOK_SECRET
     delete process.env.GRAPH_WEBHOOK_SECRET

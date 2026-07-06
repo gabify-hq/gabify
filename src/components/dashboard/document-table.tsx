@@ -24,8 +24,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { StatusPill } from './status-badge'
-import type { MockDocument } from '@/lib/mock-data'
-import { MOCK_CLIENTS, DOCUMENT_TYPE_LABELS } from '@/lib/mock-data'
+import type { DocumentDTO, ClientOptionDTO } from '@/server/dto'
+import { DOCUMENT_TYPE_LABELS } from '@/lib/document-types'
 import { cn } from '@/lib/utils'
 
 const SOURCE_LABEL: Record<string, string> = {
@@ -37,15 +37,17 @@ const SOURCE_LABEL: Record<string, string> = {
 }
 
 interface DocumentTableProps {
-  documents: MockDocument[]
+  documents: DocumentDTO[]
+  /** Real clients of the session office — populates the client filter. */
+  clients?: ClientOptionDTO[]
   hideClientFilter?: boolean
 }
 
-export function DocumentTable({ documents, hideClientFilter = false }: DocumentTableProps) {
+export function DocumentTable({ documents, clients = [], hideClientFilter = false }: DocumentTableProps) {
   const [filterClient, setFilterClient] = useState<string>('all')
   const [filterType, setFilterType] = useState<string>('all')
   const [filterPeriod, setFilterPeriod] = useState<string>('all')
-  const [previewDoc, setPreviewDoc] = useState<MockDocument | null>(null)
+  const [previewDoc, setPreviewDoc] = useState<DocumentDTO | null>(null)
 
   const handleClientChange = (v: string | null) => setFilterClient(v ?? 'all')
   const handleTypeChange = (v: string | null) => setFilterType(v ?? 'all')
@@ -60,13 +62,13 @@ export function DocumentTable({ documents, hideClientFilter = false }: DocumentT
     return true
   })
 
-  const docStatusVariant = (status: MockDocument['status']) => {
+  const docStatusVariant = (status: DocumentDTO['status']) => {
     if (status === 'CLASSIFIED') return 'classified' as const
     if (status === 'NEEDS_REVIEW') return 'needs-review' as const
     return 'reviewed' as const
   }
 
-  const docStatusLabel = (status: MockDocument['status']) => {
+  const docStatusLabel = (status: DocumentDTO['status']) => {
     if (status === 'CLASSIFIED') return 'Classificado'
     if (status === 'NEEDS_REVIEW') return 'Rever'
     return 'Confirmado'
@@ -89,7 +91,7 @@ export function DocumentTable({ documents, hideClientFilter = false }: DocumentT
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all" className="text-[12px]">Todos os clientes</SelectItem>
-              {MOCK_CLIENTS.map((c) => (
+              {clients.map((c) => (
                 <SelectItem key={c.id} value={c.id} className="text-[12px]">
                   {c.name}
                 </SelectItem>

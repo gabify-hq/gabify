@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
+import { can } from '@/server/authz/can'
 import crypto from 'crypto'
 
 const MICROSOFT_AUTH_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize'
@@ -24,6 +25,11 @@ export async function GET() {
   const session = await auth()
   if (!session?.user?.id) {
     return NextResponse.redirect(new URL('/login', process.env.NEXTAUTH_URL ?? 'http://localhost:3000'))
+  }
+  if (!can(session.user.role, 'emailAccount:connect')) {
+    return NextResponse.redirect(
+      new URL('/settings?error=sem_permissao', process.env.NEXTAUTH_URL ?? 'http://localhost:3000'),
+    )
   }
 
   const clientId = process.env.MICROSOFT_CLIENT_ID

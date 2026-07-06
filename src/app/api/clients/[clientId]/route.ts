@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { guard } from '@/server/authz/guard'
 
 const updateClientSchema = z.object({
   name: z.string().min(2, 'Nome obrigatório (mínimo 2 caracteres)'),
@@ -21,15 +21,13 @@ interface RouteContext {
 }
 
 export async function GET(_request: NextRequest, { params }: RouteContext) {
-  const session = await auth()
-  if (!session?.user?.officeId) {
-    return NextResponse.json({ error: 'Não autenticado' }, { status: 401 })
-  }
+  const gate = await guard('client:read')
+  if (!gate.ok) return gate.response
 
   const { clientId } = await params
 
   const client = await prisma.client.findFirst({
-    where: { id: clientId, officeId: session.user.officeId, deletedAt: null },
+    where: { id: clientId, officeId: gate.user.officeId, deletedAt: null },
     select: {
       id: true,
       name: true,
@@ -50,15 +48,13 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
 }
 
 export async function PATCH(request: NextRequest, { params }: RouteContext) {
-  const session = await auth()
-  if (!session?.user?.officeId) {
-    return NextResponse.json({ error: 'Não autenticado' }, { status: 401 })
-  }
+  const gate = await guard('client:update')
+  if (!gate.ok) return gate.response
 
   const { clientId } = await params
 
   const existing = await prisma.client.findFirst({
-    where: { id: clientId, officeId: session.user.officeId, deletedAt: null },
+    where: { id: clientId, officeId: gate.user.officeId, deletedAt: null },
     select: { id: true },
   })
 

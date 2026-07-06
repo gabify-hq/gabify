@@ -97,6 +97,12 @@ Document        ──1 DocumentReview
 | Graph webhook | Fail-closed: 503 without `GRAPH_WEBHOOK_SECRET`; 401 on `clientState` mismatch; strict subscription-id account match | ✅ |
 | Gmail webhook JWT | Fail-closed: 401 without `Authorization` or with invalid Google-signed JWT | ✅ |
 | Attachment limits | 25MB per attachment, 15 per message; inline/item attachments skipped (A4) | ✅ |
+| RBAC | Central `can()` matrix with DENY-precedence via `guard()` in every API route. OWNER = all; ACCOUNTANT = all except invitation/user/settings management; VIEWER = reads only. Denial → 404 on resources, 403 on global actions | ✅ |
+| Sessions | Database strategy — revocable, role/office read fresh per request; edge proxy does optimistic cookie check only | ✅ |
+| Rate limiting | Per endpoint class (A11): API 600/h per user, magic-link 5/h per email+IP, webhooks 120/min per subscription, uploads 60/h user + 300/h office | ✅ |
+| Token encryption | AES-256-GCM (v2 prefix) with legacy CBC read + lazy re-encryption | ✅ |
+| Webhook subscriptions | Created at OAuth connect, renewed daily when expiring <48h; failure falls back to 30s polling | ✅ |
+| Pagination | All list endpoints: default 50, max 200, cursor-based | ✅ |
 
 ---
 

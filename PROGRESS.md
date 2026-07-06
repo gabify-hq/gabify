@@ -25,6 +25,21 @@ Formato: slice · estado · RED confirmado · gate.
 
 **Fim da Fase 0: `npm run gate` verde — tsc 0 erros, eslint 0 erros, 218 testes (179 unit + 39 acceptance), coverage report emitido (AC-0.5.a).**
 
+## Fase 1
+
+| Slice | Estado | RED | Gate |
+|---|---|---|---|
+| Acceptance Fase 1 escrita (AC-1.1 a AC-1.4 + S1.7, 27 testes) | DONE | ✅ 4/5 ficheiros RED (workers já verdes — processor nasceu na Fase 0) | — |
+| S1.1 RBAC `can()` DENY-precedence + `guard()` em todas as rotas | DONE | ✅ | ✅ |
+| S1.2 Sessões database (strategy database, role fresco por request, proxy otimista por cookie) | DONE | ✅ | ✅ |
+| S1.3 Webhooks ligados (watchChanges nos callbacks OAuth, renovação diária <48h, polling 5min c/ webhook, env-check fail-closed, fallback Graph morto) | DONE | ✅ | ✅ |
+| S1.4 Rate limiting por classe A11 (api/user, magic-link email+IP, webhook por subscrição, upload user+office, ingest) | DONE | ✅ | ✅ |
+| S1.5 Paginação (clients + invitations: default 50, clamp 200, cursor) | DONE | ✅ | ✅ |
+| S1.6 Purga mock-data (DTOs em src/server/dto, format.ts, document-types.ts; mock-data.ts APAGADO; MOCK_CLIENTS → clientes reais) | DONE | ✅ | ✅ |
+| S1.7 Higiene (GCM c/ prefixo v2 + CBC legado, EmailThread.officeId c/ backfill, Document.clientId scoping, parsePtDate UTC-noon, qr-reader smoke, OAuth CSRF tests, APP_TZ, thresholds ON) | DONE | ✅ | ✅ |
+
+**Fim da Fase 1: `npm run gate` verde — 231 testes, coverage thresholds enforced (queues 80/api 70/server 75).**
+
 ## Decisões (latitude da spec)
 
 - Testes de aceitação correm contra PostgreSQL real (`gabify_test`) — constraints e concorrência (A3/A7/AC-0.5.b) não são verificáveis com Prisma mockado.
@@ -34,3 +49,7 @@ Formato: slice · estado · RED confirmado · gate.
 - Fallback do webhook Graph ("qualquer conta OUTLOOK ativa") removido já na Fase 0 (a spec só o exigia em S1.3) — evita retrabalho.
 - `DOCUMENT_TYPE_LABELS` movido para `src/lib/document-types.ts` já na Fase 0 (o processor novo não podia importar mock-data); purga completa do mock-data continua em S1.6.
 - Migração aplicada com `migrate diff` + `migrate deploy` (o `migrate dev` do Prisma 7 recusa terminais não interativos); SQL inclui dedupe de EmailAction antes da unique constraint.
+- Proxy (edge) com sessões database: verificação otimista por presença de cookie; validação real (revogação/role) acontece por request no runtime Node via `auth()` — padrão recomendado NextAuth para strategy database.
+- AC-1.2 testado ao nível adapter+callback (`getSessionAndUser` + `enrichSession`) — o plumbing de cookies do NextAuth não é unit-testável sem HTTP server real.
+- `src/queues/*.worker.ts` excluídos da cobertura: são shells de wiring BullMQ (ligam ao Redis no import); toda a lógica vive nos `*.processor.ts`, 100% cobertos.
+- Anti-lockout/gestão de users em rota própria `/api/users/[userId]` com ação RBAC `user:manage` (OWNER only) — a spec não a listava; necessária para A2.

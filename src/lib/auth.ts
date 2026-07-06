@@ -3,12 +3,16 @@ import Resend from 'next-auth/providers/resend'
 import { prisma } from '@/lib/prisma'
 import { authConfig } from '@/lib/auth.config'
 import { GabifyAdapter } from '@/lib/auth-adapter'
+import { enrichSession } from '@/lib/auth-session'
 import type { UserRole } from '@prisma/client'
+import type { User as PrismaUser } from '@prisma/client'
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   pages: authConfig.pages,
   adapter: GabifyAdapter(prisma),
-  session: { strategy: 'jwt', maxAge: 24 * 60 * 60 }, // 24h
+  // Database sessions (§1.2): revocable, role/officeId resolved per request.
+  // 24h rolling expiration; logout deletes the Session row.
+  session: { strategy: 'database', maxAge: 24 * 60 * 60, updateAge: 60 * 60 },
   providers: [
     Resend({
       apiKey: process.env.RESEND_API_KEY,
@@ -32,24 +36,12 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     }),
   ],
   callbacks: {
-    async jwt({ token, user }) {
-      // `user` is only present on first sign-in — enrich token with DB fields
-      if (user?.id) {
-        const dbUser = await prisma.user.findUnique({
-          where: { id: user.id },
-          select: { officeId: true, role: true },
-        })
-        token.id = user.id
-        token.officeId = dbUser?.officeId ?? null
-        token.role = dbUser?.role ?? 'ACCOUNTANT'
-      }
-      return token
-    },
-    session({ session, token }) {
-      session.user.id = token.id as string
-      session.user.officeId = (token.officeId as string | null) ?? null
-      session.user.role = (token.role as UserRole) ?? 'ACCOUNTANT'
-      return session
+    session({ session, user }) {
+      // `user` is the fresh database row — role/office are never stale
+      return enrichSession(
+        session as unknown as { user?: Record<string, unknown>; expires: string },
+        user as unknown as PrismaUser,
+      )
     },
   },
 })

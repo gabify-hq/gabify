@@ -149,6 +149,36 @@ describe('AC-1.4 Higiene (§1.4–§1.7, A11, A12)', () => {
     expect((await hit('sub-B')).status).toBeLessThan(400)
   })
 
+  it('AC-1.4.b3 — magic-link rate limit por email+IP: 6.º pedido/hora → 429 (A11)', async () => {
+    process.env.RATE_LIMIT_MAGIC_LINK_PER_HOUR = '5'
+    const { POST } = await import('@/app/api/auth/[...nextauth]/route')
+
+    const hit = (email: string, ip: string) =>
+      POST(
+        new NextRequest('http://localhost:3000/api/auth/signin/resend', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'x-forwarded-for': ip,
+          },
+          body: `email=${encodeURIComponent(email)}`,
+        })
+      )
+
+    for (let i = 0; i < 5; i++) {
+      expect((await hit('alvo@x.pt', '1.2.3.4')).status).not.toBe(429)
+    }
+    const blocked = await hit('alvo@x.pt', '1.2.3.4')
+    expect(blocked.status).toBe(429)
+    expect(blocked.headers.get('Retry-After')).not.toBeNull()
+
+    // Different email or IP → independent budget
+    expect((await hit('outro@x.pt', '1.2.3.4')).status).not.toBe(429)
+    expect((await hit('alvo@x.pt', '5.6.7.8')).status).not.toBe(429)
+
+    delete process.env.RATE_LIMIT_MAGIC_LINK_PER_HOUR
+  })
+
   it('AC-1.4.c [INV] — grep-gate mock-data: nenhum import em código de produção; sem MOCK_CLIENTS', () => {
     const offenders: string[] = []
     walkSrc((path, content) => {

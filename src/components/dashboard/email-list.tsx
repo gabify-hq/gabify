@@ -4,12 +4,12 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { Paperclip } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { MockEmail, MockEmailAction } from '@/lib/mock-data'
-import { formatRelativeTime } from '@/lib/mock-data'
+import type { EmailDTO, EmailActionDTO } from '@/server/dto'
+import { formatRelativeTime } from '@/lib/format'
 
 interface EmailListProps {
-  emails: MockEmail[]
-  actions: MockEmailAction[]
+  emails: EmailDTO[]
+  actions: EmailActionDTO[]
 }
 
 interface ResolvedStatus {
@@ -19,7 +19,7 @@ interface ResolvedStatus {
 }
 
 function resolveStatus(
-  email: MockEmail,
+  email: EmailDTO,
   actionStatus: string | null,
 ): ResolvedStatus | null {
   if (actionStatus === 'PENDING_REVIEW') {

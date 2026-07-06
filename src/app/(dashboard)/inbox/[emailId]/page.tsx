@@ -2,7 +2,7 @@ import { notFound } from 'next/navigation'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { EmailDetail } from '@/components/dashboard/email-detail'
-import type { MockEmail, MockEmailAction } from '@/lib/mock-data'
+import type { EmailDTO, EmailActionDTO } from '@/server/dto'
 
 interface EmailPageProps {
   params: Promise<{ emailId: string }>
@@ -43,7 +43,7 @@ export default async function EmailPage({ params }: EmailPageProps) {
 
   const firstAction = raw.actions[0]
 
-  const email: MockEmail = {
+  const email: EmailDTO = {
     id: raw.id,
     clientId: raw.clientId,
     clientName: raw.client?.name ?? null,
@@ -59,11 +59,11 @@ export default async function EmailPage({ params }: EmailPageProps) {
     actionId: firstAction?.id,
   }
 
-  const action: MockEmailAction | undefined = firstAction
+  const action: EmailActionDTO | undefined = firstAction
     ? {
         id: firstAction.id,
         emailId: raw.id,
-        type: firstAction.type as MockEmailAction['type'],
+        type: firstAction.type as EmailActionDTO['type'],
         status: firstAction.status,
         draftContent: firstAction.draftContent ?? '',
         editedContent: firstAction.editedContent,
