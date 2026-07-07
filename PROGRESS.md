@@ -118,3 +118,14 @@ Por regra 13 da spec (fases por ordem de valor; melhor 0–3 impecáveis do que 
 - Taxas válidas por região: PT {0,6,13,23}, PT-AC {0,4,9,16}, PT-MA {0,5,12,22} (o repo já suporta regiões via QR I/J/K).
 - Coerência no servidor reutiliza a convenção A1 existente: aceita total bruto OU líquido de retenção (min dos dois deltas ≤ 2 cêntimos) — o QR AT (campo O) é bruto.
 - VALIDATED imutável exceto janela pós-reopen: review sobre VALIDATED só é aceite se a última DocumentReview do documento for `reopen` (reopen A9 devolve EXPORTED→VALIDATED, [INV] AC-4.1.d intocado); a janela fecha na correção seguinte.
+
+### GREEN (2026-07-07)
+
+| Slice | Estado | Gate |
+|---|---|---|
+| S5.1 — review completo (vatBreakdown/retenção/moeda/dueDate, zod estrito, coerência 422 no servidor, before/after, VALIDATED imutável sem reopen) + UI de linhas de IVA editáveis + 2 testes de componente novos | DONE | ✅ |
+| S5.2 — `GET /api/documents` (filtros AND, cursor 50/200, `total`, `rootOnly`) + fila `/review` e contadores do dashboard a consumir o endpoint | DONE | ✅ |
+| S5.3 — `headers` `[{original, normalized}]` na resposta do import + wizard a usá-los | DONE | ✅ |
+
+**Gate no fecho do slice S5: verde — 302 testes (32 ficheiros), zero regressões, thresholds mantidos.**
+Nota: a tabela por cliente do dashboard continua server-side (`groupBy`) — o endpoint de listagem não agrega; documentado em HANDOFF.md.

@@ -1,7 +1,7 @@
 # RELEASE_NOTES_V2.md — Gabify v2
 
 Execução autónoma da SPEC_GABIFY_V2 (+ ADDENDUM) na branch `feature/gabify-v2`.
-Estado final: **Fases 0–3 completas, gate verde (288 testes, thresholds de cobertura enforced)**. Fase 4 não executada (regra 13 — ver HANDOFF.md).
+Estado final: **Fases 0–3 completas + slice de UI + slice S5 (insuficiências de API fechadas), gate verde (302 testes, thresholds de cobertura enforced)**. Fase 4 não executada (regra 13 — ver HANDOFF.md).
 
 ## Dependências adicionadas (bibliotecas, não infraestrutura — A6)
 
@@ -43,5 +43,8 @@ Estado final: **Fases 0–3 completas, gate verde (288 testes, thresholds de cob
 | AC-6.3.a–b (reopen OWNER c/ motivo, re-export sem mudar estado) | PASS | |
 | AC-6.4.a (dashboard de fecho) | NÃO EXECUTADO | Fase 4 — ver HANDOFF |
 | AC-6.5.a (E2E funil completo) | PASS | um teste, o produto inteiro |
+| S5.1.a–d (review completo: vatBreakdown/retenção/moeda/dueDate, coerência no servidor, VALIDATED imutável sem reopen) | PASS | slice pós-entrega S5 |
+| S5.2.a–c (GET /api/documents: filtros AND, cross-tenant nunca, cursor) | PASS | slice pós-entrega S5 |
+| S5.3.a (headers na resposta do import) | PASS | slice pós-entrega S5 |
 
 Nenhum teste `[INV]` foi apagado, skipado ou enfraquecido.

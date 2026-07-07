@@ -1,7 +1,7 @@
 # HANDOFF.md — Gabify v2
 
 Execução autónoma de SPEC_GABIFY_V2 + ADDENDUM em `feature/gabify-v2`.
-**Último estado estável: `npm run gate` verde — 288 testes (30 ficheiros), tsc 0 erros, eslint 0 erros, thresholds de cobertura enforced (queues ≥80, api ≥70, server ≥75).**
+**Último estado estável: `npm run gate` verde — 302 testes (32 ficheiros), tsc 0 erros, eslint 0 erros, thresholds de cobertura enforced (queues ≥80, api ≥70, server ≥75).**
 
 ## O que foi entregue (Fases 0–3, todas com gate verde)
 
@@ -32,11 +32,13 @@ Execução autónoma de SPEC_GABIFY_V2 + ADDENDUM em `feature/gabify-v2`.
 
 Correção campo-a-campo (`/review/[documentId]`), wizard de import (`/documents/import`), gestão de convites (`/settings/invitations`, OWNER only) e dashboard de contadores com fila filtrável (`/review?status=...&clientId=...&flag=...`). 4 testes de componente (submissão com correções, VIEWER sem escrita, erro de API preserva input, aviso de coerência não-bloqueante). Nenhuma rota/serviço/schema alterado.
 
-### Insuficiências de API encontradas (contornadas na UI — NÃO alteradas, por instrução)
+### Insuficiências de API — RESOLVIDAS no slice S5 (2026-07-07)
 
-- **`POST /api/documents/[id]/review`**: o schema de `corrections` não aceita `vatBreakdown` por taxa, `withholdingCents`, `currency` nem `dueDate` — apenas tipo, fornecedor, NIF, nº doc, data, totalCents, conta, tratamento de IVA e cliente. A UI mostra o IVA por taxa e a retenção em leitura (alimentam o aviso de coerência) e documenta o limite ao utilizador. Alargar o zod da rota + `ReviewCorrections` do serviço quando este slice de backend reabrir.
-- **`POST /api/documents/import`**: a resposta traz `proposedMapping` + `sample` mas não a lista de cabeçalhos; a UI deriva os cabeçalhos das chaves da primeira linha da amostra — falha se a folha tiver 0 linhas de dados (caso em que não há nada para importar de qualquer forma).
-- **Fila `/review`**: filtros por estado/cliente/flag são aplicados no server component via query params; não existe endpoint de listagem de documentos com filtros (a página consulta o Prisma diretamente, padrão das restantes páginas do repo).
+As três insuficiências documentadas pelo slice de UI foram fechadas com TDD RED-first (`tests/acceptance/fase5.api-gaps.test.ts`, 8 testes):
+
+- **S5.1 — `POST /api/documents/[id]/review`** aceita agora `vatBreakdown` (`{region?, rate, baseCents, vatCents}`, taxas válidas por região PT/PT-AC/PT-MA), `withholdingCents`, `currency` (ISO 4217) e `dueDate` (≥ issueDate). Coerência Σbases+ΣIVA vs total (convenção bruta OU líquida de retenção, ±2 cêntimos) validada no SERVIDOR → 422 com detalhe por campo; o aviso do cliente continua só aviso. `DocumentReview.before/after` cobre os campos novos. **Regra nova**: documento VALIDATED é imutável exceto na janela pós-reopen (última `DocumentReview` = `reopen`); a janela fecha na decisão seguinte. Reopen A9 e [INV] AC-4.1.d intocados. UI: linhas de IVA editáveis (adicionar/remover, taxa por região), retenção, moeda e vencimento editáveis.
+- **S5.2 — `GET /api/documents`** novo: filtros AND por `status` (multi, vírgulas), `clientId`, `flag`, `from`/`to` (issueDate), `q` (fornecedor/nº doc, case-insensitive), `rootOnly`; cursor default 50 max 200 + `total`; `guard('document:read')`, scope por officeId (cross-tenant nunca aparece). A fila `/review` e os contadores do dashboard consomem este endpoint (Prisma removido do server component da fila). A tabela por cliente do dashboard mantém `groupBy` server-side — o endpoint de listagem não agrega (limite conhecido, aceitável).
+- **S5.3 — `POST /api/documents/import`** devolve `headers: [{original, normalized}]` na ordem do ficheiro; o wizard usa-os no passo de mapeamento (chaves da amostra ficam como fallback).
 
 ## O que NÃO foi feito (dívidas conscientes)
 
@@ -44,7 +46,7 @@ Correção campo-a-campo (`/review/[documentId]`), wizard de import (`/documents
 2. **Resend Inbound real**: entregue com interface + adaptador de teste (A5 permite); ativação documentada em RELEASE_NOTES_V2.md.
 3. **Sugestão SNC por IA não corre automaticamente no parse** (decisão de custo): HISTORY/regra aplicam-se no parse; a sugestão IA é on-demand via `suggestSncForDocument` (falta expor endpoint/botão na UI de revisão).
 4. Re-encriptação GCM é lazy (no próximo refresh de token) — tokens antigos continuam CBC até lá, por desenho (A12).
-5. Correções de `vatBreakdown`/retenção/moeda na review — bloqueadas pela API (ver acima).
+5. ~~Correções de `vatBreakdown`/retenção/moeda na review — bloqueadas pela API~~ — resolvido no slice S5 (ver acima).
 
 ## Arranque num ambiente novo
 
