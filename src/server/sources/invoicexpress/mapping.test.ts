@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mapListInvoiceToSourceDocument } from './mapping'
+import { mapListInvoiceToSourceDocument, toApiDate, toIsoDate } from './mapping'
 import { invoiceWithRetention, creditNote, multiRateInvoiceReceipt, TEST_API_KEY } from './fixtures'
 import { listInvoicesResponseSchema } from './schemas'
 import { listPage1 } from './fixtures'
@@ -48,6 +48,11 @@ describe('mapListInvoiceToSourceDocument', () => {
     expect(doc.dueDate).toBe('2026-07-27')
   })
 
+  it('rejects malformed dates in both directions', () => {
+    expect(() => toIsoDate('2026-06-27')).toThrow(/dd\/mm\/yyyy/i)
+    expect(() => toApiDate('27/06/2026')).toThrow(/iso/i)
+  })
+
   it('maps client name and external id; NIF is null (not exposed by the API)', () => {
     const doc = mapListInvoiceToSourceDocument(invoiceWithRetention)
     expect(doc.clientName).toBe('João Camões & Associados')
@@ -65,6 +70,16 @@ describe('mapListInvoiceToSourceDocument', () => {
     const doc = mapListInvoiceToSourceDocument(invoiceWithRetention)
     expect(doc.raw).toMatchObject({ id: 900001, type: 'Invoice' })
     expect(JSON.stringify(doc.raw)).not.toContain(TEST_API_KEY)
+  })
+
+  it('rejects undocumented document types with a clear error', () => {
+    const mutated = { ...invoiceWithRetention, type: 'MysteryDocument' }
+    expect(() => mapListInvoiceToSourceDocument(mutated)).toThrow(/type/i)
+  })
+
+  it('rejects undocumented document statuses with a clear error', () => {
+    const mutated = { ...invoiceWithRetention, status: 'quantum' }
+    expect(() => mapListInvoiceToSourceDocument(mutated)).toThrow(/status/i)
   })
 
   it('accepts every invoice in the doc-derived fixture pages (round trip with schema)', () => {
