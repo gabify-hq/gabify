@@ -58,6 +58,7 @@ const INTERNAL_ACTIONS: AuthzAction[] = [
   'emailAccount:connect',
   'bank:read', 'bank:manage', 'bank:import', 'bank:reconcile', 'bankRule:manage',
   'toconline:read', 'toconline:manage', 'toconline:goLive',
+  'source:read', 'source:manage',
 ]
 
 describe('P1 — role CLIENT: matriz can() [INV]', () => {
@@ -86,6 +87,7 @@ describe('P1 — role CLIENT: matriz can() [INV]', () => {
       'document:read',
       'bank:read',
       'toconline:read',
+      'source:read',
     ]
     for (const action of INTERNAL_ACTIONS) {
       expect(can('OWNER', action), `OWNER × ${action}`).toBe(true)
@@ -556,6 +558,56 @@ const ROUTE_CASES: RouteCase[] = [
       const { POST } = await import('@/app/api/clients/[clientId]/toconline/pull/route')
       return POST(jsonRequest('/api/clients/c1/toconline/pull', 'POST', {}), {
         params: Promise.resolve({ clientId: 'c1' }),
+      })
+    },
+  },
+  // Sources-unification slice — new source connector routes join the denial loop
+  {
+    name: 'GET /api/clients/[clientId]/sources/[system]',
+    invoke: async () => {
+      const { GET } = await import('@/app/api/clients/[clientId]/sources/[system]/route')
+      return GET(jsonRequest('/api/clients/c1/sources/moloni', 'GET'), {
+        params: Promise.resolve({ clientId: 'c1', system: 'moloni' }),
+      })
+    },
+  },
+  {
+    name: 'PUT /api/clients/[clientId]/sources/[system]',
+    invoke: async () => {
+      const { PUT } = await import('@/app/api/clients/[clientId]/sources/[system]/route')
+      return PUT(
+        jsonRequest('/api/clients/c1/sources/invoicexpress', 'PUT', {
+          accountName: 'demo-firm',
+          apiKey: 'sk-x',
+        }),
+        { params: Promise.resolve({ clientId: 'c1', system: 'invoicexpress' }) },
+      )
+    },
+  },
+  {
+    name: 'PATCH /api/clients/[clientId]/sources/[system]',
+    invoke: async () => {
+      const { PATCH } = await import('@/app/api/clients/[clientId]/sources/[system]/route')
+      return PATCH(jsonRequest('/api/clients/c1/sources/moloni', 'PATCH', { pullEnabled: true }), {
+        params: Promise.resolve({ clientId: 'c1', system: 'moloni' }),
+      })
+    },
+  },
+  {
+    name: 'DELETE /api/clients/[clientId]/sources/[system]',
+    invoke: async () => {
+      const { DELETE } = await import('@/app/api/clients/[clientId]/sources/[system]/route')
+      return DELETE(jsonRequest('/api/clients/c1/sources/moloni', 'DELETE'), {
+        params: Promise.resolve({ clientId: 'c1', system: 'moloni' }),
+      })
+    },
+  },
+  {
+    name: 'POST /api/clients/[clientId]/sources/[system]/sync',
+    invoke: async () => {
+      const { POST } = await import('@/app/api/clients/[clientId]/sources/[system]/sync/route')
+      return POST(jsonRequest('/api/clients/c1/sources/invoicexpress/sync', 'POST', {}), {
+        params: Promise.resolve({ clientId: 'c1', system: 'invoicexpress' }),
       })
     },
   },

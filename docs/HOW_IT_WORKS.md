@@ -220,3 +220,17 @@ You can now ask Gabify questions about your own firm's data, in plain Portuguese
 - The assistant is read-only by design: it can never create, change, send or delete anything — it only consults. Every question is recorded in the activity log.
 - It only sees the data of your own firm. Nothing from any other firm is ever visible.
 - The conversation is not stored: when you leave the page, the chat starts fresh.
+
+---
+
+## Importing issued invoices from billing software
+
+If a client issues invoices in **Moloni** or **InvoiceXpress**, Gabify can import those issued invoices automatically, so you do not have to ask the client for them.
+
+- On the client page, under **Ligações**, connect the client's Moloni or InvoiceXpress account with the credentials shown there (stored securely, never displayed again).
+- Once connected and switched on, Gabify checks for new issued invoices about every half hour, and you can also press **Sincronizar agora** at any time.
+- Imported invoices arrive already organised, with the amounts and VAT exactly as issued — Gabify does not re-read or guess anything, because the data comes straight from certified billing software. They appear alongside the client's other documents, ready for review.
+- These are the client's **issued** invoices (what they sold). Nothing is ever sent back to Moloni or InvoiceXpress — the connection only reads.
+- Each connection shows its status, the last sync time, how many documents were imported, and any error, plus a clear notice that the connection has **not yet been tested against the real service**.
+
+> Coming soon: importing from other billing platforms (Jasmin, Vendus, Primavera) using the same one-way, read-only approach.

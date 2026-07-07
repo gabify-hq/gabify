@@ -173,3 +173,20 @@ Nenhum teste `[INV]` foi apagado, skipado ou enfraquecido.
 **Fora de âmbito respeitado:** pull de compras/recibos, webhooks, outros ERPs, abstração de fontes genérica (adiada para o Moloni).
 
 Nenhum teste `[INV]` foi apagado, skipado ou enfraquecido.
+
+## Unificação de fontes — Moloni + InvoiceXpress (feature/sources-unification)
+
+| Verificação | Estado | Nota |
+|---|---|---|
+| U1 contrato único permil + `rate-equivalence` (equivalência numérica permil/cêntimos) | PASS | `types-local.ts` apagado; IVX implementa o contrato |
+| U2 [INV] cêntimos multi-taxa (Moloni) e retenção (IVX) job→BD | PASS (contra mocks da doc) | |
+| U2 [INV] re-pull no-op; IA nunca chamada (proxy que rebenta) | PASS | |
+| U2 [INV] NIF IVX resolvido 1 chamada para N documentos do mesmo cliente | PASS | memo + cache `SourceEntityMap` CLIENT |
+| U2 [INV] credenciais cifradas na BD (leitura raw) e ausentes em erros | PASS | |
+| U2 [INV] cross-tenant 404; API_PULL nunca no seletor de push TOConline | PASS | |
+| U3 [INV] VIEWER não edita; CLIENT negado (loop faseP1 +5 rotas); ligar persiste cifrado | PASS | |
+| U4 regressão zero em todas as suites TOConline (pull/push/rotas/ligações) | PASS | dry-run e anti-eco intactos |
+
+**Envs novas:** `MOLONI_PULL_INTERVAL_MS`, `INVOICEXPRESS_PULL_INTERVAL_MS` (default 1800000 — 30 min). **Deploy:** `npm run worker:moloni` e `npm run worker:invoicexpress` FORA do railway.toml até validação humana real dos 3 sistemas (checklist em `docs/technical/sources.md`).
+
+Nenhum teste `[INV]` foi apagado, skipado ou enfraquecido.

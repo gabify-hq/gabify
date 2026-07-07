@@ -15,6 +15,11 @@ import type {
   ToconlineConnectionInfo,
   ToconlinePushableDocument,
 } from '@/components/dashboard/toconline-integration-panel'
+import { SourceConnectionsPanel } from '@/components/dashboard/source-connections-panel'
+import type { SourceConnectionInfo } from '@/components/dashboard/source-connections-panel'
+import { getMoloniConnection } from '@/server/sources/moloni/moloni-connection-service'
+import { getInvoicexpressConnection } from '@/server/sources/invoicexpress/invoicexpress-connection-service'
+import type { SourceConnectionDTO } from '@/server/sources/source-connection-dto'
 import {
   TOCONLINE_PUSH_ELIGIBLE_STATUSES,
   TOCONLINE_PUSH_ELIGIBLE_TYPES,
@@ -256,6 +261,34 @@ export default async function ClientPage({ params }: ClientPageProps) {
     }
   }
 
+  // Source connectors (Moloni / InvoiceXpress) — SOURCE-only, doc-driven, NÃO
+  // testados contra a API real.
+  const canReadSources = can(session?.user?.role, 'source:read')
+  const canManageSources = can(session?.user?.role, 'source:manage')
+  let moloniConnection: SourceConnectionInfo | null = null
+  let invoicexpressConnection: SourceConnectionInfo | null = null
+  if (canReadSources) {
+    const formatLastPull = (iso: string | null): string | null =>
+      iso ? new Date(iso).toLocaleString('pt-PT', { timeZone: 'Europe/Lisbon' }) : null
+    const toInfo = (dto: SourceConnectionDTO): SourceConnectionInfo => ({
+      status: dto.status,
+      pullEnabled: dto.pullEnabled,
+      lastPullAt: formatLastPull(dto.lastPullAt),
+      lastError: dto.lastError,
+      importedCount: dto.importedCount,
+      hasCredentials: dto.hasCredentials,
+      accountName: dto.accountName,
+      companyId: dto.companyId,
+      companyName: dto.companyName,
+    })
+    const [moloniDto, ivxDto] = await Promise.all([
+      getMoloniConnection(officeId, clientId),
+      getInvoicexpressConnection(officeId, clientId),
+    ])
+    moloniConnection = moloniDto ? toInfo(moloniDto) : null
+    invoicexpressConnection = ivxDto ? toInfo(ivxDto) : null
+  }
+
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       {/* Breadcrumb */}
@@ -356,6 +389,16 @@ export default async function ClientPage({ params }: ClientPageProps) {
               importedCount={toconlineImportedCount}
               canManage={canManageToconline}
               canGoLive={canGoLiveToconline}
+            />
+          )}
+
+          {/* Ligações — Fontes (Moloni / InvoiceXpress), doc-driven, NÃO testadas */}
+          {canReadSources && (moloniConnection || invoicexpressConnection || canManageSources) && (
+            <SourceConnectionsPanel
+              clientId={client.id}
+              moloni={moloniConnection}
+              invoicexpress={invoicexpressConnection}
+              canManage={canManageSources}
             />
           )}
 

@@ -1,9 +1,20 @@
 import { prisma } from '@/lib/prisma'
 import { decryptToken, encryptToken } from '@/lib/crypto'
-import { centsFromUnknown, decimalStringFromCents } from '@/lib/money'
+import { decimalStringFromCents } from '@/lib/money'
 import { uploadToR2 } from '@/lib/r2'
 import { ToconlineClient } from './toconline-client'
+import { ToconlineSourceConnector } from './toconline-source-connector'
+import {
+  mapSalesDocumentAttributes,
+  mapSalesDocumentLines,
+  str,
+  type MappedSalesDocument,
+} from './toconline-sales-mapping'
 import type { Prisma, ToconlineConnection } from '@prisma/client'
+
+// Re-exported for backward compatibility (the mapping moved to
+// toconline-sales-mapping so the connector and the service can share it).
+export { mapSalesDocumentAttributes, mapSalesDocumentLines }
 
 /**
  * TOConline sales pull (issued invoices → Document) — doc-driven, NEVER
@@ -45,113 +56,6 @@ export interface ToconlinePullResult {
   skippedEcho: number
   previewed: number
   error?: string
-}
-
-interface VatBand {
-  region?: string
-  rate: number
-  baseCents: number
-  vatCents: number
-}
-
-interface MappedSalesDocument {
-  toconlineId: string
-  documentNumber: string
-  documentType: string
-  issueDate: Date | null
-  dueDate: Date | null
-  currency: string
-  totalCents: number
-  netCents: number
-  vatCents: number
-  withholdingCents: number
-  buyerName: string | null
-  buyerNif: string | null
-  vatBreakdown: VatBand[]
-  externalReference: string | null
-}
-
-function str(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() !== '' ? value : null
-}
-
-function dateAtUtcNoon(value: unknown): Date | null {
-  const s = str(value)
-  if (!s || !/^\d{4}-\d{2}-\d{2}/.test(s)) return null
-  return new Date(`${s.slice(0, 10)}T12:00:00.000Z`)
-}
-
-/**
- * Pure mapping of the documented sales-document header attributes
- * (docs/apis_versoes-anteriores_vendas_documentos-de-venda.md response
- * example) into our shape. VAT bands come from the per-rate header fields
- * vat_incidence_{ise,red,int,nor} / vat_total_* / vat_percentage_* — euros
- * converted to integer cents HERE and nowhere else.
- */
-export function mapSalesDocumentAttributes(
-  toconlineId: string,
-  attrs: Record<string, unknown>,
-): MappedSalesDocument {
-  const region = str(attrs.customer_tax_country_region) ?? str(attrs.operation_country) ?? 'PT'
-
-  const bands: VatBand[] = []
-  const bandSpecs = [
-    { incidence: 'vat_incidence_ise', total: null, percentage: null, fixedRate: 0 },
-    { incidence: 'vat_incidence_red', total: 'vat_total_red', percentage: 'vat_percentage_red' },
-    { incidence: 'vat_incidence_int', total: 'vat_total_int', percentage: 'vat_percentage_int' },
-    { incidence: 'vat_incidence_nor', total: 'vat_total_nor', percentage: 'vat_percentage_nor' },
-  ] as const
-  for (const spec of bandSpecs) {
-    const baseCents = centsFromUnknown(attrs[spec.incidence]) ?? 0
-    if (baseCents === 0) continue
-    const vatCents = spec.total ? (centsFromUnknown(attrs[spec.total]) ?? 0) : 0
-    const rate =
-      'fixedRate' in spec
-        ? spec.fixedRate
-        : ((): number => {
-            const p = attrs[spec.percentage as string]
-            const n = typeof p === 'number' ? p : Number(str(p) ?? NaN)
-            return Number.isFinite(n) ? n : 0
-          })()
-    bands.push({ region, rate, baseCents, vatCents })
-  }
-
-  return {
-    toconlineId,
-    documentNumber: str(attrs.document_no) ?? `TOC-${toconlineId}`,
-    documentType: str(attrs.document_type) ?? 'FT',
-    issueDate: dateAtUtcNoon(attrs.date),
-    dueDate: dateAtUtcNoon(attrs.due_date),
-    currency: str(attrs.currency_iso_code) ?? 'EUR',
-    totalCents: centsFromUnknown(attrs.gross_total) ?? 0,
-    netCents: centsFromUnknown(attrs.net_total) ?? 0,
-    vatCents: centsFromUnknown(attrs.tax_payable) ?? 0,
-    withholdingCents: centsFromUnknown(attrs.retention_value) ?? 0,
-    buyerName: str(attrs.customer_business_name),
-    buyerNif: str(attrs.customer_tax_registration_number),
-    vatBreakdown: bands,
-    externalReference: str(attrs.external_reference),
-  }
-}
-
-/** Line attributes (documented table) → house convention (integer cents). */
-export function mapSalesDocumentLines(
-  lines: Array<Record<string, unknown>>,
-): Array<{ description: string; qty: number; unitPriceCents: number; vatRate: number; totalCents: number }> {
-  return lines.map((line) => {
-    const qty = typeof line.quantity === 'number' ? line.quantity : Number(str(line.quantity) ?? 1)
-    const rate =
-      typeof line.tax_percentage === 'number'
-        ? line.tax_percentage
-        : Number(str(line.tax_percentage) ?? 0)
-    return {
-      description: str(line.description) ?? '',
-      qty: Number.isFinite(qty) ? qty : 1,
-      unitPriceCents: centsFromUnknown(line.unit_price) ?? 0,
-      vatRate: Number.isFinite(rate) ? rate : 0,
-      totalCents: centsFromUnknown(line.amount) ?? 0,
-    }
-  })
 }
 
 function buildDocumentCreateData(params: {
@@ -260,17 +164,21 @@ export async function pullSalesDocumentsForConnection(
     ? new Date(connection.lastPullAt.getTime() - OVERLAP_MS).toISOString().slice(0, 10)
     : undefined
 
-  try {
-    for (let page = 1; page <= MAX_PAGES; page += 1) {
-      const items = await client.listFinalizedSalesDocuments({
-        pageNumber: page,
-        pageSize: PAGE_SIZE,
-        updatedSince,
-      })
-      if (items.length === 0) break
+  // U4: the listing + PDF are the unified DocumentSourceConnector contract; the
+  // dry-run/anti-echo/EntityMap orchestration below stays TOConline-specific
+  // (the generic runner cannot model dry-run previews). Behaviour unchanged —
+  // the SourceDocument carries the original attributes in `raw`.
+  const connector = new ToconlineSourceConnector({ client, updatedSince, pageSize: PAGE_SIZE })
 
-      for (const item of items) {
-        const externalReference = str(item.attributes.external_reference)
+  try {
+    let cursor: string | undefined
+    for (let page = 1; page <= MAX_PAGES; page += 1) {
+      const { items: sourceDocs, nextCursor } = await connector.listIssuedDocuments(cursor)
+      if (sourceDocs.length === 0) break
+
+      for (const doc of sourceDocs) {
+        const attributes = doc.raw as Record<string, unknown>
+        const externalReference = str(attributes.external_reference)
         // [INV anti-echo] our own pushes never become Documents
         if (externalReference?.startsWith(ECHO_MARKER_PREFIX)) {
           counts.skippedEcho += 1
@@ -282,7 +190,7 @@ export async function pullSalesDocumentsForConnection(
             connectionId_entityType_externalKey: {
               connectionId: connection.id,
               entityType: 'SALES_DOCUMENT',
-              externalKey: item.id,
+              externalKey: doc.externalId,
             },
           },
         })
@@ -291,12 +199,12 @@ export async function pullSalesDocumentsForConnection(
           continue
         }
 
-        const mapped = mapSalesDocumentAttributes(item.id, item.attributes)
+        const mapped = mapSalesDocumentAttributes(doc.externalId, attributes)
 
         // Lines are a documented extra read — best effort, never fatal
         let documentLines: Array<Record<string, unknown>> | null = null
         try {
-          const rawLines = await client.getSalesDocumentLines(item.id)
+          const rawLines = await client.getSalesDocumentLines(doc.externalId)
           if (rawLines.length > 0) {
             documentLines = mapSalesDocumentLines(rawLines) as unknown as Array<Record<string, unknown>>
           }
@@ -329,10 +237,9 @@ export async function pullSalesDocumentsForConnection(
         // PDF (documented: url_for_print + public-file link) — best effort
         let r2Key: string | null = null
         try {
-          const pdfUrl = await client.getSalesDocumentPdfUrl(item.id)
-          if (pdfUrl) {
-            const pdf = await client.downloadPublicFile(pdfUrl)
-            r2Key = `${connection.officeId}/toconline-pull/${connection.id}/${item.id}.pdf`
+          const pdf = await connector.fetchPdf(doc.externalId)
+          if (pdf) {
+            r2Key = `${connection.officeId}/toconline-pull/${connection.id}/${doc.externalId}.pdf`
             await uploadToR2(r2Key, pdf, 'application/pdf')
           }
         } catch {
@@ -352,15 +259,16 @@ export async function pullSalesDocumentsForConnection(
             data: {
               connectionId: connection.id,
               entityType: 'SALES_DOCUMENT',
-              externalKey: item.id,
-              toconlineId: item.id,
+              externalKey: doc.externalId,
+              toconlineId: doc.externalId,
             },
           }),
         ])
         counts.imported += 1
       }
 
-      if (items.length < PAGE_SIZE) break
+      cursor = nextCursor ?? undefined
+      if (cursor === undefined) break
     }
   } catch (error) {
     const raw = error instanceof Error ? error.message : 'Erro desconhecido na importação'

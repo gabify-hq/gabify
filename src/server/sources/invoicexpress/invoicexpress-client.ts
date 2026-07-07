@@ -120,6 +120,42 @@ export class InvoicexpressClient {
     throw lastError ?? new InvoicexpressApiError('Request failed with no recorded error')
   }
 
+  /**
+   * Downloads binary content (the generated PDF) from an absolute, pre-signed
+   * URL returned by the API. No api_key is appended (the URL is already
+   * authorized); errors are redacted like every other surface.
+   */
+  async fetchBinary(absoluteUrl: string): Promise<Buffer> {
+    await this.waitForRateSlot()
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs)
+    try {
+      const response = await this.fetchImpl(absoluteUrl, {
+        method: 'GET',
+        signal: controller.signal,
+      })
+      if (!response.ok) {
+        throw new InvoicexpressApiError(
+          `InvoiceXpress PDF download responded ${response.status} (${this.redact(absoluteUrl)})`,
+          { status: response.status, retryable: response.status >= 500 },
+        )
+      }
+      const arrayBuffer = await response.arrayBuffer()
+      return Buffer.from(arrayBuffer)
+    } catch (error) {
+      if (error instanceof InvoicexpressApiError) throw error
+      const reason = isAbortError(error)
+        ? `timeout after ${this.timeoutMs}ms`
+        : this.redact(String(error))
+      throw new InvoicexpressApiError(
+        `InvoiceXpress PDF download failed (${this.redact(absoluteUrl)}): ${reason}`,
+        { retryable: true },
+      )
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
   /** Exposes redaction so callers can sanitize anything derived from requests. */
   redact(text: string): string {
     return redactApiKey(redactUrl(text), this.apiKey)

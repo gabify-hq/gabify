@@ -216,6 +216,9 @@ export const pdfReadyResponse = {
   output: { pdfUrl: 'https://invoicexpress-files.example/documents/900001.pdf' },
 }
 
+/** Bytes the mocked pre-signed PDF URL serves (the connector returns a Buffer). */
+export const PDF_BYTES = '%PDF-1.4 fake-invoicexpress-pdf'
+
 /** `202` schema from the saved docs. */
 export const pdfAcceptedResponse = {
   accepted: {
@@ -265,6 +268,11 @@ export function createMockFetch(
     if (/^\/api\/pdf\/\d+\.json$/.test(parsed.pathname)) {
       const next = pdfQueue.shift() ?? { status: 200, body: pdfReadyResponse }
       return jsonResponse(next.body, next.status)
+    }
+
+    // Pre-signed PDF download URL returned by a 200 PdfResponse.
+    if (parsed.host === 'invoicexpress-files.example') {
+      return new Response(PDF_BYTES, { status: 200, headers: { 'Content-Type': 'application/pdf' } })
     }
 
     return jsonResponse({ errors: { error: 'not found' } }, 404)

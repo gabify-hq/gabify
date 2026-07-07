@@ -116,5 +116,24 @@ export const pdfAcceptedSchema = z
   })
   .strict()
 
+/**
+ * `GET /clients/{client-id}.json` — used only to resolve the customer NIF
+ * (`fiscal_id`), which the document responses do not expose. Lenient
+ * (`passthrough`) on purpose: this endpoint's full shape has never been seen
+ * against the real API, and only `fiscal_id` matters here.
+ */
+export const clientDetailResponseSchema = z
+  .object({
+    client: z
+      .object({
+        id: z.number().int(),
+        name: z.string().optional(),
+        fiscal_id: z.string().nullish(),
+        code: z.string().optional(),
+      })
+      .passthrough(),
+  })
+  .passthrough()
+
 export type ListInvoice = z.infer<typeof listInvoiceSchema>
 export type ListInvoicesResponse = z.infer<typeof listInvoicesResponseSchema>
