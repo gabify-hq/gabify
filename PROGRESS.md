@@ -102,3 +102,19 @@ Por regra 13 da spec (fases por ordem de valor; melhor 0–3 impecáveis do que 
 - Fixtures A10 comitadas em `tests/fixtures/generated/` (determinísticas; regeneradas pelo globalSetup se faltarem). QRs embebidos como JPEG (DCTDecode) porque o qr-reader de produção só extrai streams JPEG de PDFs.
 - Rota `/api/ingest/simulate` isenta do arch-test de RBAC (autentica por secret, como os webhooks); desativada em produção.
 - Mocks de fase0.foundation atualizados para a nova arquitetura (anthropic mockado ao nível do cliente) — invariantes AC-0.5 inalterados.
+
+## Slice S5 — fechar insuficiências de API do HANDOFF (pós-UI)
+
+### RED (2026-07-07)
+
+`tests/acceptance/fase5.api-gaps.test.ts` — 8 testes, **8 falhas confirmadas** antes de qualquer implementação:
+- S5.1.a–d: rota review ignora/rejeita `vatBreakdown`/`withholdingCents`/`currency`/`dueDate`; sem validação de taxas PT nem coerência no servidor; VALIDATED ainda era corrigível sem reopen.
+- S5.2.a–c: `GET /api/documents` não existe (módulo sem export GET).
+- S5.3.a: resposta do import não traz `headers`.
+
+### Decisões S5
+
+- Nomes dos campos de vatBreakdown na API: `{region?, rate, baseCents, vatCents}` (convenção A1 do repo — sufixo Cents), não `{rate, base, amount}` literal da spec.
+- Taxas válidas por região: PT {0,6,13,23}, PT-AC {0,4,9,16}, PT-MA {0,5,12,22} (o repo já suporta regiões via QR I/J/K).
+- Coerência no servidor reutiliza a convenção A1 existente: aceita total bruto OU líquido de retenção (min dos dois deltas ≤ 2 cêntimos) — o QR AT (campo O) é bruto.
+- VALIDATED imutável exceto janela pós-reopen: review sobre VALIDATED só é aceite se a última DocumentReview do documento for `reopen` (reopen A9 devolve EXPORTED→VALIDATED, [INV] AC-4.1.d intocado); a janela fecha na correção seguinte.
