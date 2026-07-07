@@ -3,10 +3,13 @@ import Link from 'next/link'
 import { ChevronLeft, Mail, Phone, Building2, Hash, Pencil } from 'lucide-react'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { can } from '@/server/authz/can'
 import { DOCUMENT_TYPE_LABELS } from '@/lib/document-types'
 import { EditClientDialog } from '@/components/dashboard/edit-client-dialog'
 import { ClientDocumentTimeline } from '@/components/dashboard/client-document-timeline'
 import type { TimelineDocument, TimelinePeriod } from '@/components/dashboard/client-document-timeline'
+import { PortalAccessManager } from '@/components/portal/portal-access-manager'
+import type { PortalInvitationDTO, PortalUserDTO } from '@/components/portal/portal-access-manager'
 import type { DocumentType } from '@/types'
 
 interface ClientPageProps {
@@ -35,6 +38,17 @@ function getPeriodKey(doc: { extractedDate: Date | null; createdAt: Date }): str
 function getPeriodLabel(key: string): string {
   const [year, month] = key.split('-')
   return `${MONTHS_PT[parseInt(month) - 1]} ${year}`
+}
+
+function portalInvitationState(inv: {
+  acceptedAt: Date | null
+  revokedAt: Date | null
+  expiresAt: Date
+}): PortalInvitationDTO['state'] {
+  if (inv.acceptedAt) return 'aceite'
+  if (inv.revokedAt) return 'revogado'
+  if (inv.expiresAt.getTime() < Date.now()) return 'expirado'
+  return 'pendente'
 }
 
 export default async function ClientPage({ params }: ClientPageProps) {
@@ -128,6 +142,38 @@ export default async function ClientPage({ params }: ClientPageProps) {
   const pendingReview = docs.filter((d) => d.status === 'NEEDS_REVIEW').length
   const totalPeriods = periods.length
 
+  // "Acessos do portal" (fase P3) — OWNER + ACCOUNTANT only
+  const canManagePortalAccess = can(session?.user?.role, 'clientInvitation:manage')
+  let portalUsers: PortalUserDTO[] = []
+  let portalInvitations: PortalInvitationDTO[] = []
+  if (canManagePortalAccess) {
+    const [users, invitations] = await Promise.all([
+      prisma.user.findMany({
+        where: { officeId, clientId, role: 'CLIENT', deletedAt: null },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true, email: true, name: true, createdAt: true },
+      }),
+      prisma.invitation.findMany({
+        where: { officeId, clientId, role: 'CLIENT' },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+        select: { id: true, email: true, expiresAt: true, acceptedAt: true, revokedAt: true },
+      }),
+    ])
+    portalUsers = users.map((u) => ({
+      id: u.id,
+      email: u.email,
+      name: u.name,
+      since: u.createdAt.toLocaleDateString('pt-PT'),
+    }))
+    portalInvitations = invitations.map((inv) => ({
+      id: inv.id,
+      email: inv.email,
+      state: portalInvitationState(inv),
+      expiresAt: inv.expiresAt.toLocaleDateString('pt-PT'),
+    }))
+  }
+
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       {/* Breadcrumb */}
@@ -209,6 +255,15 @@ export default async function ClientPage({ params }: ClientPageProps) {
               </div>
             ))}
           </div>
+
+          {/* Acessos do portal (P3) */}
+          {canManagePortalAccess && (
+            <PortalAccessManager
+              clientId={client.id}
+              users={portalUsers}
+              invitations={portalInvitations}
+            />
+          )}
 
           {/* Timeline */}
           <div>

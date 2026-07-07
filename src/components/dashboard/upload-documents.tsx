@@ -8,6 +8,10 @@ import type { ClientOptionDTO } from '@/server/dto'
 
 interface UploadDocumentsProps {
   clients: ClientOptionDTO[]
+  /** Upload endpoint — the portal reuses this component against its own API (P3). */
+  endpoint?: string
+  /** Hidden in the portal: the end-client never chooses a client. */
+  showClientSelector?: boolean
 }
 
 interface FileResult {
@@ -20,7 +24,11 @@ interface FileResult {
  * Manual document upload (S2.1) — mobile-first: drag&drop on desktop,
  * direct camera capture on mobile. Per-file progress and error states.
  */
-export function UploadDocuments({ clients }: UploadDocumentsProps) {
+export function UploadDocuments({
+  clients,
+  endpoint = '/api/documents/upload',
+  showClientSelector = true,
+}: UploadDocumentsProps) {
   const router = useRouter()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
@@ -37,9 +45,9 @@ export function UploadDocuments({ clients }: UploadDocumentsProps) {
     try {
       const form = new FormData()
       for (const file of list) form.append('files', file)
-      if (clientId) form.append('clientId', clientId)
+      if (showClientSelector && clientId) form.append('clientId', clientId)
 
-      const res = await fetch('/api/documents/upload', { method: 'POST', body: form })
+      const res = await fetch(endpoint, { method: 'POST', body: form })
       const body = await res.json().catch(() => null)
 
       if (!res.ok && !body?.data) {
@@ -82,18 +90,20 @@ export function UploadDocuments({ clients }: UploadDocumentsProps) {
           Arraste ficheiros para aqui (PDF, JPG, PNG, XML, ZIP — máx. 25MB)
         </p>
         <div className="flex flex-wrap items-center justify-center gap-2">
-          <select
-            value={clientId}
-            onChange={(e) => setClientId(e.target.value)}
-            disabled={isUploading}
-            aria-label="Cliente dos documentos"
-            className="h-8 rounded-lg border border-gray-200 bg-white px-2 text-[12px] text-gray-600 focus:outline-none focus:ring-1 focus:ring-green-400"
-          >
-            <option value="">Por classificar</option>
-            {clients.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
+          {showClientSelector && (
+            <select
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+              disabled={isUploading}
+              aria-label="Cliente dos documentos"
+              className="h-8 rounded-lg border border-gray-200 bg-white px-2 text-[12px] text-gray-600 focus:outline-none focus:ring-1 focus:ring-green-400"
+            >
+              <option value="">Por classificar</option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          )}
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={isUploading}
