@@ -136,7 +136,9 @@ TOConline integration detail: [toconline.md](toconline.md) + repo-root `INTEGRAT
 **Framework:** Vitest, two projects:
 
 - **unit** — co-located with source (`foo.ts` → `foo.test.ts`); no real DB, network, or Redis.
-- **acceptance** — `tests/acceptance/fase*.test.ts`; runs against a dedicated PostgreSQL database (`gabify_test`, auto-created and migrated by the global setup). Providers/AI/Resend always mocked. Files run sequentially (shared DB).
+- **acceptance** — `tests/acceptance/fase*.test.ts`; runs against a dedicated PostgreSQL database (`gabify_test`, auto-created and migrated by the global setup) and an isolated Redis logical database (`redis://localhost:6379/15` by default, flushed by the global setup — override with `TEST_REDIS_URL`, must be db > 0). Providers/AI/Resend always mocked. Files run sequentially (shared DB): the acceptance project runs in its own sequential group after unit (`sequence.groupOrder`) with a single worker, so `vitest run` with both projects is stable.
+
+**Worktrees:** every fresh worktree needs `npm install` (or `npm ci`) **and** `npx prisma generate` before running tests. Worktrees live inside the main repo, so a missing local `node_modules/.prisma/client` silently resolves to the ancestor directory's client — generated from a different branch's schema (phantom "column does not exist" failures). The acceptance global setup guards against this (`checkPrismaClientDrift`): it aborts before any test when the resolved Prisma Client comes from outside the current directory or no longer matches the local `prisma/schema.prisma`.
 
 **Rules:** test through public interfaces. `npm run gate` = tsc + eslint + vitest + coverage, and must pass at the end of every slice.
 

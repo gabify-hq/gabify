@@ -25,6 +25,8 @@ Execução autónoma de SPEC_GABIFY_V2 + ADDENDUM em `feature/gabify-v2`.
 - Schema: `EntityMap.nif`→`externalKey` (rename), `PushPreview.documentId` nullable, `Document.buyerName`, migrações `20260707000008/09`.
 - Gate no fecho da extensão: verde — 497 testes (51 ficheiros), thresholds mantidos.
 
+> **Worktrees — setup obrigatório antes de testar:** todo o worktree novo precisa de `npm ci` (ou `npm install`) **+ `npx prisma generate`**. Sem o generate local, o Node resolve o `.prisma/client` do node_modules de um diretório ancestral (schema de outro branch) → dezenas de falhas fantasma "column does not exist". O global setup dos testes acceptance aborta com instrução de correção se detetar este drift (`checkPrismaClientDrift` em `tests/setup/test-env.ts`).
+
 ## Fase P — Portal do cliente final v1 (2026-07-07, branch `feature/client-portal-v1`)
 
 Módulo novo: os clientes finais de cada gabinete têm login próprio num portal minimal (carregar documentos + ver estado público dos seus). Módulo de maior sensibilidade de segurança — em dúvida, isolamento ganha SEMPRE. Detalhe em `docs/technical/client-portal.md`; ACs e decisões em PROGRESS.md/RELEASE_NOTES_V2.md.
