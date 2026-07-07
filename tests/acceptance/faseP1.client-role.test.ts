@@ -14,9 +14,11 @@ const queueAddMock = vi.fn(async () => ({}))
 vi.mock('@/lib/redis', () => ({
   getEmailSyncQueue: () => ({ add: queueAddMock }),
   getDocumentParseQueue: () => ({ add: queueAddMock }),
+  getToconlinePushQueue: () => ({ add: queueAddMock }),
   QUEUE_EMAIL_SYNC: 'email-sync',
   QUEUE_DOCUMENT_PARSE: 'document-parse',
   QUEUE_SUBSCRIPTION_RENEWAL: 'subscription-renewal',
+  QUEUE_TOCONLINE_PUSH: 'toconline-push',
   DEFAULT_JOB_OPTIONS: {},
   redisConnection: {},
 }))
@@ -53,6 +55,7 @@ const INTERNAL_ACTIONS: AuthzAction[] = [
   'invitation:manage', 'user:manage', 'export:run', 'settings:manage',
   'emailAccount:connect',
   'bank:read', 'bank:manage', 'bank:import', 'bank:reconcile', 'bankRule:manage',
+  'toconline:read', 'toconline:manage', 'toconline:goLive',
 ]
 
 describe('P1 — role CLIENT: matriz can() [INV]', () => {
@@ -68,8 +71,20 @@ describe('P1 — role CLIENT: matriz can() [INV]', () => {
   })
 
   it('P1.b [INV] — regressão zero: OWNER/ACCOUNTANT/VIEWER mantêm a matriz existente; portal:* é exclusivo do CLIENT', () => {
-    const OWNER_ONLY: AuthzAction[] = ['invitation:manage', 'user:manage', 'settings:manage']
-    const READS: AuthzAction[] = ['client:read', 'email:read', 'document:read', 'bank:read']
+    const OWNER_ONLY: AuthzAction[] = [
+      'invitation:manage',
+      'user:manage',
+      'settings:manage',
+      // TOConline v1: going live (dry-run OFF) is an OWNER decision
+      'toconline:goLive',
+    ]
+    const READS: AuthzAction[] = [
+      'client:read',
+      'email:read',
+      'document:read',
+      'bank:read',
+      'toconline:read',
+    ]
     for (const action of INTERNAL_ACTIONS) {
       expect(can('OWNER', action), `OWNER × ${action}`).toBe(true)
       expect(can('ACCOUNTANT', action), `ACCOUNTANT × ${action}`).toBe(!OWNER_ONLY.includes(action))
@@ -470,6 +485,56 @@ const ROUTE_CASES: RouteCase[] = [
       const { PATCH } = await import('@/app/api/users/[userId]/route')
       return PATCH(jsonRequest('/api/users/u1', 'PATCH', { role: 'VIEWER' }), {
         params: Promise.resolve({ userId: 'u1' }),
+      })
+    },
+  },
+  // TOConline integration v1 — new internal routes join the denial loop
+  {
+    name: 'GET /api/clients/[clientId]/toconline',
+    invoke: async () => {
+      const { GET } = await import('@/app/api/clients/[clientId]/toconline/route')
+      return GET(jsonRequest('/api/clients/c1/toconline', 'GET'), {
+        params: Promise.resolve({ clientId: 'c1' }),
+      })
+    },
+  },
+  {
+    name: 'PUT /api/clients/[clientId]/toconline',
+    invoke: async () => {
+      const { PUT } = await import('@/app/api/clients/[clientId]/toconline/route')
+      return PUT(
+        jsonRequest('/api/clients/c1/toconline', 'PUT', {
+          oauthUrl: 'https://x.test/oauth',
+          apiUrl: 'https://x.test',
+          oauthClientId: 'id',
+          oauthClientSecret: 'secret',
+        }),
+        { params: Promise.resolve({ clientId: 'c1' }) },
+      )
+    },
+  },
+  {
+    name: 'POST /api/clients/[clientId]/toconline/dry-run',
+    invoke: async () => {
+      const { POST } = await import('@/app/api/clients/[clientId]/toconline/dry-run/route')
+      return POST(jsonRequest('/api/clients/c1/toconline/dry-run', 'POST', { dryRun: false }), {
+        params: Promise.resolve({ clientId: 'c1' }),
+      })
+    },
+  },
+  {
+    name: 'POST /api/toconline/push',
+    invoke: async () => {
+      const { POST } = await import('@/app/api/toconline/push/route')
+      return POST(jsonRequest('/api/toconline/push', 'POST', { clientId: 'c1', documentIds: ['d1'] }))
+    },
+  },
+  {
+    name: 'GET /api/documents/[documentId]/toconline',
+    invoke: async () => {
+      const { GET } = await import('@/app/api/documents/[documentId]/toconline/route')
+      return GET(jsonRequest('/api/documents/d1/toconline', 'GET'), {
+        params: Promise.resolve({ documentId: 'd1' }),
       })
     },
   },

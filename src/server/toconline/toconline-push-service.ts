@@ -67,8 +67,11 @@ function centsOfDecimal(value: unknown): number {
   return Math.round(Number(value) * 100)
 }
 
-/** Human-readable PT eligibility check; null = eligible. */
-function eligibilityError(doc: Document): string | null {
+/**
+ * Human-readable PT eligibility check; null = eligible. Exported so the push
+ * route can pre-validate per item (defense in depth — the service re-checks).
+ */
+export function getPushEligibilityError(doc: Document): string | null {
   if (!TOCONLINE_PUSH_ELIGIBLE_STATUSES.includes(doc.status as never)) {
     return `Só documentos validados podem ser enviados (estado atual: ${doc.status})`
   }
@@ -329,7 +332,7 @@ export async function pushDocumentToToconline(
     return { ok: false, error }
   }
 
-  const ineligible = eligibilityError(doc)
+  const ineligible = getPushEligibilityError(doc)
   if (ineligible) {
     await markDocumentError(doc.id, ineligible)
     return { ok: false, error: ineligible }

@@ -10,6 +10,16 @@ import { ClientDocumentTimeline } from '@/components/dashboard/client-document-t
 import type { TimelineDocument, TimelinePeriod } from '@/components/dashboard/client-document-timeline'
 import { PortalAccessManager } from '@/components/portal/portal-access-manager'
 import type { PortalInvitationDTO, PortalUserDTO } from '@/components/portal/portal-access-manager'
+import { ToconlineIntegrationPanel } from '@/components/dashboard/toconline-integration-panel'
+import type {
+  ToconlineConnectionInfo,
+  ToconlinePushableDocument,
+} from '@/components/dashboard/toconline-integration-panel'
+import {
+  TOCONLINE_PUSH_ELIGIBLE_STATUSES,
+  TOCONLINE_PUSH_ELIGIBLE_TYPES,
+} from '@/server/toconline/toconline-push-service'
+import { formatDatePt } from '@/lib/timezone'
 import type { DocumentType } from '@/types'
 
 interface ClientPageProps {
@@ -174,6 +184,65 @@ export default async function ClientPage({ params }: ClientPageProps) {
     }))
   }
 
+  // Integração TOConline (v1 — doc-driven, NÃO testada contra a API real)
+  const canReadToconline = can(session?.user?.role, 'toconline:read')
+  const canManageToconline = can(session?.user?.role, 'toconline:manage')
+  const canGoLiveToconline = can(session?.user?.role, 'toconline:goLive')
+  let toconlineConnection: ToconlineConnectionInfo | null = null
+  let toconlineDocuments: ToconlinePushableDocument[] = []
+  if (canReadToconline) {
+    const connection = await prisma.toconlineConnection.findFirst({
+      where: { officeId, clientId },
+      select: {
+        status: true,
+        dryRun: true,
+        oauthUrl: true,
+        apiUrl: true,
+        oauthClientId: true,
+        lastError: true,
+      },
+    })
+    if (connection) {
+      toconlineConnection = {
+        status: connection.status,
+        dryRun: connection.dryRun,
+        oauthUrl: connection.oauthUrl,
+        apiUrl: connection.apiUrl,
+        oauthClientId: connection.oauthClientId,
+        lastError: connection.lastError,
+      }
+      const pushable = await prisma.document.findMany({
+        where: {
+          officeId,
+          clientId,
+          deletedAt: null,
+          status: { in: [...TOCONLINE_PUSH_ELIGIBLE_STATUSES] },
+          type: { in: [...TOCONLINE_PUSH_ELIGIBLE_TYPES] },
+        },
+        orderBy: { issueDate: 'desc' },
+        take: 100,
+        select: {
+          id: true,
+          documentNumber: true,
+          issueDate: true,
+          supplierName: true,
+          totalAmount: true,
+          toconlinePushStatus: true,
+          toconlinePushError: true,
+        },
+      })
+      toconlineDocuments = pushable.map((doc) => ({
+        id: doc.id,
+        number: doc.documentNumber ?? doc.id.slice(0, 8),
+        date: doc.issueDate ? formatDatePt(doc.issueDate) : '—',
+        supplier: doc.supplierName ?? '—',
+        total: doc.totalAmount ? `${String(doc.totalAmount).replace('.', ',')} €` : '—',
+        pushStatus: doc.toconlinePushStatus,
+        pushError: doc.toconlinePushError,
+      }))
+    }
+  }
+
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       {/* Breadcrumb */}
@@ -262,6 +331,17 @@ export default async function ClientPage({ params }: ClientPageProps) {
               clientId={client.id}
               users={portalUsers}
               invitations={portalInvitations}
+            />
+          )}
+
+          {/* Integração TOConline (v1 — mostrar só quando há ligação ou o user pode criá-la) */}
+          {canReadToconline && (toconlineConnection || canManageToconline) && (
+            <ToconlineIntegrationPanel
+              clientId={client.id}
+              connection={toconlineConnection}
+              documents={toconlineDocuments}
+              canManage={canManageToconline}
+              canGoLive={canGoLiveToconline}
             />
           )}
 
