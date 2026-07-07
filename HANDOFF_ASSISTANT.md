@@ -74,10 +74,20 @@ chat, streaming, qualquer alteração de schema. Persistência de conversas e
 deep-links clientName→clientId ficam como futuro (ver
 `docs/technical/assistant.md`).
 
-## Notas de integração
+## Notas de integração — RESOLVIDAS (2026-07-07, rebase sobre staging pós-portal)
 
-- No merge com o branch paralelo: os pontos de contacto são inserções puras —
-  conflitos improváveis; se o outro branch introduzir o role CLIENT, o deny
-  do assistente já o cobre (teste explícito com role desconhecido).
-- `docs/technical/OVERVIEW.md` NÃO foi tocado (evitar conflito) — ao integrar,
-  acrescentar as duas envs à tabela de ambiente e o módulo à lista de docs.
+- Rebase de `feature/gabify-assistant` sobre `origin/staging` (42aecf8, PR #24
+  do portal): um único conflito trivial na união de tipos de `can.ts`
+  (resolvido mantendo as ações de ambos); rate-limit, sidebar, .env.example e
+  HOW_IT_WORKS auto-merged — os appends merge-safe funcionaram como planeado.
+- **Defesa em profundidade confirmada**: o role CLIENT passou de hipotético a
+  real no schema (portal P1) e o teste `can('CLIENT','assistant:query') →
+  false` / rota → 404 passou verde sem qualquer alteração — o MATRIX do
+  portal dá a CLIENT apenas `portal:*` e a extensão do assistente só concede
+  a OWNER/ACCOUNTANT/VIEWER. Comentário do bloco em `can.ts` atualizado para
+  refletir o CLIENT real.
+- `docs/technical/OVERVIEW.md` atualizado no fecho da integração
+  (`ASSISTANT_MODEL` + `RATE_LIMIT_ASSISTANT_PER_MIN` na tabela de ambiente).
+- **Gate no código unificado: verde — 435 testes (44 ficheiros), tsc 0,
+  eslint 0 erros, thresholds mantidos.** Produto completo num branch: core
+  loop, conciliação bancária, portal do cliente e assistente NL.
