@@ -1,3 +1,4 @@
+import { parsePtDate } from '@/lib/dates'
 import { anthropic, CLAUDE_MODEL, CLASSIFICATION_MAX_TOKENS, DRAFT_MAX_TOKENS } from '@/lib/anthropic'
 import { prisma } from '@/lib/prisma'
 import type { ClassificationResult, DocumentType } from '@/types'
@@ -470,10 +471,4 @@ ${bodyText?.slice(0, 3000) ?? '(sem corpo)'}`
 
 // ── Helpers ──
 
-function parsePtDate(dateStr: string): Date | null {
-  // DD/MM/YYYY
-  const [day, month, year] = dateStr.split('/')
-  if (!day || !month || !year) return null
-  const d = new Date(`${year}-${month}-${day}`)
-  return isNaN(d.getTime()) ? null : d
-}
+export { parsePtDate } from '@/lib/dates'

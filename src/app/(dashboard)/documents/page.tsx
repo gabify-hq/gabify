@@ -1,14 +1,24 @@
-import { FileText } from 'lucide-react'
+import Link from 'next/link'
+import { FileText, FileSpreadsheet } from 'lucide-react'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { DocumentTable } from '@/components/dashboard/document-table'
-import { DOCUMENT_TYPE_LABELS } from '@/lib/mock-data'
-import type { MockDocument } from '@/lib/mock-data'
+import { UploadDocuments } from '@/components/dashboard/upload-documents'
+import { DOCUMENT_TYPE_LABELS } from '@/lib/document-types'
+import type { DocumentDTO } from '@/server/dto'
 import type { DocumentType } from '@/types'
 
 export default async function DocumentsPage() {
   const session = await auth()
   const officeId = session?.user?.officeId ?? ''
+
+  const clients = officeId
+    ? await prisma.client.findMany({
+        where: { officeId, deletedAt: null },
+        orderBy: { name: 'asc' },
+        select: { id: true, name: true },
+      })
+    : []
 
   const dbDocuments = officeId
     ? await prisma.document.findMany({
@@ -44,7 +54,7 @@ export default async function DocumentsPage() {
     : []
 
   // Map DB records to the shape DocumentTable expects
-  const documents: MockDocument[] = dbDocuments.map((doc) => {
+  const documents: DocumentDTO[] = dbDocuments.map((doc) => {
     const type = (doc.type ?? 'OTHER') as DocumentType
     const confidence = doc.confidence ?? 0
 
@@ -55,7 +65,7 @@ export default async function DocumentsPage() {
       : '-'
 
     // Map DB status to the 3 display states the table knows
-    const status: MockDocument['status'] =
+    const status: DocumentDTO['status'] =
       doc.status === 'CLASSIFIED'
         ? 'CLASSIFIED'
         : doc.status === 'NEEDS_REVIEW' || doc.status === 'PENDING_CLASSIFICATION'
@@ -96,18 +106,28 @@ export default async function DocumentsPage() {
             {documents.length}
           </span>
         </div>
-        {needsReview > 0 && (
-          <div className="flex items-center gap-1.5">
-            <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-            <span className="text-[11px] font-medium text-amber-400">
-              {needsReview} para rever
-            </span>
-          </div>
-        )}
+        <div className="flex items-center gap-3">
+          {needsReview > 0 && (
+            <div className="flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+              <span className="text-[11px] font-medium text-amber-400">
+                {needsReview} para rever
+              </span>
+            </div>
+          )}
+          <Link
+            href="/documents/import"
+            className="pressable flex items-center gap-1.5 rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-semibold text-gray-600 transition-colors hover:border-gray-300"
+          >
+            <FileSpreadsheet className="h-3.5 w-3.5 stroke-[1.75]" />
+            Importar folha
+          </Link>
+        </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-5 py-4">
-        <DocumentTable documents={documents} />
+      <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
+        <UploadDocuments clients={clients} />
+        <DocumentTable documents={documents} clients={clients} />
       </div>
     </div>
   )

@@ -2,7 +2,8 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Inbox, Users, FileText, Settings, LogOut } from 'lucide-react'
+import { Inbox, Users, FileText, ClipboardCheck, Landmark, Settings, LogOut } from 'lucide-react'
+import { MessageCircleQuestion } from 'lucide-react'
 import { signOut } from 'next-auth/react'
 import { cn } from '@/lib/utils'
 
@@ -21,6 +22,9 @@ const navItems = [
   { href: '/inbox', label: 'Caixa de entrada', icon: Inbox, badgeKey: 'unread' as const },
   { href: '/clients', label: 'Clientes', icon: Users, badgeKey: null },
   { href: '/documents', label: 'Documentos', icon: FileText, badgeKey: null },
+  { href: '/review', label: 'Rever', icon: ClipboardCheck, badgeKey: null },
+  { href: '/bank', label: 'Banco', icon: Landmark, badgeKey: null },
+  { href: '/assistant', label: 'Assistente', icon: MessageCircleQuestion, badgeKey: null },
 ]
 
 function getInitials(name?: string | null, email?: string | null): string {

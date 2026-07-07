@@ -4,13 +4,12 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { Paperclip } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { useDashboardStore } from '@/lib/dashboard-store'
-import type { MockEmail, MockEmailAction } from '@/lib/mock-data'
-import { formatRelativeTime } from '@/lib/mock-data'
+import type { EmailDTO, EmailActionDTO } from '@/server/dto'
+import { formatRelativeTime } from '@/lib/format'
 
 interface EmailListProps {
-  emails: MockEmail[]
-  actions: MockEmailAction[]
+  emails: EmailDTO[]
+  actions: EmailActionDTO[]
 }
 
 interface ResolvedStatus {
@@ -20,7 +19,7 @@ interface ResolvedStatus {
 }
 
 function resolveStatus(
-  email: MockEmail,
+  email: EmailDTO,
   actionStatus: string | null,
 ): ResolvedStatus | null {
   if (actionStatus === 'PENDING_REVIEW') {
@@ -30,18 +29,18 @@ function resolveStatus(
       barClass: 'bg-amber-400',
     }
   }
-  if (actionStatus === 'APPROVED') {
-    return {
-      label: 'Aprovado',
-      pillClass: 'bg-green-50 text-green-700 ring-1 ring-green-200',
-      barClass: 'bg-green-500',
-    }
-  }
-  if (actionStatus === 'EDITED_SENT') {
+  if (actionStatus === 'APPROVED' || actionStatus === 'APPROVED_SENT' || actionStatus === 'SENT' || actionStatus === 'EDITED_SENT') {
     return {
       label: 'Enviado',
       pillClass: 'bg-green-50 text-green-700 ring-1 ring-green-200',
       barClass: 'bg-green-500',
+    }
+  }
+  if (actionStatus === 'APPROVED_SEND_FAILED') {
+    return {
+      label: 'Falha no envio',
+      pillClass: 'bg-red-50 text-red-700 ring-1 ring-red-200',
+      barClass: 'bg-red-500',
     }
   }
   if (actionStatus === 'REJECTED') {
@@ -70,7 +69,6 @@ function resolveStatus(
 
 export function EmailList({ emails, actions }: EmailListProps) {
   const pathname = usePathname()
-  const store = useDashboardStore()
   const emailToAction = new Map(actions.map((a) => [a.emailId, a]))
 
   if (emails.length === 0) {
@@ -85,8 +83,7 @@ export function EmailList({ emails, actions }: EmailListProps) {
     <div className="flex flex-col divide-y divide-gray-100">
       {emails.map((email, index) => {
         const action = emailToAction.get(email.id)
-        const persisted = action ? store.getAction(action.id) : undefined
-        const actionStatus = persisted?.status ?? action?.status ?? null
+        const actionStatus = action?.status ?? null
         const isUnread = email.status === 'UNREAD'
         const isSelected = pathname === `/inbox/${email.id}`
         const status = resolveStatus(email, actionStatus)

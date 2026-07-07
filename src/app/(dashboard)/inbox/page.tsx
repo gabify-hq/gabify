@@ -1,9 +1,10 @@
+import Link from 'next/link'
 import { Inbox, AlertCircle } from 'lucide-react'
 import { EmailList } from '@/components/dashboard/email-list'
 import { AssociateSenderDialog } from '@/components/dashboard/associate-sender-dialog'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import type { MockEmail, MockEmailAction } from '@/lib/mock-data'
+import type { EmailDTO, EmailActionDTO } from '@/server/dto'
 
 export default async function InboxPage() {
   const session = await auth()
@@ -46,7 +47,7 @@ export default async function InboxPage() {
       : Promise.resolve([]),
   ])
 
-  const emails: MockEmail[] = rawEmails.map((e) => {
+  const emails: EmailDTO[] = rawEmails.map((e) => {
     const firstAction = e.actions[0]
     return {
       id: e.id,
@@ -65,11 +66,11 @@ export default async function InboxPage() {
     }
   })
 
-  const actions: MockEmailAction[] = rawEmails.flatMap((e) =>
+  const actions: EmailActionDTO[] = rawEmails.flatMap((e) =>
     e.actions.map((a) => ({
       id: a.id,
       emailId: e.id,
-      type: a.type as MockEmailAction['type'],
+      type: a.type as EmailActionDTO['type'],
       status: a.status,
       draftContent: a.draftContent ?? '',
       aiModel: a.aiModel ?? 'claude',
@@ -148,9 +149,9 @@ export default async function InboxPage() {
               <AlertCircle className="h-3.5 w-3.5 shrink-0 text-amber-600" aria-hidden="true" />
               <p className="text-[12px] font-semibold text-amber-800">
                 {unknownSenders.length} remetente{unknownSenders.length !== 1 ? 's' : ''} por identificar —{' '}
-                <a href="/clients" className="underline hover:text-amber-900">
+                <Link href="/clients" className="underline hover:text-amber-900">
                   crie clientes primeiro
-                </a>
+                </Link>
               </p>
             </div>
           </div>

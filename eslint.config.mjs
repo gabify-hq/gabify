@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    "scripts/_attic/**",
+    ".claude/**",
+    // Generated from integrations/toconline/openapi.json (npm run toconline:types)
+    "integrations/toconline/types.ts",
   ]),
 ]);
 

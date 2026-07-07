@@ -369,20 +369,26 @@ export class GmailProvider implements EmailProvider {
   private async upsertMessage(message: GmailMessage): Promise<'created' | 'updated'> {
     const headers = message.payload.headers ?? []
 
-    const subject = headers.find((h) => h.name === 'Subject')?.value ?? null
-    const fromRaw = headers.find((h) => h.name === 'From')?.value ?? ''
-    const dateRaw = headers.find((h) => h.name === 'Date')?.value ?? null
+    const header = (name: string) =>
+      headers.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value ?? null
+
+    const subject = header('Subject')
+    const fromRaw = header('From') ?? ''
+    const dateRaw = header('Date')
 
     const { fromEmail, fromName } = parseFromHeader(fromRaw)
     const receivedAt = dateRaw ? new Date(dateRaw) : new Date()
     const bodyText = extractTextBody(message.payload)
+    const bodyHtml = extractHtmlBody(message.payload)
+    const toEmails = parseAddressList(header('To'))
+    const ccEmails = parseAddressList(header('Cc'))
     const threadId = message.threadId
 
-    // Find or create the email thread
+    // Find or create the email thread — scoped to the account's office
     let dbThreadId: string | null = null
     if (threadId) {
       const existingThread = await prisma.emailThread.findFirst({
-        where: { providerThreadId: threadId },
+        where: { providerThreadId: threadId, officeId: this.account.officeId },
         select: { id: true },
       })
 
@@ -391,6 +397,7 @@ export class GmailProvider implements EmailProvider {
       } else {
         const newThread = await prisma.emailThread.create({
           data: {
+            officeId: this.account.officeId,
             providerThreadId: threadId,
             subject: subject ?? null,
           },
@@ -424,9 +431,10 @@ export class GmailProvider implements EmailProvider {
         subject,
         fromEmail,
         fromName,
-        toEmails: [],
-        ccEmails: [],
+        toEmails,
+        ccEmails,
         bodyText,
+        bodyHtml,
         receivedAt,
         status: 'UNREAD',
       },
@@ -434,7 +442,10 @@ export class GmailProvider implements EmailProvider {
         subject,
         fromEmail,
         fromName,
+        toEmails,
+        ccEmails,
         bodyText,
+        bodyHtml,
         threadId: dbThreadId,
       },
       select: { id: true },
@@ -513,11 +524,32 @@ interface AttachmentPart {
   sizeBytes: number | null
 }
 
+// ADDENDUM A4: attachment ingestion limits
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024 // 25MB per attachment
+const MAX_ATTACHMENTS_PER_MESSAGE = 15
+
 /**
  * Recursively walk a Gmail message payload to find all attachment parts.
  * A part is an attachment when it has a non-empty body.attachmentId and a filename.
+ * Attachments over the 25MB cap are skipped with a log; at most 15 per message (A4).
  */
 function extractAttachmentParts(part: GmailMessagePart): AttachmentPart[] {
+  const results = collectAttachmentParts(part).filter((p) => {
+    if ((p.sizeBytes ?? 0) > MAX_ATTACHMENT_BYTES) {
+      console.warn(`[gmail] attachment "${p.filename}" exceeds 25MB cap — skipped`)
+      return false
+    }
+    return true
+  })
+  if (results.length > MAX_ATTACHMENTS_PER_MESSAGE) {
+    console.warn(
+      `[gmail] message has ${results.length} attachments — processing first ${MAX_ATTACHMENTS_PER_MESSAGE}`
+    )
+  }
+  return results.slice(0, MAX_ATTACHMENTS_PER_MESSAGE)
+}
+
+function collectAttachmentParts(part: GmailMessagePart): AttachmentPart[] {
   const results: AttachmentPart[] = []
 
   if (part.body?.attachmentId && part.filename) {
@@ -531,9 +563,41 @@ function extractAttachmentParts(part: GmailMessagePart): AttachmentPart[] {
 
   if (part.parts) {
     for (const child of part.parts) {
-      results.push(...extractAttachmentParts(child))
+      results.push(...collectAttachmentParts(child))
     }
   }
 
   return results
+}
+
+/**
+ * Recursively walk a Gmail message payload to find the first text/html part.
+ */
+function extractHtmlBody(part: GmailMessagePart): string | null {
+  if (part.mimeType === 'text/html' && part.body?.data) {
+    return Buffer.from(part.body.data, 'base64url').toString('utf-8')
+  }
+
+  if (part.parts) {
+    for (const child of part.parts) {
+      const result = extractHtmlBody(child)
+      if (result !== null) return result
+    }
+  }
+
+  return null
+}
+
+/**
+ * Parse a "Name <a@b.pt>, c@d.pt" header into a list of bare addresses.
+ */
+function parseAddressList(headerValue: string | null): string[] {
+  if (!headerValue) return []
+  return headerValue
+    .split(',')
+    .map((entry) => {
+      const match = entry.match(/<(.+?)>/)
+      return (match ? match[1] : entry).trim()
+    })
+    .filter((address) => address.length > 0)
 }

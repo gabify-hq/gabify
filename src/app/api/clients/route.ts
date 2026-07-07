@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { guard } from '@/server/authz/guard'
 
 const createClientSchema = z.object({
   name: z.string().min(2, 'Nome obrigatório (mínimo 2 caracteres)'),
@@ -17,10 +17,8 @@ const createClientSchema = z.object({
 })
 
 export async function POST(request: NextRequest) {
-  const session = await auth()
-  if (!session?.user?.officeId) {
-    return NextResponse.json({ error: 'Não autenticado' }, { status: 401 })
-  }
+  const gate = await guard('client:create', { denyStatus: 403 })
+  if (!gate.ok) return gate.response
 
   let body: unknown
   try {
@@ -41,7 +39,7 @@ export async function POST(request: NextRequest) {
 
   const client = await prisma.client.create({
     data: {
-      officeId: session.user.officeId,
+      officeId: gate.user.officeId,
       name,
       nif: nif || null,
       email: email || null,
@@ -63,15 +61,23 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({ success: true, data: client }, { status: 201 })
 }
 
-export async function GET() {
-  const session = await auth()
-  if (!session?.user?.officeId) {
-    return NextResponse.json({ error: 'Não autenticado' }, { status: 401 })
-  }
+const DEFAULT_PAGE_SIZE = 50
+const MAX_PAGE_SIZE = 200
+
+export async function GET(request: NextRequest) {
+  const gate = await guard('client:read')
+  if (!gate.ok) return gate.response
+
+  const params = request.nextUrl.searchParams
+  const requested = Number(params.get('limit')) || DEFAULT_PAGE_SIZE
+  const take = Math.min(Math.max(requested, 1), MAX_PAGE_SIZE)
+  const cursor = params.get('cursor')
 
   const clients = await prisma.client.findMany({
-    where: { officeId: session.user.officeId, deletedAt: null },
-    orderBy: { name: 'asc' },
+    where: { officeId: gate.user.officeId, deletedAt: null },
+    orderBy: [{ name: 'asc' }, { id: 'asc' }],
+    take: take + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     select: {
       id: true,
       name: true,
@@ -83,5 +89,10 @@ export async function GET() {
     },
   })
 
-  return NextResponse.json({ success: true, data: clients })
+  const hasMore = clients.length > take
+  const items = hasMore ? clients.slice(0, take) : clients
+  return NextResponse.json({
+    success: true,
+    data: { items, nextCursor: hasMore ? items[items.length - 1].id : null },
+  })
 }

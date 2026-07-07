@@ -3,10 +3,28 @@ import Link from 'next/link'
 import { ChevronLeft, Mail, Phone, Building2, Hash, Pencil } from 'lucide-react'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { DOCUMENT_TYPE_LABELS } from '@/lib/mock-data'
+import { can } from '@/server/authz/can'
+import { DOCUMENT_TYPE_LABELS } from '@/lib/document-types'
 import { EditClientDialog } from '@/components/dashboard/edit-client-dialog'
 import { ClientDocumentTimeline } from '@/components/dashboard/client-document-timeline'
 import type { TimelineDocument, TimelinePeriod } from '@/components/dashboard/client-document-timeline'
+import { PortalAccessManager } from '@/components/portal/portal-access-manager'
+import type { PortalInvitationDTO, PortalUserDTO } from '@/components/portal/portal-access-manager'
+import { ToconlineIntegrationPanel } from '@/components/dashboard/toconline-integration-panel'
+import type {
+  ToconlineConnectionInfo,
+  ToconlinePushableDocument,
+} from '@/components/dashboard/toconline-integration-panel'
+import { SourceConnectionsPanel } from '@/components/dashboard/source-connections-panel'
+import type { SourceConnectionInfo } from '@/components/dashboard/source-connections-panel'
+import { getMoloniConnection } from '@/server/sources/moloni/moloni-connection-service'
+import { getInvoicexpressConnection } from '@/server/sources/invoicexpress/invoicexpress-connection-service'
+import type { SourceConnectionDTO } from '@/server/sources/source-connection-dto'
+import {
+  TOCONLINE_PUSH_ELIGIBLE_STATUSES,
+  TOCONLINE_PUSH_ELIGIBLE_TYPES,
+} from '@/server/toconline/toconline-push-service'
+import { formatDatePt } from '@/lib/timezone'
 import type { DocumentType } from '@/types'
 
 interface ClientPageProps {
@@ -35,6 +53,17 @@ function getPeriodKey(doc: { extractedDate: Date | null; createdAt: Date }): str
 function getPeriodLabel(key: string): string {
   const [year, month] = key.split('-')
   return `${MONTHS_PT[parseInt(month) - 1]} ${year}`
+}
+
+function portalInvitationState(inv: {
+  acceptedAt: Date | null
+  revokedAt: Date | null
+  expiresAt: Date
+}): PortalInvitationDTO['state'] {
+  if (inv.acceptedAt) return 'aceite'
+  if (inv.revokedAt) return 'revogado'
+  if (inv.expiresAt.getTime() < Date.now()) return 'expirado'
+  return 'pendente'
 }
 
 export default async function ClientPage({ params }: ClientPageProps) {
@@ -128,6 +157,138 @@ export default async function ClientPage({ params }: ClientPageProps) {
   const pendingReview = docs.filter((d) => d.status === 'NEEDS_REVIEW').length
   const totalPeriods = periods.length
 
+  // "Acessos do portal" (fase P3) — OWNER + ACCOUNTANT only
+  const canManagePortalAccess = can(session?.user?.role, 'clientInvitation:manage')
+  let portalUsers: PortalUserDTO[] = []
+  let portalInvitations: PortalInvitationDTO[] = []
+  if (canManagePortalAccess) {
+    const [users, invitations] = await Promise.all([
+      prisma.user.findMany({
+        where: { officeId, clientId, role: 'CLIENT', deletedAt: null },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true, email: true, name: true, createdAt: true },
+      }),
+      prisma.invitation.findMany({
+        where: { officeId, clientId, role: 'CLIENT' },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+        select: { id: true, email: true, expiresAt: true, acceptedAt: true, revokedAt: true },
+      }),
+    ])
+    portalUsers = users.map((u) => ({
+      id: u.id,
+      email: u.email,
+      name: u.name,
+      since: u.createdAt.toLocaleDateString('pt-PT'),
+    }))
+    portalInvitations = invitations.map((inv) => ({
+      id: inv.id,
+      email: inv.email,
+      state: portalInvitationState(inv),
+      expiresAt: inv.expiresAt.toLocaleDateString('pt-PT'),
+    }))
+  }
+
+  // Integração TOConline (v1 — doc-driven, NÃO testada contra a API real)
+  const canReadToconline = can(session?.user?.role, 'toconline:read')
+  const canManageToconline = can(session?.user?.role, 'toconline:manage')
+  const canGoLiveToconline = can(session?.user?.role, 'toconline:goLive')
+  let toconlineConnection: ToconlineConnectionInfo | null = null
+  let toconlineDocuments: ToconlinePushableDocument[] = []
+  let toconlineImportedCount = 0
+  if (canReadToconline) {
+    const connection = await prisma.toconlineConnection.findFirst({
+      where: { officeId, clientId },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        status: true,
+        dryRun: true,
+        oauthUrl: true,
+        apiUrl: true,
+        oauthClientId: true,
+        lastError: true,
+        pullEnabled: true,
+        pushEnabled: true,
+        lastPullAt: true,
+      },
+    })
+    if (connection) {
+      toconlineConnection = {
+        status: connection.status,
+        dryRun: connection.dryRun,
+        oauthUrl: connection.oauthUrl,
+        apiUrl: connection.apiUrl,
+        oauthClientId: connection.oauthClientId,
+        lastError: connection.lastError,
+        pullEnabled: connection.pullEnabled,
+        pushEnabled: connection.pushEnabled,
+        lastPullAt: connection.lastPullAt
+          ? connection.lastPullAt.toLocaleString('pt-PT', { timeZone: 'Europe/Lisbon' })
+          : null,
+      }
+      toconlineImportedCount = await prisma.document.count({
+        where: { officeId, clientId, source: 'API_PULL', deletedAt: null },
+      })
+      const pushable = await prisma.document.findMany({
+        where: {
+          officeId,
+          clientId,
+          deletedAt: null,
+          status: { in: [...TOCONLINE_PUSH_ELIGIBLE_STATUSES] },
+          type: { in: [...TOCONLINE_PUSH_ELIGIBLE_TYPES] },
+        },
+        orderBy: { issueDate: 'desc' },
+        take: 100,
+        select: {
+          id: true,
+          documentNumber: true,
+          issueDate: true,
+          supplierName: true,
+          totalAmount: true,
+          toconlinePushStatus: true,
+          toconlinePushError: true,
+        },
+      })
+      toconlineDocuments = pushable.map((doc) => ({
+        id: doc.id,
+        number: doc.documentNumber ?? doc.id.slice(0, 8),
+        date: doc.issueDate ? formatDatePt(doc.issueDate) : '—',
+        supplier: doc.supplierName ?? '—',
+        total: doc.totalAmount ? `${String(doc.totalAmount).replace('.', ',')} €` : '—',
+        pushStatus: doc.toconlinePushStatus,
+        pushError: doc.toconlinePushError,
+      }))
+    }
+  }
+
+  // Source connectors (Moloni / InvoiceXpress) — SOURCE-only, doc-driven, NÃO
+  // testados contra a API real.
+  const canReadSources = can(session?.user?.role, 'source:read')
+  const canManageSources = can(session?.user?.role, 'source:manage')
+  let moloniConnection: SourceConnectionInfo | null = null
+  let invoicexpressConnection: SourceConnectionInfo | null = null
+  if (canReadSources) {
+    const formatLastPull = (iso: string | null): string | null =>
+      iso ? new Date(iso).toLocaleString('pt-PT', { timeZone: 'Europe/Lisbon' }) : null
+    const toInfo = (dto: SourceConnectionDTO): SourceConnectionInfo => ({
+      status: dto.status,
+      pullEnabled: dto.pullEnabled,
+      lastPullAt: formatLastPull(dto.lastPullAt),
+      lastError: dto.lastError,
+      importedCount: dto.importedCount,
+      hasCredentials: dto.hasCredentials,
+      accountName: dto.accountName,
+      companyId: dto.companyId,
+      companyName: dto.companyName,
+    })
+    const [moloniDto, ivxDto] = await Promise.all([
+      getMoloniConnection(officeId, clientId),
+      getInvoicexpressConnection(officeId, clientId),
+    ])
+    moloniConnection = moloniDto ? toInfo(moloniDto) : null
+    invoicexpressConnection = ivxDto ? toInfo(ivxDto) : null
+  }
+
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       {/* Breadcrumb */}
@@ -209,6 +370,37 @@ export default async function ClientPage({ params }: ClientPageProps) {
               </div>
             ))}
           </div>
+
+          {/* Acessos do portal (P3) */}
+          {canManagePortalAccess && (
+            <PortalAccessManager
+              clientId={client.id}
+              users={portalUsers}
+              invitations={portalInvitations}
+            />
+          )}
+
+          {/* Integração TOConline (v1 — mostrar só quando há ligação ou o user pode criá-la) */}
+          {canReadToconline && (toconlineConnection || canManageToconline) && (
+            <ToconlineIntegrationPanel
+              clientId={client.id}
+              connection={toconlineConnection}
+              documents={toconlineDocuments}
+              importedCount={toconlineImportedCount}
+              canManage={canManageToconline}
+              canGoLive={canGoLiveToconline}
+            />
+          )}
+
+          {/* Ligações — Fontes (Moloni / InvoiceXpress), doc-driven, NÃO testadas */}
+          {canReadSources && (moloniConnection || invoicexpressConnection || canManageSources) && (
+            <SourceConnectionsPanel
+              clientId={client.id}
+              moloni={moloniConnection}
+              invoicexpress={invoicexpressConnection}
+              canManage={canManageSources}
+            />
+          )}
 
           {/* Timeline */}
           <div>

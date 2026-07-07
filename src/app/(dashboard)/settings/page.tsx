@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { Settings, Mail, Unlink, Plus, CheckCircle2, AlertCircle } from 'lucide-react'
 import { StatusBadge } from '@/components/dashboard/status-badge'
 import { Button } from '@/components/ui/button'
@@ -147,9 +148,29 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       {/* Page header */}
-      <div className="flex items-center gap-2.5 border-b border-gray-200 bg-white px-5 py-3.5">
-        <Settings className="h-4 w-4 stroke-[1.75] text-gray-400" />
-        <h1 className="text-[14px] font-bold text-gray-900">Definições</h1>
+      <div className="flex items-center justify-between border-b border-gray-200 bg-white px-5 py-3.5">
+        <div className="flex items-center gap-2.5">
+          <Settings className="h-4 w-4 stroke-[1.75] text-gray-400" />
+          <h1 className="text-[14px] font-bold text-gray-900">Definições</h1>
+        </div>
+        <div className="flex items-center gap-2">
+          {(session?.user?.role === 'OWNER' || session?.user?.role === 'ACCOUNTANT') && (
+            <Link
+              href="/settings/bank-rules"
+              className="pressable rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-semibold text-gray-600 transition-colors hover:border-gray-300"
+            >
+              Regras bancárias
+            </Link>
+          )}
+          {session?.user?.role === 'OWNER' && (
+            <Link
+              href="/settings/invitations"
+              className="pressable rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-semibold text-gray-600 transition-colors hover:border-gray-300"
+            >
+              Convites da equipa
+            </Link>
+          )}
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto bg-gray-50 px-5 py-5">

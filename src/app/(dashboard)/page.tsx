@@ -1,7 +1,8 @@
 import Link from 'next/link'
-import { Inbox, Users, Mail, FileText, UserX } from 'lucide-react'
+import { Inbox, Users, Mail, FileText, UserX, Landmark } from 'lucide-react'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { DocumentCounters } from '@/components/dashboard/document-counters'
 
 interface StatCardProps {
   label: string
@@ -58,6 +59,60 @@ export default async function DashboardOverviewPage() {
       : Promise.resolve(0),
   ])
 
+  // Bank reconciliation counters (fase C3)
+  const [bankUnreconciled, bankSuggested] = await Promise.all([
+    officeId
+      ? prisma.bankTransaction.count({ where: { officeId, status: 'UNRECONCILED' } })
+      : Promise.resolve(0),
+    officeId
+      ? prisma.bankTransaction.count({ where: { officeId, status: 'SUGGESTED' } })
+      : Promise.resolve(0),
+  ])
+
+  // Per-client aggregation stays server-side (the list endpoint has no groupBy);
+  // the aggregate counter tiles come from GET /api/documents (S5.2) client-side.
+  const perClientRaw = officeId
+    ? await prisma.document.groupBy({
+        by: ['clientId', 'status'],
+        where: {
+          officeId,
+          deletedAt: null,
+          parentDocumentId: null,
+          status: { in: ['NEEDS_REVIEW', 'PRE_VALIDATED', 'VALIDATED'] },
+        },
+        _count: { id: true },
+      })
+    : []
+
+  // Resolve client names for the per-client breakdown
+  const clientIds = [...new Set(perClientRaw.map((r) => r.clientId).filter((id): id is string => id !== null))]
+  const clientNames = new Map(
+    clientIds.length > 0
+      ? (
+          await prisma.client.findMany({
+            where: { id: { in: clientIds } },
+            select: { id: true, name: true },
+          })
+        ).map((c) => [c.id, c.name])
+      : []
+  )
+  const perClient = new Map<string | null, { needsReview: number; preValidated: number; toExport: number }>()
+  for (const row of perClientRaw) {
+    const entry = perClient.get(row.clientId) ?? { needsReview: 0, preValidated: 0, toExport: 0 }
+    if (row.status === 'NEEDS_REVIEW') entry.needsReview += row._count.id
+    if (row.status === 'PRE_VALIDATED') entry.preValidated += row._count.id
+    if (row.status === 'VALIDATED') entry.toExport += row._count.id
+    perClient.set(row.clientId, entry)
+  }
+  const perClientRows = [...perClient.entries()]
+    .map(([id, counts]) => ({
+      clientId: id,
+      name: id ? clientNames.get(id) ?? 'Cliente' : 'Sem cliente',
+      ...counts,
+    }))
+    .sort((a, b) => b.needsReview + b.preValidated - (a.needsReview + a.preValidated))
+    .slice(0, 12)
+
   const userName = session?.user?.name ?? session?.user?.email ?? null
 
   return (
@@ -105,6 +160,76 @@ export default async function DashboardOverviewPage() {
               accent="bg-amber-50"
             />
           </div>
+
+          {/* Document pipeline counters (S3.1) */}
+          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <h2 className="mb-4 text-[12px] font-bold uppercase tracking-wider text-gray-400">
+              Documentos por estado
+            </h2>
+            <DocumentCounters />
+
+            {perClientRows.length > 0 && (
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full text-[12px]">
+                  <thead>
+                    <tr className="border-b border-gray-100">
+                      <th className="py-1.5 text-left text-[10px] font-bold uppercase tracking-wider text-gray-400">Cliente</th>
+                      <th className="py-1.5 text-right text-[10px] font-bold uppercase tracking-wider text-gray-400">A rever</th>
+                      <th className="py-1.5 text-right text-[10px] font-bold uppercase tracking-wider text-gray-400">Pré-val.</th>
+                      <th className="py-1.5 text-right text-[10px] font-bold uppercase tracking-wider text-gray-400">Por exportar</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {perClientRows.map((row) => (
+                      <tr key={row.clientId ?? 'none'} className="border-b border-gray-50 last:border-0 hover:bg-gray-50">
+                        <td className="py-1.5 pr-2 text-gray-700">
+                          {row.clientId ? (
+                            <Link href={`/review?clientId=${row.clientId}`} className="hover:text-green-700 hover:underline">
+                              {row.name}
+                            </Link>
+                          ) : (
+                            row.name
+                          )}
+                        </td>
+                        <td className="data py-1.5 text-right font-semibold text-amber-700">{row.needsReview || '—'}</td>
+                        <td className="data py-1.5 text-right font-semibold text-green-700">{row.preValidated || '—'}</td>
+                        <td className="data py-1.5 text-right font-semibold text-gray-600">{row.toExport || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Bank reconciliation counters (fase C3) */}
+          {(bankUnreconciled > 0 || bankSuggested > 0) && (
+            <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <h2 className="mb-4 text-[12px] font-bold uppercase tracking-wider text-gray-400">
+                Conciliação bancária
+              </h2>
+              <div className="grid grid-cols-2 gap-4 sm:max-w-sm">
+                <Link href="/bank?status=UNRECONCILED,SUGGESTED" className="group">
+                  <div className="flex flex-col gap-2 rounded-lg border border-gray-200 p-4 transition-colors group-hover:border-amber-300 group-hover:bg-amber-50/40">
+                    <span className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+                      <Landmark className="h-3.5 w-3.5 stroke-[1.75] text-amber-600" />
+                      Por conciliar
+                    </span>
+                    <span className="text-[24px] font-bold leading-none text-amber-700">{bankUnreconciled + bankSuggested}</span>
+                  </div>
+                </Link>
+                <Link href="/bank?status=SUGGESTED" className="group">
+                  <div className="flex flex-col gap-2 rounded-lg border border-gray-200 p-4 transition-colors group-hover:border-blue-300 group-hover:bg-blue-50/40">
+                    <span className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+                      <Landmark className="h-3.5 w-3.5 stroke-[1.75] text-blue-600" />
+                      Sugeridas
+                    </span>
+                    <span className="text-[24px] font-bold leading-none text-blue-700">{bankSuggested}</span>
+                  </div>
+                </Link>
+              </div>
+            </div>
+          )}
 
           {/* Quick actions */}
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">

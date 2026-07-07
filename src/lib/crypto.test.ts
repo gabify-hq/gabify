@@ -12,9 +12,9 @@ describe('encryptToken', () => {
     delete process.env.TOKEN_ENCRYPTION_KEY
   })
 
-  it('returns a non-empty string in iv:ciphertext format', () => {
+  it('returns a v2 GCM payload: v2:iv:tag:ciphertext', () => {
     const result = encryptToken('my-secret-token')
-    expect(result).toMatch(/^[0-9a-f]+:[0-9a-f]+$/)
+    expect(result).toMatch(/^v2:[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/)
   })
 
   it('produces different ciphertext each call due to random IV', () => {

@@ -1,7 +1,7 @@
 // Gabify — Global TypeScript Types
 // Mirror of Prisma enums + domain types
 
-export type UserRole = 'OWNER' | 'ACCOUNTANT' | 'VIEWER'
+export type UserRole = 'OWNER' | 'ACCOUNTANT' | 'VIEWER' | 'CLIENT'
 
 export type EmailProvider = 'OUTLOOK' | 'GMAIL' | 'IMAP'
 
@@ -25,6 +25,8 @@ export type ActionStatus =
   | 'REJECTED'
   | 'SENT'
   | 'EDITED_SENT'
+  | 'APPROVED_SENT'
+  | 'APPROVED_SEND_FAILED'
 
 export type DocumentType =
   | 'INVOICE_RECEIVED'
@@ -48,6 +50,10 @@ export type DocumentStatus =
   | 'REVIEWED'
 
 export type JobStatus = 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'RETRYING'
+
+// TOConline integration v1 (spec PT: ATIVA|ERRO|DESLIGADA / PENDENTE|ENVIADO|ERRO)
+export type ToconlineConnectionStatus = 'ACTIVE' | 'ERROR' | 'DISABLED'
+export type ToconlinePushStatus = 'PENDING' | 'SENT' | 'ERROR'
 
 // ─────────────────────────────────────────
 // Email Provider Domain Types

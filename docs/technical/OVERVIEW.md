@@ -35,7 +35,7 @@ External services:
 
 | Layer | Technology | Version | Notes |
 |---|---|---|---|
-| Framework | Next.js | 14 (App Router) | TypeScript strict mode |
+| Framework | Next.js | 16 (App Router) | TypeScript strict mode |
 | UI | Tailwind CSS + shadcn/ui | 4.x | |
 | ORM | Prisma | 7.x | pg adapter, migrations only |
 | Database | PostgreSQL | 15+ | |
@@ -45,7 +45,7 @@ External services:
 | Email | Resend | latest | Magic links + notifications |
 | AI | Anthropic Claude API | claude-sonnet-4-5 | Classification + drafts |
 | Deploy | Railway | | web + 2 worker services |
-| Tests | Vitest | latest | Co-located, no real DB in unit tests |
+| Tests | Vitest | 4.x | Unit project (co-located, mocked) + acceptance project (real test DB) |
 
 ---
 
@@ -57,6 +57,10 @@ Office ──< User
        ──< EmailAccount
        ──< AuditLog
        ──< JobLog
+       ──< Invitation      (closed onboarding — entry only by invite)
+
+User >── Client         (portal users only: role CLIENT ⇔ clientId, CHECK constraint — fase P1)
+Invitation >── Client   (portal invitations: role CLIENT ⇔ clientId, CHECK constraint)
 
 EmailAccount ──< InboundEmail
 InboundEmail >── Client          (nullable, matched post-sync)
@@ -68,9 +72,33 @@ EmailAttachment ──1 Document
 EmailAction     ──1 EmailReview
                 ──1 AuditLog     (nullable)
 Document        ──1 DocumentReview
+
+Client ──< BankAccount ──< BankStatementImport ──< BankTransaction
+BankTransaction ──< ReconciliationSuggestion >── Document
+                ──1 ReconciliationEntry ──< Document (reconciledEntryId)
+Office ──< BankRule   (applied before matching; IGNORE / SUGGEST_CLIENT)
+
+Client ──< ToconlineConnection ──< ToconlineEntityMap    (SUPPLIER: NIF→id; SALES_DOCUMENT: pull dedup)
+                                ──< ToconlinePushPreview (dry-run: exact push request / would-be pulled Document)
+       (N source connections; partial unique: at most ONE with pushEnabled)
+Document: toconlinePushStatus / toconlineDocumentId / toconlinePushedAt / toconlinePushError
+
+Client ──< MoloniConnection          (source pull; credentials AES-GCM; pullEnabled)
+Client ──< InvoicexpressConnection   (source pull; api_key AES-GCM; pullEnabled)
+Office ──< SourceEntityMap           (generic: SALES_DOCUMENT dedup + CLIENT NIF cache;
+                                      unique system+entityType+externalId+clientId)  — see docs/technical/sources.md
+          source API_PULL + buyerName/buyerNif (issued invoices pulled from TOConline)
 ```
 
+Bank reconciliation module detail: [bank-reconciliation.md](bank-reconciliation.md).
+Client portal module detail: [client-portal.md](client-portal.md).
+TOConline integration detail: [toconline.md](toconline.md) + repo-root `INTEGRATION_NOTES.md`.
+
 ### Cross-cutting schema decisions
+
+**Money (ADDENDUM A1)** — monetary values are NEVER floats: `Decimal @db.Decimal(14,2)` in columns; **integer cents** inside JSONB (`vatBreakdown`, `documentLines`). All arithmetic (coherence checks, export sums, VAT summary) runs on integer cents or decimal.js; coherence tolerance is 2 cents.
+
+**Document pipeline** — one extraction cascade for every source (email attachment, manual upload, dedicated ingest mailbox, split children): AT fiscal QR (authoritative, zero AI) → UBL/XML (deterministic) → Claude with a strict Zod schema. States: `NEEDS_REVIEW → PRE_VALIDATED → VALIDATED → EXPORTED` (+ `SPLIT` lateral); reviews use optimistic locking (`version` + `expectedVersion`, A7).
 
 **Soft deletes** — `deletedAt DateTime?` on Office, User, Client. All queries filter `where: { deletedAt: null }`. No hard deletes.
 
@@ -86,20 +114,38 @@ Document        ──1 DocumentReview
 |---|---|---|
 | R2 storage | Private bucket. All access via `getSignedUrl()`, max 1h expiry | ✅ |
 | Auth | Auth.js v5 magic links. No passwords stored anywhere | ✅ |
-| API route auth | `getServerSession()` before any data access | ✅ schema |
-| Request validation | Zod schema on all POST/PATCH bodies | ✅ schema |
-| Audit trail | `AuditLog` entry before every AI-triggered external action | ✅ |
-| OAuth token encryption | AES-256 encrypt/decrypt | ⏳ TODO |
-| Graph webhook HMAC | Verify `clientState` against `GRAPH_WEBHOOK_SECRET` | ⏳ TODO |
-| Gmail webhook JWT | Verify Google-signed JWT in `Authorization` header | ⏳ TODO |
+| Closed onboarding | Signup only via pending `Invitation` (72h TTL, SHA-256 token hash). Magic link silently not sent for unknown emails (anti-enumeration). First office via `npm run seed:bootstrap` | ✅ |
+| Anti-lockout | Last OWNER of an office cannot be deleted or demoted (409) | ✅ |
+| API route auth | `auth()` session check before any data access | ✅ |
+| Request validation | Zod schema on all POST/PATCH bodies | ✅ |
+| Audit trail | `AuditLog` entry with the real entity id before every external action (send, AI call). AuditLog is never updated | ✅ |
+| Draft approval | Server-side state machine: `PENDING_REVIEW → APPROVED_SENT / APPROVED_SEND_FAILED / REJECTED`, conditional DB transitions (no read-then-write), max 3 send retries, `EmailReview` + `AuditLog` before `sendReply` | ✅ |
+| OAuth token encryption | AES-256-CBC encrypt/decrypt (GCM migration planned — Fase 1) | ✅ |
+| Graph webhook | Fail-closed: 503 without `GRAPH_WEBHOOK_SECRET`; 401 on `clientState` mismatch; strict subscription-id account match | ✅ |
+| Gmail webhook JWT | Fail-closed: 401 without `Authorization` or with invalid Google-signed JWT | ✅ |
+| Attachment limits | 25MB per attachment, 15 per message; inline/item attachments skipped (A4) | ✅ |
+| RBAC | Central `can()` matrix with DENY-precedence via `guard()` in every API route. OWNER = all; ACCOUNTANT = all except invitation/user/settings management; VIEWER = reads only. Denial → 404 on resources, 403 on global actions | ✅ |
+| Portal isolation (fase P) | Role CLIENT holds ONLY `portal:document:read/upload`, scoped to its own `clientId` (session-derived, never input); internal roles hold zero portal actions. Portal DTO is reduced + masked (public statuses only), built field-by-field with a strict shape test. Role split enforced by both area layouts (`area-redirect`) | ✅ |
+| Sessions | Database strategy — revocable, role/office read fresh per request; edge proxy does optimistic cookie check only. Portal access revocation deletes Session rows (immediate) | ✅ |
+| Rate limiting | Per endpoint class (A11): API 600/h per user, magic-link 5/h per email+IP, webhooks 120/min per subscription, uploads 60/h user + 300/h office. CLIENT (external) users: API 30/min, upload 10/min | ✅ |
+| Token encryption | AES-256-GCM (v2 prefix) with legacy CBC read + lazy re-encryption | ✅ |
+| Webhook subscriptions | Created at OAuth connect, renewed daily when expiring <48h; failure falls back to 30s polling | ✅ |
+| Pagination | All list endpoints: default 50, max 200, cursor-based | ✅ |
+| TOConline credentials | Integrator secret + OAuth tokens AES-256-GCM encrypted at rest; DTO built field-by-field (secrets never serialized); previews/audits store redacted headers; error messages scrubbed of credentials (tested) | ✅ |
+| TOConline dry-run | Connections born with `dryRun=true` — zero network until the OWNER explicitly goes live (`toconline:goLive`, audited, explicit warning). Integration is doc-driven and NOT tested against the real API | ✅ |
 
 ---
 
 ## Testing
 
-**Framework:** Vitest. Tests co-located with source: `foo.ts` → `foo.test.ts`.
+**Framework:** Vitest, two projects:
 
-**Rules:** no real DB, network, or Redis in unit tests. Test through public interfaces.
+- **unit** — co-located with source (`foo.ts` → `foo.test.ts`); no real DB, network, or Redis.
+- **acceptance** — `tests/acceptance/fase*.test.ts`; runs against a dedicated PostgreSQL database (`gabify_test`, auto-created and migrated by the global setup) and an isolated Redis logical database (`redis://localhost:6379/15` by default, flushed by the global setup — override with `TEST_REDIS_URL`, must be db > 0). Providers/AI/Resend always mocked. Files run sequentially (shared DB): the acceptance project runs in its own sequential group after unit (`sequence.groupOrder`) with a single worker, so `vitest run` with both projects is stable.
+
+**Worktrees:** every fresh worktree needs `npm install` (or `npm ci`) **and** `npx prisma generate` before running tests. Worktrees live inside the main repo, so a missing local `node_modules/.prisma/client` silently resolves to the ancestor directory's client — generated from a different branch's schema (phantom "column does not exist" failures). The acceptance global setup guards against this (`checkPrismaClientDrift`): it aborts before any test when the resolved Prisma Client comes from outside the current directory or no longer matches the local `prisma/schema.prisma`.
+
+**Rules:** test through public interfaces. `npm run gate` = tsc + eslint + vitest + coverage, and must pass at the end of every slice.
 
 **Coverage targets:**
 
@@ -110,17 +156,13 @@ Document        ──1 DocumentReview
 | `src/lib/` | 80% |
 | `src/app/api/` routes | 70% |
 
-**Current coverage:**
-
-| File | Tests | Notes |
-|---|---|---|
-| `src/server/services/client-matching.ts` | 10 | ~95% |
-| `src/lib/r2.ts` (`buildAttachmentKey`) | 3 | 100% |
+**Current suite:** 179 unit tests (11 files: providers, crypto, r2, text-extractor, at-fiscal-qr, client-matching, email-classification, API routes) + 39 acceptance tests (Fase 0: onboarding, draft approval, Outlook attachments, webhooks, foundation invariants).
 
 ```bash
-npm run test            # run once
+npm run test            # run once (unit + acceptance)
 npm run test:watch      # watch mode
 npm run test:coverage   # with coverage report
+npm run gate            # tsc + eslint + tests + coverage
 ```
 
 ---
@@ -129,15 +171,21 @@ npm run test:coverage   # with coverage report
 
 | Group | Variables |
 |---|---|
-| App | `NEXTAUTH_URL`, `NEXTAUTH_SECRET` |
-| Database | `DATABASE_URL` |
+| App | `NEXTAUTH_URL`, `NEXTAUTH_SECRET`, `AUTH_SECRET` |
+| Database | `DATABASE_URL`, `TEST_DATABASE_URL` (optional) |
 | Redis | `REDIS_URL` |
 | Resend | `RESEND_API_KEY`, `FROM_EMAIL` |
 | Anthropic | `ANTHROPIC_API_KEY`, `CLAUDE_MODEL` |
 | R2 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME` |
-| Graph API | `AZURE_AD_CLIENT_ID`, `AZURE_AD_CLIENT_SECRET`, `AZURE_AD_TENANT_ID`, `GRAPH_WEBHOOK_SECRET` |
-| Gmail API | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GMAIL_PUBSUB_TOPIC` |
-| Encryption | `ENCRYPTION_KEY` |
+| Graph API | `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, `AZURE_AD_TENANT_ID`, `GRAPH_WEBHOOK_SECRET` (required — webhook fail-closed) |
+| Gmail API | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GMAIL_PUBSUB_TOPIC`, `GMAIL_WEBHOOK_URL` |
+| Sync | `EMAIL_POLL_INTERVAL_MS` |
+| Encryption | `TOKEN_ENCRYPTION_KEY` |
+| Bootstrap | `BOOTSTRAP_OWNER_EMAIL`, `BOOTSTRAP_OFFICE_NAME`, `BOOTSTRAP_OWNER_NAME` |
+| Rate limits | `RATE_LIMIT_API_PER_HOUR`, `RATE_LIMIT_MAGIC_LINK_PER_HOUR`, `RATE_LIMIT_WEBHOOK_PER_MIN`, `RATE_LIMIT_UPLOAD_USER_PER_HOUR`, `RATE_LIMIT_UPLOAD_OFFICE_PER_HOUR`, `RATE_LIMIT_INGEST_PER_HOUR`, `RATE_LIMIT_CLIENT_API_PER_MIN`, `RATE_LIMIT_CLIENT_UPLOAD_PER_MIN`, `RATE_LIMIT_ASSISTANT_PER_MIN` |
+| Assistant | `ASSISTANT_MODEL` (economical model for the read-only Q&A loop — see `docs/technical/assistant.md`) |
+| TOConline | `TOCONLINE_PULL_INTERVAL_MS` (repeatable sales-pull scan; default 30 min) |
+| Sources | `MOLONI_CLIENT_ID` / `MOLONI_CLIENT_SECRET` (developer app), `MOLONI_PULL_INTERVAL_MS`, `INVOICEXPRESS_PULL_INTERVAL_MS` (repeatable source-pull scans; default 30 min) — see docs/technical/sources.md |
 
 Full descriptions and example values in `.env.example`.
 
@@ -152,6 +200,9 @@ Three services in `railway.toml`:
 | `web` | `npm run start` | Next.js HTTP server |
 | `worker-email-sync` | `npm run worker:email` | BullMQ email sync worker |
 | `worker-document-parse` | `npm run worker:documents` | BullMQ document parse worker |
+| `worker-toconline` | `npm run worker:toconline` | BullMQ TOConline workers: push + sales pull + repeatable pull scan (new — deploy only when the integration goes live) |
+| `worker-moloni` | `npm run worker:moloni` | BullMQ Moloni source pull + repeatable scan — NOT in railway.toml until validated for real |
+| `worker-invoicexpress` | `npm run worker:invoicexpress` | BullMQ InvoiceXpress source pull + repeatable scan — NOT in railway.toml until validated for real |
 
 Health check: `GET /api/health` (⏳ TODO: implement endpoint)
 

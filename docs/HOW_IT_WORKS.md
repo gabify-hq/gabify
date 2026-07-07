@@ -72,7 +72,21 @@ For each draft, you can:
 - **Edit** — modify the text, then send with your changes
 - **Reject** — discard the draft, handle manually
 
-Only after you approve does anything get sent. Every decision is recorded with a timestamp.
+Only after you approve does anything get sent. Every decision is recorded permanently — who decided, what was decided, and when. If a reply fails to send (for example, your email provider is briefly unavailable), Gabify shows the failure clearly and lets you retry with one click. Your decision is never lost, even if you close the browser.
+
+A draft can only be decided once: two colleagues cannot accidentally approve and reject the same draft at the same time — the first decision wins and the second person sees the updated state.
+
+---
+
+## Joining Gabify — invitations only
+
+Nobody can create an account in your firm's Gabify by themselves. Access works like this:
+
+1. The firm's owner invites a colleague by email, choosing their permission level (owner, accountant, or read-only).
+2. The colleague receives an invitation link, valid for 72 hours.
+3. They sign in with their email — no password, just a secure link sent to their inbox.
+
+Invitations can be revoked or re-sent at any time. If someone who was never invited tries to sign in, nothing happens — and they can't tell whether the email address exists in Gabify or not. The firm always keeps at least one owner: the last owner can never be removed or downgraded by accident.
 
 ---
 
@@ -99,10 +113,73 @@ Documents marked **"Rever"** (Review) are ones where the AI was less confident �
 
 ---
 
-## Coming soon
+## Getting documents into Gabify
 
-### Client Portal
-Clients get a personal link (no password needed) where they can upload documents directly — no more attachments by email.
+Besides email, there are three more ways documents arrive:
+
+- **Manual upload** — drag files onto the Documents page (or tap "Fotografar" on your phone to photograph a paper receipt). Gabify checks every file is really what it claims to be before accepting it.
+- **A dedicated email address per client** — each client can get their own private Gabify address (e.g. `padaria-x7k2m9@...`). Anything sent there lands directly in that client's file, no guessing needed. Suspicious senders are quarantined for your review, never processed silently.
+- **Spreadsheet import** — upload a CSV/Excel of entries; Gabify proposes how the columns map, you confirm, and only then are the rows imported. Rows with invalid NIFs or totals that don't add up are reported line by line.
+
+## What Gabify reads from each document
+
+For Portuguese invoices with the official AT QR code, Gabify reads the fiscal data directly from the QR — supplier and buyer NIFs, document number, ATCUD, date, VAT broken down by rate, withholding and totals. That data is authoritative: no AI involved, no cost, no guessing. For everything else, AI extracts the same fields and Gabify double-checks the arithmetic (bases + VAT − withholding must equal the total) — anything that doesn't add up goes to your review queue.
+
+A PDF containing several invoices is automatically split into individual documents. Duplicates and documents addressed to a different client are flagged, never silently accepted.
+
+## The review queue and export
+
+Documents that Gabify is confident about arrive **pre-validated** — one click (or one bulk click) validates them. Everything uncertain waits for you. You can teach Gabify per-supplier rules ("invoices from this supplier always go to account 6221, validate automatically") — rules are only ever created by you, and a flagged document never skips the queue, rule or no rule.
+
+When a period is done, export it: a ZIP organised as Client/Year/Month/Type with every PDF, plus a `lancamentos.csv` that opens correctly in Portuguese Excel and an Excel file with proper numeric cells — ready to enter your accounting software. Exported documents are locked; only the firm owner can reopen one, with a mandatory reason, and everything is logged.
+
+## Bank reconciliation
+
+Upload a bank statement (the CSV or Excel your homebanking exports) and Gabify reads the movements — it recognises the usual Portuguese column names automatically, shows you what it understood, and only imports after you confirm. Importing the same statement twice never duplicates movements.
+
+For each movement, Gabify looks at the validated documents of that client and suggests matches, with a transparent score: does the amount match, is the date close to the due date, is the supplier's NIF or name in the bank description, is the invoice number mentioned. Strong matches come pre-selected — you accept with one tap. A payment can be matched against several invoices at once, as long as the amounts add up. Gabify **never reconciles anything on its own**: every match is confirmed by you, every action is logged, and everything can be undone.
+
+Recurring noise — bank fees, standing charges — can be silenced with simple rules ("if the description contains COMISSÃO, ignore it"), so your reconciliation queue only shows what actually needs your attention.
+
+## The client portal
+
+Your clients can now have their own login — a minimal portal, made for the phone, where they do exactly two things: **upload documents** (drag & drop on the computer, photograph a receipt on the phone) and **see the state of what they sent**. Nothing else.
+
+What the client sees is deliberately simple. Each document shows one of three states: **Em processamento** (you're working on it), **Processado** (validated or exported), or **Devolvido** (you rejected it and they should resend). They never see your internal review states, confidence scores, duplicate flags, or anything about your accounting — that stays inside the firm.
+
+You control access from the client's page: invite by email (the client signs in with a link, no password), see who has access, and revoke it at any moment — revocation is immediate. A portal user only ever sees the documents of their own company, and everything they upload lands in your normal intake pipeline, flagged with who sent it.
+
+## Sending purchases to TOConline (early access — not yet field-tested)
+
+If a client's company uses TOConline, Gabify can send their validated purchase
+invoices there directly — no re-typing, no manual export. On the client's page
+you connect their TOConline account (four values the client obtains from
+TOConline in a couple of minutes; the screen explains exactly where), pick the
+validated invoices, and press send. Gabify finds or creates the supplier by
+their tax number, creates the purchase document with one line per VAT rate —
+amounts exact to the cent — and records the TOConline document reference back
+on the invoice. An invoice that was already sent is never sent twice, even if
+you press the button again.
+
+**Safety first:** this integration is new and has not yet been exercised
+against a real TOConline account, so every connection starts in **test mode**.
+In test mode nothing leaves Gabify — instead, you get a preview of exactly
+what would be sent, to check line by line. Only the firm's owner can switch a
+client to real sending, and Gabify asks for explicit confirmation before doing
+so. Every send is logged.
+
+**Importing issued invoices (early access too):** the same connection can also
+work the other way — Gabify periodically imports the invoices the client
+issues in TOConline, so their sales paperwork appears in your review queue
+automatically, already exact to the cent (the numbers come straight from
+TOConline, no AI guessing involved). Each invoice is imported exactly once,
+with its PDF attached, and anything Gabify itself sent to TOConline is never
+re-imported. You control the two directions independently on the client's
+"Ligações" panel — import on, sending off, or any combination — and a
+"Sincronizar agora" button fetches new invoices on demand. In test mode,
+imports show you a preview of what would be created instead of creating it.
+
+## Coming soon
 
 ### Deadline Tracker
 Gabify tracks Portuguese fiscal deadlines (IVA, IRS, IRC, Social Security, IMI) and alerts you — and your clients — before anything is due.
@@ -110,8 +187,8 @@ Gabify tracks Portuguese fiscal deadlines (IVA, IRS, IRC, Social Security, IMI) 
 ### Automated Reminders
 Automatic reminders to clients who haven't sent their monthly documents, by email now and WhatsApp later.
 
-### Accounting Software Integration
-Send classified documents directly to TOConline, Primavera, or Sage — no re-entry, no manual export.
+### More Accounting Software
+TOConline purchase sending is here (early access). Primavera, Sage and sales documents are next — same idea: no re-entry, no manual export.
 
 ---
 
@@ -131,3 +208,29 @@ Send classified documents directly to TOConline, Primavera, or Sage — no re-en
 | Microsoft Outlook / Microsoft 365 | Microsoft Graph API | Supported |
 | Gmail / Google Workspace | Gmail API | Supported |
 | Other (IMAP) | Standard IMAP protocol | Coming soon |
+
+---
+
+## Ask Gabify (assistant)
+
+You can now ask Gabify questions about your own firm's data, in plain Portuguese — for example "EDP invoices above 100€ in May", "23% VAT total per supplier this quarter", "are there duplicate invoices?" or "unreconciled bank movements".
+
+- Gabify answers by looking at your documents and bank movements, and shows the matching table under the answer, with a link to open those items in the review queue, documents or bank screens.
+- Any table in an answer can be downloaded as a CSV file that opens correctly in Excel.
+- The assistant is read-only by design: it can never create, change, send or delete anything — it only consults. Every question is recorded in the activity log.
+- It only sees the data of your own firm. Nothing from any other firm is ever visible.
+- The conversation is not stored: when you leave the page, the chat starts fresh.
+
+---
+
+## Importing issued invoices from billing software
+
+If a client issues invoices in **Moloni** or **InvoiceXpress**, Gabify can import those issued invoices automatically, so you do not have to ask the client for them.
+
+- On the client page, under **Ligações**, connect the client's Moloni or InvoiceXpress account with the credentials shown there (stored securely, never displayed again).
+- Once connected and switched on, Gabify checks for new issued invoices about every half hour, and you can also press **Sincronizar agora** at any time.
+- Imported invoices arrive already organised, with the amounts and VAT exactly as issued — Gabify does not re-read or guess anything, because the data comes straight from certified billing software. They appear alongside the client's other documents, ready for review.
+- These are the client's **issued** invoices (what they sold). Nothing is ever sent back to Moloni or InvoiceXpress — the connection only reads.
+- Each connection shows its status, the last sync time, how many documents were imported, and any error, plus a clear notice that the connection has **not yet been tested against the real service**.
+
+> Coming soon: importing from other billing platforms (Jasmin, Vendus, Primavera) using the same one-way, read-only approach.

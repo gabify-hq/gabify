@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition, useRef, useEffect } from 'react'
+import { useState, useTransition, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { Plus, X, Loader2, Pencil } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -117,14 +117,13 @@ export function EditClientDialog({ client }: EditClientDialogProps) {
   const router = useRouter()
 
   // Reset form to current client values every time dialog opens
-  useEffect(() => {
-    if (open) {
-      setEmailDomains(client.emailDomains)
-      setKnownEmails(client.knownEmails)
-      setErrors({})
-      setTimeout(() => firstInputRef.current?.focus(), 50)
-    }
-  }, [open, client.emailDomains, client.knownEmails])
+  function openDialog() {
+    setEmailDomains(client.emailDomains)
+    setKnownEmails(client.knownEmails)
+    setErrors({})
+    setOpen(true)
+    setTimeout(() => firstInputRef.current?.focus(), 50)
+  }
 
   function closeDialog() {
     if (isPending) return
@@ -172,7 +171,7 @@ export function EditClientDialog({ client }: EditClientDialogProps) {
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={openDialog}
         className="pressable flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
         aria-label="Editar cliente"
       >

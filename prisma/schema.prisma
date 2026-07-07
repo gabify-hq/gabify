@@ -14,9 +14,10 @@ datasource db {
 // ─────────────────────────────────────────
 
 enum UserRole {
-  OWNER       // gabinete owner, full access
-  ACCOUNTANT  // standard accountant
-  VIEWER      // read-only
+  OWNER // gabinete owner, full access
+  ACCOUNTANT // standard accountant
+  VIEWER // read-only
+  CLIENT // portal user of one end-client — zero internal access (fase P1)
 }
 
 enum EmailProvider {
@@ -35,29 +36,31 @@ enum EmailStatus {
 }
 
 enum ActionType {
-  DRAFT_REPLY     // AI-generated draft reply
-  FORWARD         // forward to colleague
-  ARCHIVE         // archive without reply
-  REQUEST_DOCS    // request documents from client
+  DRAFT_REPLY // AI-generated draft reply
+  FORWARD // forward to colleague
+  ARCHIVE // archive without reply
+  REQUEST_DOCS // request documents from client
 }
 
 enum ActionStatus {
-  PENDING_REVIEW  // waiting for accountant approval
-  APPROVED        // accountant approved
-  REJECTED        // accountant rejected
-  SENT            // approved + sent
-  EDITED_SENT     // edited by accountant then sent
+  PENDING_REVIEW // waiting for accountant approval
+  APPROVED // transient: approved, send in progress
+  REJECTED // accountant rejected
+  SENT // legacy: approved + sent
+  EDITED_SENT // legacy: edited by accountant then sent
+  APPROVED_SENT // approved and reply sent successfully (A3)
+  APPROVED_SEND_FAILED // approved but sendReply failed — retry possible (A3)
 }
 
 enum DocumentType {
-  INVOICE_RECEIVED    // Fatura recebida de fornecedor
-  INVOICE_ISSUED      // Fatura emitida pelo cliente
-  INVOICE_RECEIPT     // Fatura-Recibo (AT doc type FR — combina fatura + recibo de pagamento)
-  RECEIPT             // Talão / recibo simples / fatura simplificada sem NIF adquirente
+  INVOICE_RECEIVED // Fatura recebida de fornecedor
+  INVOICE_ISSUED // Fatura emitida pelo cliente
+  INVOICE_RECEIPT // Fatura-Recibo (AT doc type FR — combina fatura + recibo de pagamento)
+  RECEIPT // Talão / recibo simples / fatura simplificada sem NIF adquirente
   BANK_STATEMENT
   PAYROLL
   TAX_DOCUMENT
-  AT_COMMUNICATION    // Autoridade Tributária
+  AT_COMMUNICATION // Autoridade Tributária
   SOCIAL_SECURITY
   CONTRACT
   BALANCE_SHEET
@@ -67,9 +70,21 @@ enum DocumentType {
 
 enum DocumentStatus {
   PENDING_CLASSIFICATION
-  CLASSIFIED
-  NEEDS_REVIEW            // low confidence classification
-  REVIEWED                // accountant confirmed classification
+  CLASSIFIED // legacy — new pipeline uses PRE_VALIDATED
+  NEEDS_REVIEW // A_REVER: needs human review
+  REVIEWED // legacy accountant confirmation
+  SPLIT // multi-invoice parent — children carry the data (S2.2)
+  PRE_VALIDATED // high confidence, coherent, no flags (S3.1)
+  VALIDATED // human-validated (or auto by supplier rule) — immutable except new review
+  EXPORTED // included in an export batch (reopen possible — A9)
+}
+
+enum DocumentSource {
+  EMAIL // attachment from a synced inbox
+  MANUAL_UPLOAD // web/mobile upload (S2.1)
+  IMPORT // spreadsheet import (S2.4)
+  PORTAL_UPLOAD // uploaded by the end-client in the portal (fase P2)
+  API_PULL // pulled from an external system API (TOConline sales pull) — AI pipeline NEVER runs on these
 }
 
 enum JobStatus {
@@ -80,26 +95,97 @@ enum JobStatus {
   RETRYING
 }
 
+// ── Bank reconciliation v1 (fase C1) ──
+// Spec names these in PT (POR_CONCILIAR/SUGERIDA/CONCILIADA/IGNORADA) — code
+// is English by house rule, same precedent as DocumentStatus (A_REVER → NEEDS_REVIEW).
+
+enum BankImportStatus {
+  PENDING // uploaded, mapping proposed, awaiting human confirmation
+  PROCESSED
+  FAILED
+}
+
+enum BankTransactionStatus {
+  UNRECONCILED // POR_CONCILIAR
+  SUGGESTED // SUGERIDA — at least one autoMatch suggestion
+  RECONCILED // CONCILIADA
+  IGNORED // IGNORADA
+}
+
+enum SuggestionStatus {
+  PENDING // PENDENTE
+  ACCEPTED // ACEITE
+  REJECTED // REJEITADA
+}
+
+enum BankRuleMatchType {
+  CONTAINS // CONTEM
+  EQUALS // IGUAL
+  SIMPLE_REGEX // REGEX_SIMPLES
+}
+
+enum BankRuleAction {
+  IGNORE // IGNORAR
+  SUGGEST_CLIENT // SUGERIR_CLIENTE
+}
+
+// ── TOConline integration v1 (push de compras) ──
+// Spec names these in PT (ATIVA|ERRO|DESLIGADA / PENDENTE|ENVIADO|ERRO) — code
+// is English by house rule, same precedent as DocumentStatus/BankTransactionStatus.
+
+enum ToconlineConnectionStatus {
+  ACTIVE // ATIVA
+  ERROR // ERRO
+  DISABLED // DESLIGADA
+}
+
+enum ToconlinePushStatus {
+  PENDING // PENDENTE
+  SENT // ENVIADO
+  ERROR // ERRO
+}
+
 // ─────────────────────────────────────────
 // OFFICE (gabinete de contabilidade)
 // ─────────────────────────────────────────
 
 model Office {
-  id          String   @id @default(cuid())
-  name        String
-  nif         String?  // NIF do gabinete
-  email       String?
-  phone       String?
-  address     String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  deletedAt   DateTime?
+  id                           String    @id @default(cuid())
+  name                         String
+  nif                          String? // NIF do gabinete
+  email                        String?
+  phone                        String?
+  address                      String?
+  // Bank matching (C2): amount tolerance in integer cents — A1, never float
+  reconciliationToleranceCents Int       @default(2)
+  createdAt                    DateTime  @default(now())
+  updatedAt                    DateTime  @updatedAt
+  deletedAt                    DateTime?
 
-  users         User[]
-  clients       Client[]
-  emailAccounts EmailAccount[]
-  auditLogs     AuditLog[]
-  jobLogs       JobLog[]
+  users                     User[]
+  clients                   Client[]
+  emailAccounts             EmailAccount[]
+  auditLogs                 AuditLog[]
+  jobLogs                   JobLog[]
+  invitations               Invitation[]
+  emailThreads              EmailThread[]
+  documents                 Document[]
+  ingestAliases             ClientIngestAlias[]
+  importBatches             ImportBatch[]
+  splitCaches               DocumentSplitCache[]
+  suppliers                 Supplier[]
+  supplierRules             SupplierRule[]
+  exportBatches             ExportBatch[]
+  bankAccounts              BankAccount[]
+  bankImports               BankStatementImport[]
+  bankTransactions          BankTransaction[]
+  reconciliationSuggestions ReconciliationSuggestion[]
+  reconciliationEntries     ReconciliationEntry[]
+  bankRules                 BankRule[]
+  toconlineConnections      ToconlineConnection[]
+  moloniConnections         MoloniConnection[]
+  invoicexpressConnections  InvoicexpressConnection[]
+  sourceEntityMaps          SourceEntityMap[]
 
   @@index([deletedAt])
 }
@@ -109,30 +195,36 @@ model Office {
 // ─────────────────────────────────────────
 
 model User {
-  id            String    @id @default(cuid())
-  officeId      String
-  email         String    @unique
-  name          String?
-  role          UserRole  @default(ACCOUNTANT)
-  image         String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  deletedAt     DateTime?
+  id        String    @id @default(cuid())
+  officeId  String
+  email     String    @unique
+  name      String?
+  role      UserRole  @default(ACCOUNTANT)
+  // Portal do cliente final (fase P1): required when role=CLIENT, forbidden
+  // otherwise — CHECK constraint "User_client_role_check" (raw SQL migration)
+  clientId  String?
+  image     String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
 
   // Auth.js v5 fields
   emailVerified DateTime?
 
-  office        Office        @relation(fields: [officeId], references: [id], onDelete: Restrict)
-  accounts      Account[]
-  sessions      Session[]
-  emailReviews     EmailReview[]
-  docReviews       DocumentReview[]
-  auditLogsCreated AuditLog[]    @relation("AuditCreator")
-  auditLogsApproved AuditLog[]   @relation("AuditApprover")
+  office            Office           @relation(fields: [officeId], references: [id], onDelete: Restrict)
+  client            Client?          @relation("ClientPortalUsers", fields: [clientId], references: [id], onDelete: Restrict)
+  accounts          Account[]
+  sessions          Session[]
+  emailReviews      EmailReview[]
+  docReviews        DocumentReview[]
+  auditLogsCreated  AuditLog[]       @relation("AuditCreator")
+  auditLogsApproved AuditLog[]       @relation("AuditApprover")
+  invitationsSent   Invitation[]     @relation("InvitationInviter")
 
   @@index([officeId])
   @@index([email])
   @@index([deletedAt])
+  @@index([clientId])
 }
 
 // ─────────────────────────────────────────
@@ -170,6 +262,34 @@ model Session {
   @@index([userId])
 }
 
+// ─────────────────────────────────────────
+// INVITATION (closed onboarding — S0.1, A2)
+// ─────────────────────────────────────────
+
+model Invitation {
+  id              String    @id @default(cuid())
+  officeId        String
+  email           String // stored lowercase
+  role            UserRole
+  // Portal invitations (fase P1): required when role=CLIENT, forbidden
+  // otherwise — CHECK constraint "Invitation_client_role_check"
+  clientId        String?
+  tokenHash       String    @unique // SHA-256 of the raw token (raw token only in the email)
+  expiresAt       DateTime // 72h from creation/resend
+  acceptedAt      DateTime?
+  revokedAt       DateTime?
+  invitedByUserId String
+  createdAt       DateTime  @default(now())
+
+  office    Office  @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  client    Client? @relation("ClientPortalInvitations", fields: [clientId], references: [id], onDelete: Cascade)
+  invitedBy User    @relation("InvitationInviter", fields: [invitedByUserId], references: [id])
+
+  @@index([officeId, email])
+  @@index([email])
+  @@index([clientId])
+}
+
 model VerificationToken {
   identifier String
   token      String   @unique
@@ -183,24 +303,41 @@ model VerificationToken {
 // ─────────────────────────────────────────
 
 model Client {
-  id           String    @id @default(cuid())
-  officeId     String
-  name         String
-  nif          String?   // NIF do cliente
-  email        String?   // email principal
-  phone        String?
-  notes        String?   @db.Text
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  deletedAt    DateTime?
+  id        String    @id @default(cuid())
+  officeId  String
+  name      String
+  nif       String? // NIF do cliente
+  email     String? // email principal
+  phone     String?
+  notes     String?   @db.Text
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
 
   // Matching fields — used to identify client from inbound emails
-  emailDomains String[]  // e.g. ["empresa.pt", "empresa.com"]
-  knownEmails  String[]  // e.g. ["joao@empresa.pt", "faturacao@empresa.pt"]
+  emailDomains String[] // e.g. ["empresa.pt", "empresa.com"]
+  knownEmails  String[] // e.g. ["joao@empresa.pt", "faturacao@empresa.pt"]
 
-  office       Office         @relation(fields: [officeId], references: [id], onDelete: Restrict)
-  inboundEmails InboundEmail[]
-  documents    Document[]
+  // Optional sender allowlist for the dedicated ingest address (A5):
+  // when non-empty, senders outside these domains are quarantined
+  allowedSenderDomains String[]
+
+  // Per-client SNC account overrides applied at export (AC-5.1.e):
+  // { "<sncCode>": "<clientSpecificAccount>" }
+  accountOverrides Json?
+
+  office                   Office                    @relation(fields: [officeId], references: [id], onDelete: Restrict)
+  inboundEmails            InboundEmail[]
+  documents                Document[]
+  ingestAliases            ClientIngestAlias[]
+  bankAccounts             BankAccount[]
+  bankRuleTargets          BankRule[]                @relation("BankRuleTargetClient")
+  portalUsers              User[]                    @relation("ClientPortalUsers")
+  portalInvitations        Invitation[]              @relation("ClientPortalInvitations")
+  toconlineConnections     ToconlineConnection[]
+  moloniConnections        MoloniConnection[]
+  invoicexpressConnections InvoicexpressConnection[]
+  sourceEntityMaps         SourceEntityMap[]
 
   @@index([officeId])
   @@index([deletedAt])
@@ -211,41 +348,42 @@ model Client {
 // ─────────────────────────────────────────
 
 model EmailAccount {
-  id       String        @id @default(cuid())
-  officeId String
-  email    String
-  name     String?       // display name
-  provider EmailProvider
-  active   Boolean       @default(true)
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  id        String        @id @default(cuid())
+  officeId  String
+  email     String
+  name      String? // display name
+  provider  EmailProvider
+  active    Boolean       @default(true)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
 
   // ── Microsoft Graph (Outlook) ──
   // Stored encrypted at service layer
-  outlookAccessToken  String?  @db.Text
-  outlookRefreshToken String?  @db.Text
-  outlookTokenExpiry  DateTime?
-  outlookUserId       String?  // Graph user ID
-  deltaLink             String?  @db.Text // for delta query sync
-  outlookSubscriptionId String?  // Graph subscription ID from watchChanges()
+  outlookAccessToken        String?   @db.Text
+  outlookRefreshToken       String?   @db.Text
+  outlookTokenExpiry        DateTime?
+  outlookUserId             String? // Graph user ID
+  deltaLink                 String?   @db.Text // for delta query sync
+  outlookSubscriptionId     String? // Graph subscription ID from watchChanges()
+  outlookSubscriptionExpiry DateTime? // Graph subscription expiry (renewed when <48h away)
 
   // ── Gmail ──
   // Stored encrypted at service layer
-  gmailAccessToken    String?  @db.Text
-  gmailRefreshToken   String?  @db.Text
-  gmailTokenExpiry    DateTime?
-  gmailUserId         String?  // Gmail user ID
-  historyId           String?  // for incremental sync
-  pubSubSubscription  String?  // Pub/Sub subscription name
-  gmailWatchExpiry    DateTime? // Gmail watch expiration (needs renewal)
+  gmailAccessToken   String?   @db.Text
+  gmailRefreshToken  String?   @db.Text
+  gmailTokenExpiry   DateTime?
+  gmailUserId        String? // Gmail user ID
+  historyId          String? // for incremental sync
+  pubSubSubscription String? // Pub/Sub subscription name
+  gmailWatchExpiry   DateTime? // Gmail watch expiration (needs renewal)
 
   // ── IMAP ──
   // Stored encrypted at service layer
   imapHost     String?
   imapPort     Int?
   imapUser     String?
-  imapPassword String?  @db.Text  // encrypted
-  imapTls      Boolean  @default(true)
+  imapPassword String? @db.Text // encrypted
+  imapTls      Boolean @default(true)
 
   office        Office         @relation(fields: [officeId], references: [id], onDelete: Restrict)
   inboundEmails InboundEmail[]
@@ -260,14 +398,17 @@ model EmailAccount {
 // ─────────────────────────────────────────
 
 model EmailThread {
-  id             String    @id @default(cuid())
+  id               String   @id @default(cuid())
+  officeId         String // multi-tenant scope — threads are never shared across offices
   providerThreadId String? // Graph conversationId / Gmail threadId
-  subject        String?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  subject          String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
+  office Office         @relation(fields: [officeId], references: [id], onDelete: Cascade)
   emails InboundEmail[]
 
+  @@index([officeId, providerThreadId])
   @@index([providerThreadId])
 }
 
@@ -276,27 +417,27 @@ model EmailThread {
 // ─────────────────────────────────────────
 
 model InboundEmail {
-  id               String      @id @default(cuid())
-  emailAccountId   String
-  threadId         String?
-  clientId         String?     // null if unmatched
-  providerMessageId String     // Graph message ID / Gmail message ID
-  subject          String?
-  fromEmail        String
-  fromName         String?
-  toEmails         String[]
-  ccEmails         String[]
-  bodyText         String?     @db.Text
-  bodyHtml         String?     @db.Text
-  receivedAt       DateTime
-  status           EmailStatus @default(UNREAD)
-  clientMatchScore Float?      // confidence of client match (0.0-1.0)
-  createdAt        DateTime    @default(now())
-  updatedAt        DateTime    @updatedAt
+  id                String      @id @default(cuid())
+  emailAccountId    String
+  threadId          String?
+  clientId          String? // null if unmatched
+  providerMessageId String // Graph message ID / Gmail message ID
+  subject           String?
+  fromEmail         String
+  fromName          String?
+  toEmails          String[]
+  ccEmails          String[]
+  bodyText          String?     @db.Text
+  bodyHtml          String?     @db.Text
+  receivedAt        DateTime
+  status            EmailStatus @default(UNREAD)
+  clientMatchScore  Float? // confidence of client match (0.0-1.0)
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
 
-  emailAccount EmailAccount     @relation(fields: [emailAccountId], references: [id], onDelete: Cascade)
-  thread       EmailThread?     @relation(fields: [threadId], references: [id])
-  client       Client?          @relation(fields: [clientId], references: [id])
+  emailAccount EmailAccount      @relation(fields: [emailAccountId], references: [id], onDelete: Cascade)
+  thread       EmailThread?      @relation(fields: [threadId], references: [id])
+  client       Client?           @relation(fields: [clientId], references: [id])
   attachments  EmailAttachment[]
   actions      EmailAction[]
 
@@ -312,21 +453,21 @@ model InboundEmail {
 // ─────────────────────────────────────────
 
 model EmailAttachment {
-  id             String   @id @default(cuid())
-  inboundEmailId String
+  id                   String    @id @default(cuid())
+  inboundEmailId       String
   providerAttachmentId String? // Graph attachment ID / Gmail attachment ID
-  filename       String
-  mimeType       String
-  sizeBytes      Int?
-  r2Key          String?  // R2 object key — <officeId>/<clientId>/<messageId>/<attachmentId>.<ext>
-  uploadedAt     DateTime?
-  createdAt      DateTime @default(now())
+  filename             String
+  mimeType             String
+  sizeBytes            Int?
+  r2Key                String? // R2 object key — <officeId>/<clientId>/<messageId>/<attachmentId>.<ext>
+  uploadedAt           DateTime?
+  createdAt            DateTime  @default(now())
 
   inboundEmail InboundEmail @relation(fields: [inboundEmailId], references: [id], onDelete: Cascade)
   document     Document?
 
-  @@index([inboundEmailId])
   @@unique([inboundEmailId, providerAttachmentId])
+  @@index([inboundEmailId])
 }
 
 // ─────────────────────────────────────────
@@ -338,18 +479,22 @@ model EmailAction {
   inboundEmailId String
   type           ActionType
   status         ActionStatus @default(PENDING_REVIEW)
-  draftContent   String?      @db.Text  // AI-generated draft text
-  editedContent  String?      @db.Text  // accountant-edited version
-  aiModel        String?      // Claude model used
+  draftContent   String?      @db.Text // AI-generated draft text
+  editedContent  String?      @db.Text // accountant-edited version
+  aiModel        String? // Claude model used
   aiPromptTokens Int?
   sentAt         DateTime?
+  sendAttempts   Int          @default(0) // send tries (approve + retries, max per A3)
+  sendError      String?      @db.Text // last sendReply failure message
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
-  inboundEmail InboundEmail  @relation(fields: [inboundEmailId], references: [id], onDelete: Cascade)
+  inboundEmail InboundEmail @relation(fields: [inboundEmailId], references: [id], onDelete: Cascade)
   review       EmailReview?
   auditLog     AuditLog?
 
+  // One action per type per email — prevents the concurrent draft race (achado #10)
+  @@unique([inboundEmailId, type])
   @@index([inboundEmailId])
   @@index([status])
 }
@@ -362,8 +507,9 @@ model EmailReview {
   id            String       @id @default(cuid())
   emailActionId String       @unique
   reviewerId    String
-  decision      ActionStatus // APPROVED | REJECTED | EDITED_SENT
+  decision      ActionStatus // APPROVED | REJECTED
   notes         String?
+  editedBody    String?      @db.Text // accountant-edited body at approval time
   reviewedAt    DateTime     @default(now())
 
   emailAction EmailAction @relation(fields: [emailActionId], references: [id], onDelete: Cascade)
@@ -377,30 +523,169 @@ model EmailReview {
 // ─────────────────────────────────────────
 
 model Document {
-  id           String         @id @default(cuid())
-  attachmentId String         @unique
-  clientId     String?
-  type         DocumentType   @default(OTHER)
-  status       DocumentStatus @default(PENDING_CLASSIFICATION)
-  confidence   Float?         // AI classification confidence (0.0-1.0)
-  reasoning    String?        // AI reasoning (one sentence in PT)
-  extractedDate DateTime?
-  extractedAmount Float?
-  extractedVATNumber String?  // NIF extracted from document
-  textContent  String?        @db.Text  // extracted text used for classification
-  r2Key        String?        // same as attachment r2Key (denormalized for convenience)
+  id                   String         @id @default(cuid())
+  officeId             String // direct tenant scope — required for non-email sources
+  attachmentId         String?        @unique // null for MANUAL_UPLOAD / IMPORT documents
+  clientId             String?
+  source               DocumentSource @default(EMAIL)
+  type                 DocumentType   @default(OTHER)
+  status               DocumentStatus @default(PENDING_CLASSIFICATION)
+  confidence           Float? // AI classification confidence (0.0-1.0)
+  reasoning            String? // AI reasoning (one sentence in PT)
+  extractedDate        DateTime?
+  extractedAmount      Float? // legacy display field — rich data lives in totalAmount
+  extractedVATNumber   String? // NIF extracted from document (legacy — see supplierNif)
+  textContent          String?        @db.Text // extracted text used for classification
+  r2Key                String? // R2 object key of the underlying file
   aiModel              String?
-  classificationSource String?  // how classification was obtained: at-qr-code | filename-pattern | claude-vision | claude-pdf | claude-text
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
+  classificationSource String? // at-qr-code | filename-pattern | claude-vision | claude-pdf | claude-text
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
 
-  attachment   EmailAttachment @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
-  client       Client?         @relation(fields: [clientId], references: [id])
-  review       DocumentReview?
+  // ── Upload metadata (S2.1) ──
+  uploadedByUserId String?
+  originalFilename String?
+  mimeType         String?
+  sizeBytes        Int?
+  contentSha256    String? // for split cache and duplicate detection
 
+  // ── Rich extraction (S2.3, A1: money = Decimal in columns, cents in JSONB) ──
+  supplierName      String?
+  supplierNif       String?
+  documentNumber    String? // normalized: trim, collapsed spaces, uppercase (A8)
+  documentNumberRaw String? // original, when different from normalized
+  issueDate         DateTime?
+  dueDate           DateTime?
+  currency          String    @default("EUR")
+  totalAmount       Decimal?  @db.Decimal(14, 2)
+  netAmount         Decimal?  @db.Decimal(14, 2)
+  vatAmount         Decimal?  @db.Decimal(14, 2)
+  withholdingAmount Decimal?  @db.Decimal(14, 2)
+  vatBreakdown      Json? // [{region, rate, baseCents, vatCents}] — integer cents (A1)
+  documentLines     Json? // [{description, qty, unitPriceCents, vatRate, totalCents}]
+  buyerNif          String?
+  buyerName         String? // final customer name (issued invoices pulled from external APIs)
+  atcud             String?
+  extractionSource  String? // QR | XML | AI_VISION | AI_PDF | AI_TEXT | IMPORT
+
+  // ── Multi-invoice split (S2.2, A6) ──
+  parentDocumentId String?
+  pageStart        Int?
+  pageEnd          Int?
+
+  // ── Review flags (S2.5, A5, A6) ──
+  flags             String[] // DUPLICATE_SUSPECT | WRONG_CLIENT_SUSPECT | SENDER_UNVERIFIED | TOO_LARGE_FOR_AUTOSPLIT | ARITHMETIC_MISMATCH | VAT_SENSITIVE
+  duplicateOfId     String?
+  suggestedClientId String?
+
+  // ── Review concurrency + soft delete (A7, S3.1) ──
+  version   Int       @default(1) // optimistic locking — expectedVersion on every review
+  deletedAt DateTime?
+
+  // ── Accounting classification (S3.2/S3.4/A13 — suggestion, never decision) ──
+  suggestedAccountCode  String?
+  suggestedVatTreatment String? // DEDUTIVEL_TOTAL | NAO_DEDUTIVEL | AUTOLIQUIDACAO | ISENTO
+  sncSource             String? // HISTORY | AI | RULE
+  accountCode           String? // definitive — set only by human review or SupplierRule
+  vatTreatment          String?
+  appliedRuleId         String?
+
+  // ── Export linkage (S3.3/A9) ──
+  exportBatchId String?
+
+  // ── TOConline push (integration v1 — see INTEGRATION_NOTES.md) ──
+  // Status of the LAST push attempt; SENT documents are never re-pushed
+  // (idempotency [INV]). Never touches the document state machine.
+  toconlinePushStatus ToconlinePushStatus?
+  toconlineDocumentId String? // id returned by the TOConline purchases API
+  toconlinePushedAt   DateTime?
+  toconlinePushError  String?              @db.Text // context for ERROR status
+
+  // ── Bank reconciliation (C2/C3) ──
+  // Set when the document is reconciled against bank transactions; a reconciled
+  // document never re-enters candidate matching. Never touches the document
+  // state machine.
+  reconciledEntryId String?
+  reconciledEntry   ReconciliationEntry? @relation(fields: [reconciledEntryId], references: [id])
+
+  office                    Office                     @relation(fields: [officeId], references: [id], onDelete: Restrict)
+  attachment                EmailAttachment?           @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
+  client                    Client?                    @relation(fields: [clientId], references: [id])
+  reviews                   DocumentReview[]
+  parent                    Document?                  @relation("DocumentSplit", fields: [parentDocumentId], references: [id])
+  children                  Document[]                 @relation("DocumentSplit")
+  exportLinks               ExportDocument[]
+  reconciliationSuggestions ReconciliationSuggestion[]
+  toconlinePreviews         ToconlinePushPreview[]
+  sourceEntityMaps          SourceEntityMap[]
+
+  @@index([officeId, status])
+  @@index([officeId, supplierNif, documentNumber])
   @@index([clientId])
   @@index([type])
   @@index([status])
+  @@index([parentDocumentId])
+  @@index([contentSha256])
+  @@index([officeId, toconlinePushStatus])
+}
+
+// ─────────────────────────────────────────
+// CLIENT INGEST ALIAS (dedicated inbox address — S2.6, A5)
+// ─────────────────────────────────────────
+
+model ClientIngestAlias {
+  id        String   @id @default(cuid())
+  officeId  String
+  clientId  String
+  alias     String   @unique // {slug}-{token10+} — local part of the ingest address
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  office Office @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([officeId])
+  @@index([clientId])
+}
+
+// ─────────────────────────────────────────
+// IMPORT BATCH (spreadsheet import with human-confirmed mapping — S2.4)
+// ─────────────────────────────────────────
+
+model ImportBatch {
+  id               String   @id @default(cuid())
+  officeId         String
+  createdByUserId  String
+  filename         String
+  clientId         String?
+  proposedMapping  Json // AI-proposed column → field mapping
+  confirmedMapping Json? // set only after human confirmation (AC-2.5.c)
+  status           String   @default("PENDING_CONFIRMATION") // PENDING_CONFIRMATION | IMPORTED | CANCELLED
+  rowsData         Json // parsed rows awaiting confirmation
+  report           Json? // per-row errors after import
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  office Office @relation(fields: [officeId], references: [id], onDelete: Cascade)
+
+  @@index([officeId])
+}
+
+// ─────────────────────────────────────────
+// SPLIT CACHE (A6 — split result per file hash, avoids repeat AI calls)
+// ─────────────────────────────────────────
+
+model DocumentSplitCache {
+  id         String   @id @default(cuid())
+  officeId   String
+  sha256     String
+  boundaries Json // [{startPage, endPage}]
+  method     String // qr-deterministic | ai
+  createdAt  DateTime @default(now())
+
+  office Office @relation(fields: [officeId], references: [id], onDelete: Cascade)
+
+  @@unique([officeId, sha256])
 }
 
 // ─────────────────────────────────────────
@@ -408,17 +693,107 @@ model Document {
 // ─────────────────────────────────────────
 
 model DocumentReview {
-  id           String       @id @default(cuid())
-  documentId   String       @unique
-  reviewerId   String
+  id            String       @id @default(cuid())
+  documentId    String // 1:N — full review history (S3.1)
+  reviewerId    String
+  decision      String       @default("validate") // validate | correct | reject | reopen | resolve-duplicate | split-approve
   confirmedType DocumentType
-  notes        String?
-  reviewedAt   DateTime     @default(now())
+  before        Json? // field values before the correction
+  after         Json? // field values after the correction
+  notes         String?
+  reviewedAt    DateTime     @default(now())
 
-  document  Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  reviewer  User     @relation(fields: [reviewerId], references: [id])
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  reviewer User     @relation(fields: [reviewerId], references: [id])
 
+  @@index([documentId])
   @@index([reviewerId])
+}
+
+// ─────────────────────────────────────────
+// SUPPLIER (per-office supplier registry — extraction upserts it)
+// ─────────────────────────────────────────
+
+model Supplier {
+  id            String   @id @default(cuid())
+  officeId      String
+  nif           String
+  name          String?
+  documentCount Int      @default(0)
+  lastSeenAt    DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  office Office @relation(fields: [officeId], references: [id], onDelete: Cascade)
+
+  @@unique([officeId, nif])
+}
+
+// ─────────────────────────────────────────
+// SUPPLIER RULE (explicit per-supplier defaults — S3.2, differentiator)
+// ─────────────────────────────────────────
+
+model SupplierRule {
+  id                  String        @id @default(cuid())
+  officeId            String
+  clientId            String? // null = applies to every client of the office; specific wins
+  supplierNif         String
+  defaultDocumentType DocumentType?
+  defaultAccountCode  String?
+  defaultVatTreatment String?
+  autoValidate        Boolean       @default(false)
+  createdFromReviewId String?
+  active              Boolean       @default(true)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  office Office @relation(fields: [officeId], references: [id], onDelete: Cascade)
+
+  @@index([officeId, supplierNif])
+}
+
+// ─────────────────────────────────────────
+// EXPORT (ZIP + CSV batches — S3.3, A9)
+// ─────────────────────────────────────────
+
+model ExportBatch {
+  id              String   @id @default(cuid())
+  officeId        String
+  createdByUserId String
+  filters         Json // clientIds, period, includeExported
+  status          String   @default("PENDING") // PENDING | COMPLETED | FAILED
+  r2Key           String?
+  documentCount   Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  office    Office           @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  documents ExportDocument[]
+
+  @@index([officeId])
+}
+
+// N:M traceability — which export carried which document (A9 re-exports)
+model ExportDocument {
+  exportBatchId String
+  documentId    String
+  createdAt     DateTime @default(now())
+
+  exportBatch ExportBatch @relation(fields: [exportBatchId], references: [id], onDelete: Cascade)
+  document    Document    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@id([exportBatchId, documentId])
+}
+
+// ─────────────────────────────────────────
+// SNC TAXONOMY (reference data, seeded via service — S3.4)
+// Global standard chart — deliberately without officeId (national taxonomy).
+// ─────────────────────────────────────────
+
+model SncAccount {
+  code        String  @id // e.g. "6221"
+  label       String
+  suggestible Boolean @default(true) // 63x pessoal: never auto-suggested
+  sensitive   Boolean @default(false) // 621x/625x etc. — A13 limited-deductibility
 }
 
 // ─────────────────────────────────────────
@@ -426,24 +801,24 @@ model DocumentReview {
 // ─────────────────────────────────────────
 
 model AuditLog {
-  id           String   @id @default(cuid())
-  officeId     String
-  userId       String?  // null if system-triggered
-  action       String   // e.g. "draft_generated", "email_sent", "document_classified"
-  entityType   String   // e.g. "EmailAction", "Document"
-  entityId     String
-  aiGenerated  Boolean  @default(false)
-  aiModel      String?
-  metadata     Json?    // additional context
-  approvedById String?  // userId who approved (if applicable)
-  approvedAt   DateTime?
-  emailActionId String? @unique  // link to EmailAction if applicable
-  createdAt    DateTime @default(now())
+  id            String    @id @default(cuid())
+  officeId      String
+  userId        String? // null if system-triggered
+  action        String // e.g. "draft_generated", "email_sent", "document_classified"
+  entityType    String // e.g. "EmailAction", "Document"
+  entityId      String
+  aiGenerated   Boolean   @default(false)
+  aiModel       String?
+  metadata      Json? // additional context
+  approvedById  String? // userId who approved (if applicable)
+  approvedAt    DateTime?
+  emailActionId String?   @unique // link to EmailAction if applicable
+  createdAt     DateTime  @default(now())
   // NO updatedAt — audit logs are immutable
 
-  office     Office  @relation(fields: [officeId], references: [id])
-  user       User?   @relation("AuditCreator", fields: [userId], references: [id])
-  approvedBy User?   @relation("AuditApprover", fields: [approvedById], references: [id])
+  office      Office       @relation(fields: [officeId], references: [id])
+  user        User?        @relation("AuditCreator", fields: [userId], references: [id])
+  approvedBy  User?        @relation("AuditApprover", fields: [approvedById], references: [id])
   emailAction EmailAction? @relation(fields: [emailActionId], references: [id])
 
   @@index([officeId])
@@ -456,23 +831,375 @@ model AuditLog {
 // ─────────────────────────────────────────
 
 model JobLog {
-  id         String    @id @default(cuid())
-  officeId   String
-  queue      String    // "email-sync" | "document-parse"
-  jobId      String    // BullMQ job ID
-  status     JobStatus @default(QUEUED)
-  payload    Json?
-  result     Json?
-  error      String?   @db.Text
-  attempts   Int       @default(0)
-  startedAt  DateTime?
+  id          String    @id @default(cuid())
+  officeId    String
+  queue       String // "email-sync" | "document-parse"
+  jobId       String // BullMQ job ID
+  status      JobStatus @default(QUEUED)
+  payload     Json?
+  result      Json?
+  error       String?   @db.Text
+  attempts    Int       @default(0)
+  startedAt   DateTime?
   completedAt DateTime?
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   office Office @relation(fields: [officeId], references: [id])
 
   @@index([officeId])
   @@index([queue, status])
   @@index([jobId])
+}
+
+// ─────────────────────────────────────────
+// BANK RECONCILIATION v1 (fase C1 — statement import, no PSD2)
+// ─────────────────────────────────────────
+
+model BankAccount {
+  id        String   @id @default(cuid())
+  officeId  String
+  clientId  String
+  name      String
+  iban      String?
+  currency  String   @default("EUR") // field exists, non-EUR logic out of scope (v1)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  office       Office                @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  client       Client                @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  imports      BankStatementImport[]
+  transactions BankTransaction[]
+  rules        BankRule[]
+
+  // NULL ibans are distinct in Postgres — uniqueness only applies when iban is present
+  @@unique([officeId, clientId, iban])
+  @@index([officeId])
+  @@index([clientId])
+}
+
+model BankStatementImport {
+  id               String           @id @default(cuid())
+  officeId         String
+  bankAccountId    String
+  filename         String
+  fileHash         String // sha256 of the raw uploaded file
+  mappingSource    String // heuristic | ai
+  proposedMapping  Json
+  confirmedMapping Json? // set only after human confirmation (same pattern as ImportBatch)
+  rowsData         Json // parsed rows awaiting confirmation
+  periodFrom       DateTime?
+  periodTo         DateTime?
+  rowCount         Int              @default(0) // data rows in the file
+  status           BankImportStatus @default(PENDING)
+  errorReport      Json? // { imported, skippedDuplicates: [{line, reason}], errors: [{line, reason}] }
+  importedByUserId String
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  office       Office            @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  bankAccount  BankAccount       @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  transactions BankTransaction[]
+
+  @@index([officeId])
+  @@index([bankAccountId, fileHash])
+}
+
+model BankTransaction {
+  id            String                @id @default(cuid())
+  officeId      String
+  bankAccountId String
+  importId      String
+  bookingDate   DateTime
+  valueDate     DateTime?
+  description   String
+  amountCents   Int // negative = debit, positive = credit (A1 — integer cents, never float)
+  balanceCents  Int?
+  externalRef   String?
+  // sha256(bankAccountId|bookingDate|amountCents|normalized description)
+  dedupHash     String
+  status        BankTransactionStatus @default(UNRECONCILED)
+  version       Int                   @default(1) // optimistic locking (A7)
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  office      Office                     @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  bankAccount BankAccount                @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  import      BankStatementImport        @relation(fields: [importId], references: [id], onDelete: Cascade)
+  suggestions ReconciliationSuggestion[]
+  entry       ReconciliationEntry?
+
+  @@unique([officeId, dedupHash])
+  @@index([officeId, status])
+  @@index([bankAccountId, bookingDate])
+}
+
+// C2 — deterministic matching suggestions. autoMatch=true only pre-selects in
+// the UI; reconciliation itself ALWAYS requires a human action in v1.
+model ReconciliationSuggestion {
+  id                String           @id @default(cuid())
+  officeId          String
+  bankTransactionId String
+  documentId        String
+  scoreTotal        Int
+  scoreBreakdown    Json // { amount, date, entity, reference }
+  autoMatch         Boolean          @default(false)
+  status            SuggestionStatus @default(PENDING)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  office          Office          @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  bankTransaction BankTransaction @relation(fields: [bankTransactionId], references: [id], onDelete: Cascade)
+  document        Document        @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([bankTransactionId, documentId])
+  @@index([officeId, status])
+  @@index([documentId])
+}
+
+// C3 — the human (or rule) act of reconciling/ignoring one transaction.
+// One active entry per transaction; undo deletes the entry (AuditLog keeps
+// the immutable trail on both sides).
+model ReconciliationEntry {
+  id                 String   @id @default(cuid())
+  officeId           String
+  bankTransactionId  String   @unique
+  documentIds        String[] // immutable snapshot; live linkage via Document.reconciledEntryId
+  ignored            Boolean  @default(false)
+  ignoreReason       String?
+  ruleId             String? // set when an IGNORE rule applied this entry
+  reconciledByUserId String? // null when applied by a rule (system)
+  createdAt          DateTime @default(now())
+
+  office          Office          @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  bankTransaction BankTransaction @relation(fields: [bankTransactionId], references: [id], onDelete: Cascade)
+  rule            BankRule?       @relation(fields: [ruleId], references: [id])
+  documents       Document[]
+
+  @@index([officeId])
+}
+
+// C3 — bank rules (Kabilio parity): applied BEFORE scoring, first match by
+// ascending priority wins. IGNORE marks the transaction IGNORED with a
+// reference to the rule; SUGGEST_CLIENT redirects candidate matching to the
+// target client.
+model BankRule {
+  id             String            @id @default(cuid())
+  officeId       String
+  bankAccountId  String? // null = every account of the office
+  matchType      BankRuleMatchType
+  pattern        String // matched against the transaction description
+  amountMinCents Int?
+  amountMaxCents Int?
+  action         BankRuleAction
+  targetClientId String? // required for SUGGEST_CLIENT
+  priority       Int               @default(100) // lower runs first
+  active         Boolean           @default(true)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  office       Office                @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  bankAccount  BankAccount?          @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  targetClient Client?               @relation("BankRuleTargetClient", fields: [targetClientId], references: [id])
+  entries      ReconciliationEntry[]
+
+  @@index([officeId, active, priority])
+}
+
+// ─────────────────────────────────────────
+// TOCONLINE INTEGRATION v1 (push de compras — doc-driven, NOT tested against
+// the real API; see INTEGRATION_NOTES.md)
+// ─────────────────────────────────────────
+
+// One connection per END-CLIENT (the TOConline account belongs to the client
+// company, not to the office). The four integrator values come from
+// TOConline > Empresa > Configurações > Dados API. Secrets are AES-256-GCM
+// encrypted at the service layer (same crypto.ts as OAuth email tokens).
+model ToconlineConnection {
+  id       String @id @default(cuid())
+  officeId String
+  // "Ligações" model (pull slice): a client may hold N source connections but
+  // at most ONE push-enabled destination — enforced by a partial unique index
+  // in SQL (Prisma cannot express partials):
+  //   CREATE UNIQUE INDEX ... ON "ToconlineConnection"("clientId") WHERE "pushEnabled"
+  clientId String
+
+  oauthUrl String // OAUTH_URL from the integrator credentials
+  apiUrl   String // API_URL from the integrator credentials
+
+  oauthClientId     String // integrator client_id (not secret, stored plain)
+  oauthClientSecret String // ENCRYPTED (AES-256-GCM via crypto.ts)
+
+  accessToken    String? // ENCRYPTED — valid 4h (doc: expires_in 14400)
+  refreshToken   String? // ENCRYPTED — valid 8h per the docs
+  tokenExpiresAt DateTime?
+
+  status    ToconlineConnectionStatus @default(ACTIVE)
+  lastError String?                   @db.Text
+
+  // Dry-run is the BIRTH state: the push job runs the whole flow but writes
+  // the exact request to ToconlinePushPreview instead of calling the API.
+  // Only OWNER can disable it (toconline:goLive), with explicit confirmation.
+  dryRun Boolean @default(true)
+
+  // Capability toggles (Ligações): source (pull issued invoices) and
+  // destination (push purchases) are independent.
+  pullEnabled Boolean @default(false)
+  pushEnabled Boolean @default(true)
+
+  // Sales pull state (incremental sync — see toconline-pull-service)
+  lastPullAt     DateTime?
+  lastPullCursor String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  office Office @relation(fields: [officeId], references: [id], onDelete: Restrict)
+  client Client @relation(fields: [clientId], references: [id], onDelete: Restrict)
+
+  entityMaps ToconlineEntityMap[]
+  previews   ToconlinePushPreview[]
+
+  @@index([officeId])
+  @@index([clientId])
+}
+
+// Cache of Gabify ↔ TOConline entity ids so retries and re-pulls never repeat
+// lookups, re-create entities or re-import documents.
+// entityType 'SUPPLIER': externalKey = supplier NIF → toconlineId = supplier id.
+// entityType 'SALES_DOCUMENT': externalKey = toconlineId = sales document id
+// (pull dedup — a known id is a no-op on every subsequent pull).
+model ToconlineEntityMap {
+  id           String   @id @default(cuid())
+  connectionId String
+  entityType   String // 'SUPPLIER' | 'SALES_DOCUMENT'
+  externalKey  String // NIF for suppliers; TOConline id for pulled documents
+  toconlineId  String // TOConline internal id (JSONAPI ids are strings)
+  createdAt    DateTime @default(now())
+
+  connection ToconlineConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, entityType, externalKey])
+}
+
+// Dry-run output: the EXACT request the push job would send (endpoint, method,
+// headers WITHOUT secrets, body), visible in the UI ("o que seria enviado").
+model ToconlinePushPreview {
+  id           String   @id @default(cuid())
+  connectionId String
+  // Nullable since the pull slice: dry-run PULL previews describe a Document
+  // that would be CREATED (it does not exist yet) — documentId stays null.
+  documentId   String?
+  endpoint     String // path relative to apiUrl, e.g. /api/v1/commercial_purchases_documents
+  method       String
+  headers      Json // secret-free: Authorization is redacted
+  body         Json
+  createdAt    DateTime @default(now())
+
+  connection ToconlineConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  document   Document?           @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([connectionId, createdAt])
+  @@index([documentId])
+}
+
+// ── Source connectors (Moloni / InvoiceXpress) — sources-unification slice ──
+// Both are SOURCE-only (pull issued invoices): no push, no dry-run. Per CLIENT
+// like ToconlineConnection. Credentials AES-256-GCM (crypto.ts).
+
+enum SourceConnectionStatus {
+  ATIVA
+  ERRO
+  DESLIGADA
+}
+
+enum SourceSystem {
+  MOLONI
+  INVOICEXPRESS
+}
+
+model MoloniConnection {
+  id       String @id @default(cuid())
+  officeId String
+  clientId String
+
+  companyId   Int // Moloni company_id (companies/getAll)
+  companyName String @default("") // cache for the panel
+
+  username       String // ENCRYPTED (AES-256-GCM)
+  password       String // ENCRYPTED
+  accessToken    String? // ENCRYPTED — valid 1h
+  refreshToken   String? // ENCRYPTED — valid 14 days
+  tokenExpiresAt DateTime?
+
+  pullEnabled Boolean                @default(false)
+  lastPullAt  DateTime?
+  status      SourceConnectionStatus @default(ATIVA)
+  lastError   String?                @db.Text
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime? // soft delete (Gabify rule)
+
+  office Office @relation(fields: [officeId], references: [id], onDelete: Restrict)
+  client Client @relation(fields: [clientId], references: [id], onDelete: Restrict)
+
+  @@index([officeId])
+  @@index([clientId])
+}
+
+model InvoicexpressConnection {
+  id       String @id @default(cuid())
+  officeId String
+  clientId String
+
+  accountName String // subdomain, e.g. "demo-firm"
+  apiKey      String // ENCRYPTED (AES-256-GCM) — travels in the query string, never logged
+
+  pullEnabled Boolean                @default(false)
+  lastPullAt  DateTime?
+  status      SourceConnectionStatus @default(ATIVA)
+  lastError   String?                @db.Text
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  office Office @relation(fields: [officeId], references: [id], onDelete: Restrict)
+  client Client @relation(fields: [clientId], references: [id], onDelete: Restrict)
+
+  @@index([officeId])
+  @@index([clientId])
+}
+
+// Generic dedup/cache across every source system (replaces one ToconlineEntityMap
+// per connector). entityType:
+//   'SALES_DOCUMENT' → externalId = source document id; documentId = created Document
+//                      (re-pull of a known id is a no-op — dedup [INV]).
+//   'CLIENT'         → externalId = source customer id; value = resolved NIF
+//                      (InvoiceXpress NIF enrichment cache — one API call per
+//                      final customer, not per document).
+// Uniqueness includes entityType so a document id and a customer id that happen
+// to collide as strings never clash (the spec's (system, externalId, clientId)
+// key, hardened).
+model SourceEntityMap {
+  id         String       @id @default(cuid())
+  officeId   String
+  clientId   String
+  system     SourceSystem
+  entityType String       @default("SALES_DOCUMENT")
+  externalId String
+  documentId String? // set for SALES_DOCUMENT rows; null for CLIENT cache rows
+  value      String? // cache payload for CLIENT rows (resolved NIF)
+  createdAt  DateTime     @default(now())
+
+  office   Office    @relation(fields: [officeId], references: [id], onDelete: Restrict)
+  document Document? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  client   Client    @relation(fields: [clientId], references: [id])
+
+  @@unique([system, entityType, externalId, clientId])
+  @@index([officeId])
+  @@index([clientId])
+  @@index([documentId])
 }

@@ -13,6 +13,11 @@ export const redisConnection = {
 // Queue names
 export const QUEUE_EMAIL_SYNC = 'email-sync'
 export const QUEUE_DOCUMENT_PARSE = 'document-parse'
+export const QUEUE_SUBSCRIPTION_RENEWAL = 'subscription-renewal'
+export const QUEUE_TOCONLINE_PUSH = 'toconline-push'
+export const QUEUE_TOCONLINE_PULL = 'toconline-pull'
+export const QUEUE_MOLONI_PULL = 'moloni-pull'
+export const QUEUE_INVOICEXPRESS_PULL = 'invoicexpress-pull'
 
 // Default job options
 export const DEFAULT_JOB_OPTIONS = {
@@ -28,6 +33,11 @@ export const DEFAULT_JOB_OPTIONS = {
 // Queue instances (lazy-created)
 let emailSyncQueue: Queue | null = null
 let documentParseQueue: Queue | null = null
+let subscriptionRenewalQueue: Queue | null = null
+let toconlinePushQueue: Queue | null = null
+let toconlinePullQueue: Queue | null = null
+let moloniPullQueue: Queue | null = null
+let invoicexpressPullQueue: Queue | null = null
 
 export function getEmailSyncQueue(): Queue {
   if (!emailSyncQueue) {
@@ -41,6 +51,41 @@ export function getDocumentParseQueue(): Queue {
     documentParseQueue = new Queue(QUEUE_DOCUMENT_PARSE, { connection: redisConnection })
   }
   return documentParseQueue
+}
+
+export function getSubscriptionRenewalQueue(): Queue {
+  if (!subscriptionRenewalQueue) {
+    subscriptionRenewalQueue = new Queue(QUEUE_SUBSCRIPTION_RENEWAL, { connection: redisConnection })
+  }
+  return subscriptionRenewalQueue
+}
+
+export function getToconlinePushQueue(): Queue {
+  if (!toconlinePushQueue) {
+    toconlinePushQueue = new Queue(QUEUE_TOCONLINE_PUSH, { connection: redisConnection })
+  }
+  return toconlinePushQueue
+}
+
+export function getToconlinePullQueue(): Queue {
+  if (!toconlinePullQueue) {
+    toconlinePullQueue = new Queue(QUEUE_TOCONLINE_PULL, { connection: redisConnection })
+  }
+  return toconlinePullQueue
+}
+
+export function getMoloniPullQueue(): Queue {
+  if (!moloniPullQueue) {
+    moloniPullQueue = new Queue(QUEUE_MOLONI_PULL, { connection: redisConnection })
+  }
+  return moloniPullQueue
+}
+
+export function getInvoicexpressPullQueue(): Queue {
+  if (!invoicexpressPullQueue) {
+    invoicexpressPullQueue = new Queue(QUEUE_INVOICEXPRESS_PULL, { connection: redisConnection })
+  }
+  return invoicexpressPullQueue
 }
 
 export { Queue, Worker, QueueEvents }
