@@ -88,12 +88,25 @@
     "vitest": "^4.1.7",
     "vitest-mock-extended": "^4.0.0"
   },
+  "overrides": {
+    "nodemailer": "^9.0.1",
+    "hono": "^4.12.25",
+    "vite": "^8.0.16",
+    "esbuild": "^0.28.1",
+    "@hono/node-server": "^1.19.13",
+    "js-yaml": "^4.1.2",
+    "postcss": "^8.5.10",
+    "utf7": {
+      "semver": "^5.7.2"
+    }
+  },
   "allowScripts": {
     "@prisma/engines@7.8.0": true,
     "prisma@7.8.0": true,
     "unrs-resolver@1.12.2": true,
     "sharp@0.34.5": true,
     "esbuild@0.28.0": true,
+    "esbuild@0.28.1": true,
     "msgpackr-extract@3.0.4": true,
     "msw@2.14.6": true,
     "canvas@3.2.3": true
