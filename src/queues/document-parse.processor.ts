@@ -337,10 +337,14 @@ export async function maybeGenerateDraftForEmail(
       data: { draftContent: draftText },
     })
   } catch (err) {
-    // AI generation failed — release the slot so a later retry can regenerate.
+    // AI generation failed — release the slot so the retry can regenerate,
+    // then PROPAGATE (audit F2.7/A-6): the job must fail so BullMQ retries
+    // (max 3 via DEFAULT_JOB_OPTIONS) and the JobLog shows FAILED. Swallowing
+    // here meant the draft was silently lost forever.
     // The audit entry remains as the immutable record of the attempt.
     await prisma.emailAction.delete({ where: { id: emailAction.id } }).catch(() => undefined)
     console.error('[document-parse] draft generation failed:', err)
+    throw err
   }
 }
 
