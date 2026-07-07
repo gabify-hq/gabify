@@ -17,4 +17,5 @@ Regras da secção 0 da spec base em vigor (RED-first nos [INV], gate verde, com
 
 | Slice | Estado | RED | Gate |
 |---|---|---|---|
-| Acceptance assistant escrita (catálogo fechado, isolamento 5 tools, officeId forjado, IVA ao cêntimo, zod no loop, 6.ª call cortada, AuditLog, prompt-injection, can(), rate limit 20/min, erros limpos — 19 testes) | DONE | ✅ import-level RED confirmado (2026-07-07): `Cannot find package '@/server/services/assistant-tools'` — 0 testes correm antes da implementação | — |
+| Acceptance assistant escrita (catálogo fechado, isolamento 5 tools, officeId forjado, IVA ao cêntimo, zod no loop, 6.ª call cortada, AuditLog, prompt-injection, can(), rate limit 20/min, erros limpos — 24 testes) | DONE | ✅ import-level RED confirmado (2026-07-07): `Cannot find package '@/server/services/assistant-tools'` — 0 testes correm antes da implementação | — |
+| GREEN backend: `assistant-tools.ts` (5 tools zod+officeId server-side, agregação SQL em cêntimos), `assistant-service.ts` (loop máx 5, AuditLog antes da resposta, hardening anti-injection no system prompt), rota `POST /api/assistant/query` (guard `assistant:query`, rate limit 20/min, 422/429/502 limpos), can() e rate-limit com appends merge-safe, `ASSISTANT_MODEL` no .env.example | DONE | — | ✅ 24/24 + tsc 0 + eslint 0 erros |

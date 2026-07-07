@@ -108,3 +108,12 @@ export function checkIngestRateLimit(ingestAddress: string): RateLimitResult {
     HOUR_MS,
   )
 }
+
+/** Assistant Q&A: per userId, 20 questions/min (feature/gabify-assistant). */
+export function checkAssistantRateLimit(userId: string): RateLimitResult {
+  return checkRateLimit(
+    `assistant:${userId}`,
+    envLimit('RATE_LIMIT_ASSISTANT_PER_MIN', 20),
+    MINUTE_MS,
+  )
+}

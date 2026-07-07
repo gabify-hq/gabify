@@ -34,6 +34,7 @@ export type AuthzAction =
   | 'bankRule:manage'
   | 'portal:document:read'
   | 'portal:document:upload'
+  | 'assistant:query'
 
 const READ_ACTIONS: AuthzAction[] = ['client:read', 'email:read', 'document:read', 'bank:read']
 
@@ -83,4 +84,17 @@ export function can(role: UserRole | null | undefined, action: AuthzAction): boo
   const allowed = MATRIX[role]
   if (!allowed) return false
   return allowed.has(action)
+}
+
+// ── Assistant Q&A (append-only extension) ────────────────────────────────────
+// `assistant:query` is a pure read over INTERNAL office data: OWNER,
+// ACCOUNTANT and VIEWER may query. CLIENT (portal, fase P1) is deliberately
+// NOT granted it — portal users must never query across the office — and any
+// future role stays denied: can() only consults the explicit MATRIX entry for
+// the session role, and no entry ever gets this action implicitly.
+const ASSISTANT_ACTIONS: AuthzAction[] = ['assistant:query']
+for (const role of ['OWNER', 'ACCOUNTANT', 'VIEWER'] as const) {
+  for (const action of ASSISTANT_ACTIONS) {
+    ;(MATRIX[role] as Set<AuthzAction>).add(action)
+  }
 }
