@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { InvoicexpressConnector } from './connector'
-import { createMockFetch, pdfAcceptedResponse, pdfReadyResponse, TEST_ACCOUNT_NAME, TEST_API_KEY } from './fixtures'
+import { createMockFetch, TEST_ACCOUNT_NAME, TEST_API_KEY, pdfAcceptedResponse, pdfReadyResponse } from './fixtures'
 
 function makeConnector(fetchImpl: typeof fetch, overrides: Record<string, unknown> = {}) {
   return new InvoicexpressConnector({
@@ -14,33 +14,39 @@ function makeConnector(fetchImpl: typeof fetch, overrides: Record<string, unknow
   })
 }
 
-describe('InvoicexpressConnector.listIssuedDocuments', () => {
-  it('[INV] walks all pages and returns the complete list without duplicates', async () => {
+describe('InvoicexpressConnector.listIssuedDocuments (unified contract)', () => {
+  it('[INV] yields one page per call with a resume cursor and de-dups across pages', async () => {
     const { fetchImpl } = createMockFetch()
     const connector = makeConnector(fetchImpl)
-    const result = await connector.listIssuedDocuments()
-    const ids = result.documents.map((doc) => doc.externalId)
-    // page 1: 900001, 900002 (+draft 900003 dropped); page 2 repeats 900002, adds 900004
-    expect(ids).toEqual(['900001', '900002', '900004'])
-    expect(new Set(ids).size).toBe(ids.length)
-    expect(result.cursor.nextPage).toBeNull()
-    expect(result.cursor.totalPages).toBe(2)
+
+    const page1 = await connector.listIssuedDocuments()
+    // page 1: 900001 (final), 900002 (settled); draft 900003 dropped
+    expect(page1.items.map((d) => d.externalId)).toEqual(['900001', '900002'])
+    expect(page1.nextCursor).toBe('2')
+
+    const page2 = await connector.listIssuedDocuments(page1.nextCursor!)
+    // page 2 repeats 900002 (deduped) and adds 900004
+    expect(page2.items.map((d) => d.externalId)).toEqual(['900004'])
+    expect(page2.nextCursor).toBeNull()
+
+    const all = [...page1.items, ...page2.items].map((d) => d.externalId)
+    expect(new Set(all).size).toBe(all.length)
   })
 
   it('[INV] never returns drafts even when the API includes them in a page', async () => {
     const { fetchImpl } = createMockFetch()
     const connector = makeConnector(fetchImpl)
-    const result = await connector.listIssuedDocuments()
-    expect(result.documents.every((doc) => doc.status !== 'draft')).toBe(true)
-    expect(result.documents.some((doc) => doc.externalId === '900003')).toBe(false)
+    const page1 = await connector.listIssuedDocuments()
+    expect(page1.items.every((d) => d.documentStatus !== 'draft')).toBe(true)
+    expect(page1.items.some((d) => d.externalId === '900003')).toBe(false)
   })
 
-  it('[INV] resumes from a cursor: fromPage 2 only processes the second page', async () => {
+  it('[INV] resumes from a cursor: page 2 only requests the second page', async () => {
     const { fetchImpl, requestedUrls } = createMockFetch()
     const connector = makeConnector(fetchImpl)
-    const result = await connector.listIssuedDocuments({ fromPage: 2 })
-    expect(result.documents.map((doc) => doc.externalId)).toEqual(['900002', '900004'])
-    expect(result.cursor.nextPage).toBeNull()
+    const page = await connector.listIssuedDocuments('2')
+    expect(page.items.map((d) => d.externalId)).toEqual(['900002', '900004'])
+    expect(page.nextCursor).toBeNull()
     const pages = requestedUrls.map((url) => new URL(url).searchParams.get('page'))
     expect(pages).toEqual(['2'])
   })
@@ -62,10 +68,10 @@ describe('InvoicexpressConnector.listIssuedDocuments', () => {
     expect(params.get('non_archived')).toBe('true')
   })
 
-  it('supports the documented date window filters (dd/mm/yyyy)', async () => {
+  it('supports the documented date window filters (dd/mm/yyyy) via constructor config', async () => {
     const { fetchImpl, requestedUrls } = createMockFetch()
-    const connector = makeConnector(fetchImpl)
-    await connector.listIssuedDocuments({ dateFrom: '2026-06-01', dateTo: '2026-06-30' })
+    const connector = makeConnector(fetchImpl, { dateFrom: '2026-06-01', dateTo: '2026-06-30' })
+    await connector.listIssuedDocuments()
     const params = new URL(requestedUrls[0]).searchParams
     expect(params.get('date[from]')).toBe('01/06/2026')
     expect(params.get('date[to]')).toBe('30/06/2026')
@@ -74,18 +80,18 @@ describe('InvoicexpressConnector.listIssuedDocuments', () => {
   it('[INV] credit notes come out with negative cents end to end', async () => {
     const { fetchImpl } = createMockFetch()
     const connector = makeConnector(fetchImpl)
-    const result = await connector.listIssuedDocuments()
-    const creditNote = result.documents.find((doc) => doc.type === 'CreditNote')
+    const page1 = await connector.listIssuedDocuments()
+    const creditNote = page1.items.find((doc) => doc.documentType === 'CreditNote')
     expect(creditNote).toBeDefined()
     expect(creditNote?.totalCents).toBe(-6150)
-    expect(creditNote?.vatBreakdownCents).toEqual([{ rate: 23, baseCents: -5000, amountCents: -1150 }])
+    expect(creditNote?.vatBreakdownCents).toEqual([{ ratePermil: 230, baseCents: -5000, amountCents: -1150 }])
   })
 
   it('[INV] the api_key never appears in the serialized result (raw included)', async () => {
     const { fetchImpl } = createMockFetch()
     const connector = makeConnector(fetchImpl)
-    const result = await connector.listIssuedDocuments()
-    expect(JSON.stringify(result)).not.toContain(TEST_API_KEY)
+    const page1 = await connector.listIssuedDocuments()
+    expect(JSON.stringify(page1)).not.toContain(TEST_API_KEY)
   })
 
   it('[INV] the api_key never appears in errors when the API fails', async () => {
@@ -108,8 +114,8 @@ describe('InvoicexpressConnector.listIssuedDocuments', () => {
   })
 })
 
-describe('InvoicexpressConnector.fetchPdf', () => {
-  it('polls through documented 202 responses until the 200 with output.pdfUrl', async () => {
+describe('InvoicexpressConnector.fetchPdf (unified contract → Buffer | null)', () => {
+  it('polls through documented 202 responses, then downloads the PDF bytes as a Buffer', async () => {
     const { fetchImpl, requestedUrls } = createMockFetch({
       pdfSequence: [
         { status: 202, body: pdfAcceptedResponse },
@@ -119,19 +125,18 @@ describe('InvoicexpressConnector.fetchPdf', () => {
     })
     const connector = makeConnector(fetchImpl)
     const result = await connector.fetchPdf('900001')
-    expect(result.pdfUrl).toBe(pdfReadyResponse.output.pdfUrl)
+    expect(Buffer.isBuffer(result)).toBe(true)
+    expect(result?.toString('utf8')).toContain('%PDF')
     const pdfCalls = requestedUrls.filter((url) => url.includes('/api/pdf/900001.json'))
     expect(pdfCalls).toHaveLength(3)
   })
 
-  it('gives up after the configured attempts when the PDF stays pending, without leaking the key', async () => {
+  it('returns null when the PDF stays pending after the configured attempts, without leaking the key', async () => {
     const { fetchImpl } = createMockFetch({
       pdfSequence: Array.from({ length: 10 }, () => ({ status: 202, body: pdfAcceptedResponse })),
     })
     const connector = makeConnector(fetchImpl, { pdfMaxAttempts: 3 })
-    const error = await connector.fetchPdf('900001').catch((e: unknown) => e)
-    expect(error).toBeInstanceOf(Error)
-    expect((error as Error).message).toMatch(/pdf/i)
-    expect(String(error)).not.toContain(TEST_API_KEY)
+    const result = await connector.fetchPdf('900001')
+    expect(result).toBeNull()
   })
 })

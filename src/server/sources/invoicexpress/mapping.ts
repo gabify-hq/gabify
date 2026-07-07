@@ -1,17 +1,12 @@
-import { amountToCents, percentToWithholdingCents } from './money'
+import { amountToCents, percentToPermil, percentToWithholdingCents } from './money'
 import type { ListInvoice } from './schemas'
-import type {
-  InvoicexpressDocumentStatus,
-  InvoicexpressDocumentType,
-  InvoicexpressSourceDocument,
-  SourceDocumentLine,
-  VatBreakdownEntry,
-} from './types-local'
+import type { SourceDocument, SourceDocumentLine, VatBreakdownEntry } from '../types'
 
 /**
- * Maps one entry of `GET /invoices.json` to the local SourceDocument DTO.
- * All amounts converted to integer cents at this boundary; credit notes get a
- * negative sign on every monetary field (the API returns them positive).
+ * Maps one entry of `GET /invoices.json` to the unified `SourceDocument` DTO
+ * (`src/server/sources/types.ts`). All amounts are converted to integer cents
+ * at this boundary and VAT rates to permil; credit notes get a negative sign on
+ * every monetary field (the API returns them positive).
  */
 
 const DOCUMENT_TYPES: ReadonlySet<string> = new Set([
@@ -55,39 +50,50 @@ export function toApiDate(isoDate: string): string {
   return `${match[3]}/${match[2]}/${match[1]}`
 }
 
+/**
+ * Splits a `sequence_number` like "A/28" into the contract's `series` + `number`.
+ * The InvoiceXpress format is `<series>/<number>`; when the number part is not
+ * an integer the whole string is kept as the series and number falls back to 0.
+ */
+export function splitSequenceNumber(sequenceNumber: string): { series: string; number: number } {
+  const slash = sequenceNumber.lastIndexOf('/')
+  if (slash >= 0) {
+    const tail = sequenceNumber.slice(slash + 1)
+    if (/^\d+$/.test(tail)) {
+      return { series: sequenceNumber.slice(0, slash), number: Number(tail) }
+    }
+  }
+  return { series: sequenceNumber, number: 0 }
+}
+
 function mapLines(invoice: ListInvoice, sign: 1 | -1): SourceDocumentLine[] {
   return invoice.items.map((item) => ({
-    name: item.name ?? null,
-    description: item.description ?? null,
-    quantityRaw: item.quantity,
-    unitPriceRaw: item.unit_price,
+    description: item.description ?? item.name ?? '',
+    quantity: Number(item.quantity),
     subtotalCents: sign * amountToCents(item.subtotal),
     taxAmountCents: sign * amountToCents(item.tax_amount),
     discountAmountCents: sign * amountToCents(item.discount_amount ?? 0),
-    taxRate: item.tax?.value ?? 0,
+    ratePermil: percentToPermil(item.tax?.value ?? 0),
   }))
 }
 
 function buildVatBreakdown(lines: SourceDocumentLine[]): VatBreakdownEntry[] {
   const byRate = new Map<number, VatBreakdownEntry>()
   for (const line of lines) {
-    const entry = byRate.get(line.taxRate) ?? {
-      rate: line.taxRate,
-      baseCents: 0,
-      amountCents: 0,
-    }
-    byRate.set(line.taxRate, {
-      rate: entry.rate,
-      baseCents: entry.baseCents + line.subtotalCents,
-      amountCents: entry.amountCents + line.taxAmountCents,
+    const ratePermil = line.ratePermil ?? 0
+    const entry = byRate.get(ratePermil) ?? { ratePermil, baseCents: 0, amountCents: 0 }
+    byRate.set(ratePermil, {
+      ratePermil,
+      baseCents: entry.baseCents + (line.subtotalCents ?? 0),
+      amountCents: entry.amountCents + (line.taxAmountCents ?? 0),
     })
   }
-  return [...byRate.values()].sort((a, b) => a.rate - b.rate)
+  return [...byRate.values()].sort((a, b) => a.ratePermil - b.ratePermil)
 }
 
 export function mapListInvoiceToSourceDocument(
   invoice: ListInvoice | Record<string, unknown>,
-): InvoicexpressSourceDocument {
+): SourceDocument {
   const doc = invoice as ListInvoice
 
   if (!DOCUMENT_TYPES.has(doc.type)) {
@@ -102,18 +108,21 @@ export function mapListInvoiceToSourceDocument(
   const beforeTaxesCents = sign * amountToCents(doc.before_taxes)
   const retention = doc.retention ?? null
   const withholdingCents = percentToWithholdingCents(beforeTaxesCents, retention)
+  const { series, number } = splitSequenceNumber(doc.sequence_number)
 
   return {
     externalId: String(doc.id),
-    type: doc.type as InvoicexpressDocumentType,
-    status: doc.status as InvoicexpressDocumentStatus,
+    documentType: doc.type,
+    series,
+    number,
     sequenceNumber: doc.sequence_number,
+    documentStatus: doc.status,
     atcud: doc.atcud && doc.atcud !== '' ? doc.atcud : null,
-    date: toIsoDate(doc.date),
+    issueDate: toIsoDate(doc.date),
     dueDate: doc.due_date ? toIsoDate(doc.due_date) : null,
-    clientName: doc.client.name,
-    clientNif: null, // not exposed on document responses — see INTEGRATION_NOTES_IVX.md
-    clientExternalId: String(doc.client.id),
+    customerName: doc.client.name,
+    customerVat: null, // not exposed on document responses — resolved by the pull job
+    customerExternalId: String(doc.client.id),
     lines,
     vatBreakdownCents: buildVatBreakdown(lines),
     beforeTaxesCents,
@@ -124,6 +133,6 @@ export function mapListInvoiceToSourceDocument(
     currency: CURRENCY_MAP[doc.currency] ?? doc.currency,
     currencyRaw: doc.currency,
     permalink: doc.permalink ?? null,
-    raw: invoice as Record<string, unknown>,
+    raw: invoice,
   }
 }

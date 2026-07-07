@@ -67,6 +67,33 @@ export function amountToCents(value: number | string): number {
 }
 
 /**
+ * Converts a percent VAT rate (e.g. 23, 6.5) to integer permil (230, 65).
+ *
+ * The unified source contract expresses VAT rate in permil (see
+ * `src/server/sources/types.ts`). InvoiceXpress reports it in percent, so it is
+ * converted here at the boundary with string/integer math — half away from zero
+ * on the second decimal — identical to the Moloni connector's `percentToPermil`
+ * (numeric equivalence is proven in `rate-equivalence.test.ts`).
+ */
+export function percentToPermil(value: number): number {
+  if (!Number.isFinite(value)) {
+    throw new Error(`Cannot convert non-finite VAT rate to permil: ${String(value)}`)
+  }
+  return amountToPermil(String(value))
+}
+
+function amountToPermil(value: string): number {
+  const parsed = parseDecimalString(value)
+  if (!parsed) {
+    throw new Error(`Invalid VAT rate: "${value}"`)
+  }
+  const fraction = parsed.fractionPart.padEnd(2, '0')
+  const wholePermil = Number(parsed.integerPart) * 10 + Number(fraction.slice(0, 1))
+  const roundUp = Number(fraction[1]) >= 5 ? 1 : 0
+  return parsed.sign * (wholePermil + roundUp)
+}
+
+/**
  * Derives the IRS withholding amount in cents from the documented `retention`
  * percentage string (e.g. "25.0") applied to the base (before_taxes) in cents.
  *

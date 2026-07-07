@@ -1,12 +1,17 @@
 import { InvoicexpressApiError, InvoicexpressClient } from './invoicexpress-client'
 import { mapListInvoiceToSourceDocument, toApiDate } from './mapping'
 import { listInvoicesResponseSchema, pdfResponseSchema } from './schemas'
-import type { InvoicexpressSourceDocument, ListIssuedDocumentsResult } from './types-local'
+import type { DocumentSourceConnector, Page, SourceDocument } from '../types'
 
 /**
  * Pull connector for InvoiceXpress as a SOURCE of issued sale documents.
- * Pure connector: credentials in, data out — ZERO persistence (the DB slice is
- * designed in HANDOFF_IVX.md).
+ *
+ * Implements the unified `DocumentSourceConnector` contract
+ * (`src/server/sources/types.ts`): pure connector, credentials in, data out,
+ * ZERO persistence. One page of `SourceDocument`s per `listIssuedDocuments`
+ * call; pass the previous `nextCursor` (the 1-based page number) to resume.
+ * The optional issue-date window is a constructor option (the contract signature
+ * carries only the pagination cursor).
  *
  * Doc-driven, never tested against the real API (INTEGRATION_NOTES_IVX.md).
  */
@@ -41,6 +46,9 @@ const DEFAULT_PDF_POLL_DELAY_MS = 1_000
 export interface InvoicexpressConnectorConfig {
   accountName: string
   apiKey: string
+  /** Optional issue-date window, ISO yyyy-mm-dd (converted to dd/mm/yyyy). */
+  dateFrom?: string
+  dateTo?: string
   fetchImpl?: typeof fetch
   timeoutMs?: number
   minIntervalMs?: number
@@ -51,92 +59,105 @@ export interface InvoicexpressConnectorConfig {
   pdfPollDelayMs?: number
 }
 
-export interface ListIssuedDocumentsOptions {
-  /** Resume cursor: first page to request (1-based). Defaults to 1. */
-  fromPage?: number
-  /** Optional issue-date window, ISO yyyy-mm-dd (converted to dd/mm/yyyy). */
-  dateFrom?: string
-  dateTo?: string
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-export class InvoicexpressConnector {
+function parsePageCursor(cursor: string): number {
+  const page = Number(cursor)
+  if (!Number.isInteger(page) || page < 1) {
+    throw new InvoicexpressApiError(`Invalid InvoiceXpress pagination cursor: "${cursor}"`)
+  }
+  return page
+}
+
+export class InvoicexpressConnector implements DocumentSourceConnector {
   private readonly client: InvoicexpressClient
+  private readonly dateFrom?: string
+  private readonly dateTo?: string
   private readonly perPage: number
   private readonly pdfMaxAttempts: number
   private readonly pdfPollDelayMs: number
+  /**
+   * External ids already returned by this instance — page pagination can repeat
+   * documents across pages when the collection shifts upstream.
+   */
+  private readonly seenExternalIds = new Set<string>()
 
   constructor(config: InvoicexpressConnectorConfig) {
     this.client = new InvoicexpressClient(config)
+    this.dateFrom = config.dateFrom
+    this.dateTo = config.dateTo
     this.perPage = config.perPage ?? DEFAULT_PER_PAGE
     this.pdfMaxAttempts = config.pdfMaxAttempts ?? DEFAULT_PDF_MAX_ATTEMPTS
     this.pdfPollDelayMs = config.pdfPollDelayMs ?? DEFAULT_PDF_POLL_DELAY_MS
   }
 
   /**
-   * Lists every finalized issued sale document, walking the documented
-   * pagination from `fromPage` to the last page. Deduplicates by externalId
-   * across pages and never returns drafts/canceled/deleted documents.
+   * Lists one page of finalized issued sale documents. `cursor` is the 1-based
+   * page number to fetch (omit for the first page); `nextCursor` is the next
+   * page, or null on the last page. Drafts/canceled/deleted are never returned
+   * and documents already yielded by this instance are de-duplicated.
    */
-  async listIssuedDocuments(
-    options: ListIssuedDocumentsOptions = {},
-  ): Promise<ListIssuedDocumentsResult> {
-    const startPage = options.fromPage ?? 1
-    const seen = new Set<string>()
-    const documents: InvoicexpressSourceDocument[] = []
+  async listIssuedDocuments(cursor?: string): Promise<Page<SourceDocument>> {
+    const page = cursor === undefined ? 1 : parsePageCursor(cursor)
 
-    let page = startPage
-    let totalPages = startPage
-    do {
-      const query: Record<string, string | number | boolean | string[]> = {
-        'type[]': [...ISSUED_DOCUMENT_TYPES],
-        'status[]': [...FINALIZED_STATUS_FILTER],
-        non_archived: true,
-        page,
-        per_page: this.perPage,
-      }
-      if (options.dateFrom) query['date[from]'] = toApiDate(options.dateFrom)
-      if (options.dateTo) query['date[to]'] = toApiDate(options.dateTo)
-
-      const body = await this.client.getJson('/invoices.json', query)
-      const parsed = listInvoicesResponseSchema.safeParse(body)
-      if (!parsed.success) {
-        throw new InvoicexpressApiError(
-          `InvoiceXpress list response does not match the documented contract (page ${page}): ${parsed.error.message}`,
-        )
-      }
-
-      for (const invoice of parsed.data.invoices) {
-        if (EXCLUDED_STATUSES.has(invoice.status)) continue
-        const doc = mapListInvoiceToSourceDocument(invoice)
-        if (seen.has(doc.externalId)) continue
-        seen.add(doc.externalId)
-        documents.push(doc)
-      }
-
-      totalPages = parsed.data.pagination.total_pages
-      page += 1
-    } while (page <= totalPages)
-
-    return {
-      documents,
-      cursor: { nextPage: null, totalPages },
+    const query: Record<string, string | number | boolean | string[]> = {
+      'type[]': [...ISSUED_DOCUMENT_TYPES],
+      'status[]': [...FINALIZED_STATUS_FILTER],
+      non_archived: true,
+      page,
+      per_page: this.perPage,
     }
+    if (this.dateFrom) query['date[from]'] = toApiDate(this.dateFrom)
+    if (this.dateTo) query['date[to]'] = toApiDate(this.dateTo)
+
+    const body = await this.client.getJson('/invoices.json', query)
+    const parsed = listInvoicesResponseSchema.safeParse(body)
+    if (!parsed.success) {
+      throw new InvoicexpressApiError(
+        `InvoiceXpress list response does not match the documented contract (page ${page}): ${parsed.error.message}`,
+      )
+    }
+
+    const items: SourceDocument[] = []
+    for (const invoice of parsed.data.invoices) {
+      if (EXCLUDED_STATUSES.has(invoice.status)) continue
+      const doc = mapListInvoiceToSourceDocument(invoice)
+      if (this.seenExternalIds.has(doc.externalId)) continue
+      this.seenExternalIds.add(doc.externalId)
+      items.push(doc)
+    }
+
+    const totalPages = parsed.data.pagination.total_pages
+    const nextCursor = page < totalPages ? String(page + 1) : null
+    return { items, nextCursor }
   }
 
   /**
-   * Resolves the PDF URL for a document via `GET /api/pdf/{document-id}.json`,
-   * polling through the documented 202 responses until the 200 with
-   * `output.pdfUrl` (docs/generatepdf.md).
+   * Resolves and downloads the official PDF for a document. Polls
+   * `GET /api/pdf/{document-id}.json` through the documented 202 responses until
+   * the 200 with `output.pdfUrl` (docs/generatepdf.md), then downloads the
+   * pre-signed URL. Returns null when the document has no PDF (unknown id, or
+   * still pending after the configured attempts) — best-effort, never fatal to
+   * the pull job.
    */
-  async fetchPdf(externalId: string): Promise<{ pdfUrl: string }> {
+  async fetchPdf(externalId: string): Promise<Buffer | null> {
     for (let attempt = 1; attempt <= this.pdfMaxAttempts; attempt += 1) {
-      const { status, body } = await this.client.getJsonWithStatus(
-        `/api/pdf/${encodeURIComponent(externalId)}.json`,
-      )
+      let status: number
+      let body: unknown
+      try {
+        ;({ status, body } = await this.client.getJsonWithStatus(
+          `/api/pdf/${encodeURIComponent(externalId)}.json`,
+        ))
+      } catch (error) {
+        // 4xx (unknown id) → no PDF available; 5xx already retried by the client.
+        if (error instanceof InvoicexpressApiError && error.status && error.status < 500) {
+          return null
+        }
+        throw error
+      }
+
       if (status === 200) {
         const parsed = pdfResponseSchema.safeParse(body)
         if (!parsed.success) {
@@ -144,13 +165,11 @@ export class InvoicexpressConnector {
             `InvoiceXpress PDF response does not match the documented contract: ${parsed.error.message}`,
           )
         }
-        return { pdfUrl: parsed.data.output.pdfUrl }
+        return this.client.fetchBinary(parsed.data.output.pdfUrl)
       }
       // 202: "keep requesting until you get a response with HTTP status code 200"
       if (attempt < this.pdfMaxAttempts) await sleep(this.pdfPollDelayMs)
     }
-    throw new InvoicexpressApiError(
-      `InvoiceXpress PDF for document ${externalId} still pending after ${this.pdfMaxAttempts} attempts (202)`,
-    )
+    return null
   }
 }
