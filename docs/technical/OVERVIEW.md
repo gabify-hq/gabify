@@ -77,10 +77,15 @@ Client ──< BankAccount ──< BankStatementImport ──< BankTransaction
 BankTransaction ──< ReconciliationSuggestion >── Document
                 ──1 ReconciliationEntry ──< Document (reconciledEntryId)
 Office ──< BankRule   (applied before matching; IGNORE / SUGGEST_CLIENT)
+
+Client ──1 ToconlineConnection ──< ToconlineEntityMap    (NIF → TOConline supplier id cache)
+                                ──< ToconlinePushPreview (dry-run: exact request that would be sent)
+Document: toconlinePushStatus / toconlineDocumentId / toconlinePushedAt / toconlinePushError
 ```
 
 Bank reconciliation module detail: [bank-reconciliation.md](bank-reconciliation.md).
 Client portal module detail: [client-portal.md](client-portal.md).
+TOConline integration detail: [toconline.md](toconline.md) + repo-root `INTEGRATION_NOTES.md`.
 
 ### Cross-cutting schema decisions
 
@@ -119,6 +124,8 @@ Client portal module detail: [client-portal.md](client-portal.md).
 | Token encryption | AES-256-GCM (v2 prefix) with legacy CBC read + lazy re-encryption | ✅ |
 | Webhook subscriptions | Created at OAuth connect, renewed daily when expiring <48h; failure falls back to 30s polling | ✅ |
 | Pagination | All list endpoints: default 50, max 200, cursor-based | ✅ |
+| TOConline credentials | Integrator secret + OAuth tokens AES-256-GCM encrypted at rest; DTO built field-by-field (secrets never serialized); previews/audits store redacted headers; error messages scrubbed of credentials (tested) | ✅ |
+| TOConline dry-run | Connections born with `dryRun=true` — zero network until the OWNER explicitly goes live (`toconline:goLive`, audited, explicit warning). Integration is doc-driven and NOT tested against the real API | ✅ |
 
 ---
 
@@ -182,6 +189,7 @@ Three services in `railway.toml`:
 | `web` | `npm run start` | Next.js HTTP server |
 | `worker-email-sync` | `npm run worker:email` | BullMQ email sync worker |
 | `worker-document-parse` | `npm run worker:documents` | BullMQ document parse worker |
+| `worker-toconline-push` | `npm run worker:toconline` | BullMQ TOConline push worker (new — deploy only when the integration goes live) |
 
 Health check: `GET /api/health` (⏳ TODO: implement endpoint)
 

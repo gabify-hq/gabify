@@ -246,3 +246,40 @@ Módulo de maior sensibilidade de segurança: utilizadores externos dentro do si
 - Convite CLIENT via POST /api/invitations com ação derivada do role ANTES da validação (401/403 precedem detalhe de validação — anti-enumeração); página de convites da equipa exclui convites de portal (vivem na ficha do cliente).
 - Revogação de acesso = soft-delete do User CLIENT + deleteMany das Sessions num $transaction (revogação imediata com strategy database) + AuditLog; users internos e CLIENTs de outro cliente são 404 nessa rota.
 - Loop de negação P1 sobre o route map interno nasceu verde (DENY-por-omissão da matriz) — mantido como teste de regressão [INV]; os 8 RED reais eram a funcionalidade nova.
+
+## Integração TOConline v1 — push de compras (branch `feature/toconline-integration`, 2026-07-07)
+
+Módulo **doc-driven, SEM teste contra a API real** (decisão explícita do dono).
+PASSO 0 obrigatório cumprido antes de qualquer código: documentação oficial
+descarregada verbatim para `integrations/toconline/docs/`, spec OpenAPI para
+`integrations/toconline/openapi.json`, tipos gerados (`npm run toconline:types`).
+Regra "nada inventado" enforced por contract tests contra o spec guardado.
+Ambiguidades e decisões (12) + checklist de validação humana em `INTEGRATION_NOTES.md`.
+
+### RED TOConline (2026-07-07)
+
+4 ficheiros — **RED confirmado antes de qualquer implementação** (3 import-level
+por módulos inexistentes + 1 por função inexistente): `tests/acceptance/toconline.push.test.ts`
+(13), `tests/acceptance/toconline.routes.test.ts` (6), `src/server/toconline/toconline-client.test.ts`
+(9), `src/lib/money.test.ts` (euroNumberFromCents). Mocks derivados da doc
+(fixtures copiadas verbatim com fonte citada), nunca inventados.
+
+| Slice | Estado | RED | Gate |
+|---|---|---|---|
+| T1 Ingestão da doc + spec OpenAPI + tipos gerados + validador de contrato | DONE | — (docs) | ✅ |
+| T2 Schema (ToconlineConnection por CLIENTE com secrets AES-GCM e dryRun TRUE à nascença, ToconlineEntityMap, ToconlinePushPreview, campos toconline* no Document) + migração `20260707000007` + ações can() toconline:read/manage/goLive | DONE | ✅ | ✅ |
+| T4 Cliente HTTP (OAuth auth-code não-interativo + refresh c/ fallback, headers da doc, retry 3x só 5xx/timeout, timeout 30s, 2 req/s, redaction) + push service (elegibilidade PT, payload puro cêntimos→euros na fronteira, EntityMap, idempotência local+remota, dry-run zero rede, AuditLog antes do POST) + processor/worker `toconline-push` + interface ExportTarget (File + Toconline) | DONE | ✅ | ✅ |
+| T5 Rotas (connection CRUD c/ validação OAuth no save, dry-run c/ goLive OWNER-only, push por item, previews) + loop de negação CLIENT atualizado + painel na ficha do cliente (form 4 dados, aviso NÃO TESTADA, confirmação go-live, tabela c/ seleção, dialog de previews) + 4 testes de componente | DONE | ✅ | ✅ |
+
+### Decisões TOConline (latitude / ambiguidades da doc)
+
+- Enums em inglês (regra da casa): ATIVA|ERRO|DESLIGADA → ACTIVE|ERROR|DISABLED; PENDENTE|ENVIADO|ERRO → PENDING|SENT|ERROR.
+- `toconline:goLive` (desligar dry-run) é OWNER_ONLY — integração nunca testada contra a API real; reativar dry-run é `toconline:manage`.
+- Elegibilidade: status VALIDATED **ou** EXPORTED (pós-validação), tipos INVOICE_RECEIVED + INVOICE_RECEIPT → doc de compra `FC`; EUR only; linhas isentas 0% recusadas com erro claro (motivo de isenção M01–M99 não derivável — o Gabify nunca faz interpretação fiscal); `retention_type` omitido (default TD da API, visível no preview).
+- Idempotência: `external_reference = "GABIFY:<documentId>"` + filtro documentado `filter[status]=1&filter[supplier_tax_registration_number]` com matching client-side; estado local SENT é no-op absoluto (zero HTTP).
+- Dry-run escreve DOIS previews (lookup GET de fornecedor + POST da compra na variante NIF+nome documentada) — o supplier_id interno não é conhecível sem rede.
+- Content-Type `application/vnd.api+json` em todos os pedidos à API (página "Características" vence o `application/json` do spec no POST v1) — ambiguidade #1, a confirmar no teste real.
+- Business errors do push completam o job (JobLog COMPLETED com erro) — o documento carrega o erro; só falhas inesperadas rebentam o retry do BullMQ.
+- Execução no diretório principal (staging estava limpo — sem worktree; precedente de contenção verificado antes).
+
+**Fim da integração TOConline v1: `npm run gate` verde — 478 testes (49 ficheiros), tsc 0 erros, eslint 0 erros, thresholds mantidos. Estado: IMPLEMENTADO / NÃO TESTADO CONTRA API REAL.**

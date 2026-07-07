@@ -149,6 +149,25 @@ What the client sees is deliberately simple. Each document shows one of three st
 
 You control access from the client's page: invite by email (the client signs in with a link, no password), see who has access, and revoke it at any moment — revocation is immediate. A portal user only ever sees the documents of their own company, and everything they upload lands in your normal intake pipeline, flagged with who sent it.
 
+## Sending purchases to TOConline (early access — not yet field-tested)
+
+If a client's company uses TOConline, Gabify can send their validated purchase
+invoices there directly — no re-typing, no manual export. On the client's page
+you connect their TOConline account (four values the client obtains from
+TOConline in a couple of minutes; the screen explains exactly where), pick the
+validated invoices, and press send. Gabify finds or creates the supplier by
+their tax number, creates the purchase document with one line per VAT rate —
+amounts exact to the cent — and records the TOConline document reference back
+on the invoice. An invoice that was already sent is never sent twice, even if
+you press the button again.
+
+**Safety first:** this integration is new and has not yet been exercised
+against a real TOConline account, so every connection starts in **test mode**.
+In test mode nothing leaves Gabify — instead, you get a preview of exactly
+what would be sent, to check line by line. Only the firm's owner can switch a
+client to real sending, and Gabify asks for explicit confirmation before doing
+so. Every send is logged.
+
 ## Coming soon
 
 ### Deadline Tracker
@@ -157,8 +176,8 @@ Gabify tracks Portuguese fiscal deadlines (IVA, IRS, IRC, Social Security, IMI) 
 ### Automated Reminders
 Automatic reminders to clients who haven't sent their monthly documents, by email now and WhatsApp later.
 
-### Accounting Software Integration
-Send classified documents directly to TOConline, Primavera, or Sage — no re-entry, no manual export.
+### More Accounting Software
+TOConline purchase sending is here (early access). Primavera, Sage and sales documents are next — same idea: no re-entry, no manual export.
 
 ---
 
