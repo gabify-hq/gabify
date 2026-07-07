@@ -2,7 +2,7 @@ import { type NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { guard } from '@/server/authz/guard'
-import { runExport } from '@/server/services/export-service'
+import { getExportQueue, DEFAULT_JOB_OPTIONS } from '@/lib/redis'
 
 const exportSchema = z.object({
   clientIds: z.array(z.string()).optional(),
@@ -11,6 +11,11 @@ const exportSchema = z.object({
   includeExported: z.boolean().default(false),
 })
 
+/**
+ * Enqueues an export job (audit F1.3) — the engine runs in the worker, never
+ * inside the request (a 500-document ZIP would blow the HTTP timeout/memory).
+ * The history (GET below) shows the batch as soon as the engine starts it.
+ */
 export async function POST(request: NextRequest) {
   const gate = await guard('export:run', { denyStatus: 403 })
   if (!gate.ok) return gate.response
@@ -26,21 +31,22 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Dados inválidos' }, { status: 422 })
   }
 
-  const result = await runExport({
-    officeId: gate.user.officeId,
-    userId: gate.user.id,
-    clientIds: parsed.data.clientIds,
-    periodFrom: parsed.data.periodFrom,
-    periodTo: parsed.data.periodTo,
-    includeExported: parsed.data.includeExported,
-  })
+  const job = await getExportQueue().add(
+    'run-export',
+    {
+      officeId: gate.user.officeId,
+      userId: gate.user.id,
+      clientIds: parsed.data.clientIds,
+      periodFrom: parsed.data.periodFrom,
+      periodTo: parsed.data.periodTo,
+      includeExported: parsed.data.includeExported,
+    },
+    DEFAULT_JOB_OPTIONS,
+  )
 
-  if (!result.ok) {
-    return NextResponse.json({ error: result.error }, { status: result.httpStatus })
-  }
   return NextResponse.json(
-    { success: true, data: { batchId: result.batchId, documentCount: result.documentCount } },
-    { status: 201 },
+    { success: true, data: { queued: true, jobId: (job as { id?: string })?.id ?? null } },
+    { status: 202 },
   )
 }
 
