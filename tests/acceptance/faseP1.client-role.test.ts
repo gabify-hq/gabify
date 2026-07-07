@@ -15,10 +15,12 @@ vi.mock('@/lib/redis', () => ({
   getEmailSyncQueue: () => ({ add: queueAddMock }),
   getDocumentParseQueue: () => ({ add: queueAddMock }),
   getToconlinePushQueue: () => ({ add: queueAddMock }),
+  getToconlinePullQueue: () => ({ add: queueAddMock }),
   QUEUE_EMAIL_SYNC: 'email-sync',
   QUEUE_DOCUMENT_PARSE: 'document-parse',
   QUEUE_SUBSCRIPTION_RENEWAL: 'subscription-renewal',
   QUEUE_TOCONLINE_PUSH: 'toconline-push',
+  QUEUE_TOCONLINE_PULL: 'toconline-pull',
   DEFAULT_JOB_OPTIONS: {},
   redisConnection: {},
 }))
@@ -535,6 +537,25 @@ const ROUTE_CASES: RouteCase[] = [
       const { GET } = await import('@/app/api/documents/[documentId]/toconline/route')
       return GET(jsonRequest('/api/documents/d1/toconline', 'GET'), {
         params: Promise.resolve({ documentId: 'd1' }),
+      })
+    },
+  },
+  // TOConline pull slice — new internal routes join the denial loop
+  {
+    name: 'PATCH /api/clients/[clientId]/toconline (capabilities)',
+    invoke: async () => {
+      const { PATCH } = await import('@/app/api/clients/[clientId]/toconline/route')
+      return PATCH(jsonRequest('/api/clients/c1/toconline', 'PATCH', { pullEnabled: true }), {
+        params: Promise.resolve({ clientId: 'c1' }),
+      })
+    },
+  },
+  {
+    name: 'POST /api/clients/[clientId]/toconline/pull',
+    invoke: async () => {
+      const { POST } = await import('@/app/api/clients/[clientId]/toconline/pull/route')
+      return POST(jsonRequest('/api/clients/c1/toconline/pull', 'POST', {}), {
+        params: Promise.resolve({ clientId: 'c1' }),
       })
     },
   },
