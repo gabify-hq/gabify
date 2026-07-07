@@ -83,6 +83,7 @@ enum DocumentSource {
   EMAIL          // attachment from a synced inbox
   MANUAL_UPLOAD  // web/mobile upload (S2.1)
   IMPORT         // spreadsheet import (S2.4)
+  PORTAL_UPLOAD  // uploaded by the end-client in the portal (fase P2)
 }
 
 enum JobStatus {
