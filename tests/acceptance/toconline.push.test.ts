@@ -26,13 +26,13 @@ import { processToconlinePush } from '@/queues/toconline-push.processor'
  * called (doc-driven integration, see INTEGRATION_NOTES.md).
  */
 
-const SUPPLIER_NIF = '509888777'
+const SUPPLIER_NIF = '509888771'
 const SUPPLIER_NAME = 'Fornecedor Teste Lda'
 
 async function seedBase(params?: { dryRun?: boolean; connection?: boolean }) {
   const office = await makeOffice()
   const owner = await makeUser({ officeId: office.id, role: 'OWNER' })
-  const client = await makeClient({ officeId: office.id, name: 'Cliente TOC', nif: '504426292' })
+  const client = await makeClient({ officeId: office.id, name: 'Cliente TOC', nif: '504426290' })
   const connection =
     params?.connection === false
       ? null
@@ -216,8 +216,9 @@ describe('🔴RED TOConline — push de compras [INV]', () => {
     const { office, owner, client } = await seedBase()
     const doc = await makeInvoice({ officeId: office.id, clientId: client.id })
     const mock = makeToconlineMock() // no suppliers yet
-    // Purchase creation fails hard (beyond the client's retries)
-    mock.failNext(/\/api\/v1\/commercial_purchases_documents$/, 500, 10)
+    // Purchase creation fails hard for the whole first push (1 attempt + 3
+    // retries); the service "recovers" before the second push
+    mock.failNext(/\/api\/v1\/commercial_purchases_documents$/, 500, 4)
 
     const first = await pushDocumentToToconline(
       { documentId: doc.id, officeId: office.id, userId: owner.id },

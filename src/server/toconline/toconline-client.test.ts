@@ -53,12 +53,12 @@ function makeClient(
 describe('ToconlineClient — autenticação (doc §2)', () => {
   it('sem tokens: corre o fluxo authorization_code completo e injeta os headers da doc', async () => {
     const mock = makeToconlineMock({
-      suppliers: [{ id: '7', tax_registration_number: '509888777', business_name: 'F' }],
+      suppliers: [{ id: '7', tax_registration_number: '509888771', business_name: 'F' }],
     })
     const captured: Array<{ accessToken: string }> = []
     const client = makeClient(mock.fetchImpl, { onTokens: (t) => captured.push(t) })
 
-    const supplier = await client.getSupplierByNif('509888777')
+    const supplier = await client.getSupplierByNif('509888771')
     expect(supplier?.id).toBe('7')
 
     // Flow order per the docs: GET /auth (302, not followed) → POST /token → API
@@ -85,7 +85,7 @@ describe('ToconlineClient — autenticação (doc §2)', () => {
 
   it('401 da API → refresh e repetição transparente; refresh sem refresh_token novo mantém o antigo', async () => {
     const mock = makeToconlineMock({
-      suppliers: [{ id: '7', tax_registration_number: '509888777', business_name: 'F' }],
+      suppliers: [{ id: '7', tax_registration_number: '509888771', business_name: 'F' }],
     })
     const seededRefresh = 'unit-refresh-token'
     mock.state.validRefreshTokens.add(seededRefresh)
@@ -97,7 +97,7 @@ describe('ToconlineClient — autenticação (doc §2)', () => {
       onTokens: (t) => captured.push(t),
     })
 
-    const supplier = await client.getSupplierByNif('509888777')
+    const supplier = await client.getSupplierByNif('509888771')
     expect(supplier?.id).toBe('7')
     expect(mock.state.tokenGrants).toEqual(['refresh_token'])
     // Documented refresh response has no refresh_token → the old one is kept
@@ -106,7 +106,7 @@ describe('ToconlineClient — autenticação (doc §2)', () => {
 
   it('refresh inválido → recua para o fluxo authorization_code completo', async () => {
     const mock = makeToconlineMock({
-      suppliers: [{ id: '7', tax_registration_number: '509888777', business_name: 'F' }],
+      suppliers: [{ id: '7', tax_registration_number: '509888771', business_name: 'F' }],
     })
     const client = makeClient(mock.fetchImpl, {
       accessToken: 'stale-token',
@@ -114,7 +114,7 @@ describe('ToconlineClient — autenticação (doc §2)', () => {
       tokenExpiresAt: new Date(Date.now() - 1000), // already expired
     })
 
-    const supplier = await client.getSupplierByNif('509888777')
+    const supplier = await client.getSupplierByNif('509888771')
     expect(supplier?.id).toBe('7')
     expect(mock.state.tokenGrants).toEqual(['refresh_token', 'authorization_code'])
   })
@@ -123,12 +123,12 @@ describe('ToconlineClient — autenticação (doc §2)', () => {
 describe('ToconlineClient — retry, timeout e rate limit', () => {
   it('5xx → retry com backoff até 3 vezes; recupera quando o serviço volta', async () => {
     const mock = makeToconlineMock({
-      suppliers: [{ id: '7', tax_registration_number: '509888777', business_name: 'F' }],
+      suppliers: [{ id: '7', tax_registration_number: '509888771', business_name: 'F' }],
     })
     mock.failNext(/\/api\/suppliers/, 500, 2)
     const client = makeClient(mock.fetchImpl)
 
-    const supplier = await client.getSupplierByNif('509888777')
+    const supplier = await client.getSupplierByNif('509888771')
     expect(supplier?.id).toBe('7')
     const supplierCalls = mock.calls.filter((c) => c.url.includes('/api/suppliers'))
     expect(supplierCalls).toHaveLength(3) // 2 failures + 1 success
@@ -139,7 +139,7 @@ describe('ToconlineClient — retry, timeout e rate limit', () => {
     mock.failNext(/\/api\/suppliers/, 503, 100)
     const client = makeClient(mock.fetchImpl)
 
-    await expect(client.getSupplierByNif('509888777')).rejects.toBeInstanceOf(ToconlineApiError)
+    await expect(client.getSupplierByNif('509888771')).rejects.toBeInstanceOf(ToconlineApiError)
     const supplierCalls = mock.calls.filter((c) => c.url.includes('/api/suppliers'))
     expect(supplierCalls).toHaveLength(4)
   })
@@ -149,14 +149,14 @@ describe('ToconlineClient — retry, timeout e rate limit', () => {
     mock.failNext(/\/api\/suppliers/, 422, 100)
     const client = makeClient(mock.fetchImpl)
 
-    await expect(client.getSupplierByNif('509888777')).rejects.toBeInstanceOf(ToconlineApiError)
+    await expect(client.getSupplierByNif('509888771')).rejects.toBeInstanceOf(ToconlineApiError)
     const supplierCalls = mock.calls.filter((c) => c.url.includes('/api/suppliers'))
     expect(supplierCalls).toHaveLength(1)
   })
 
   it('timeout aborta o pedido e conta como retryable', async () => {
     const mock = makeToconlineMock({
-      suppliers: [{ id: '7', tax_registration_number: '509888777', business_name: 'F' }],
+      suppliers: [{ id: '7', tax_registration_number: '509888771', business_name: 'F' }],
     })
     let hangs = 1
     const hangingFetch: typeof fetch = (input, init) => {
@@ -173,15 +173,15 @@ describe('ToconlineClient — retry, timeout e rate limit', () => {
     }
     const client = makeClient(hangingFetch, { timeoutMs: 30 })
 
-    const supplier = await client.getSupplierByNif('509888777')
+    const supplier = await client.getSupplierByNif('509888771')
     expect(supplier?.id).toBe('7') // recovered on retry after the timeout
   })
 
   it('rate limit interno: pedidos à API espaçados ≥ minIntervalMs (2 req/s → 500ms)', async () => {
     const mock = makeToconlineMock({
       suppliers: [
-        { id: '7', tax_registration_number: '509888777', business_name: 'F' },
-        { id: '8', tax_registration_number: '504426292', business_name: 'G' },
+        { id: '7', tax_registration_number: '509888771', business_name: 'F' },
+        { id: '8', tax_registration_number: '504426290', business_name: 'G' },
       ],
     })
     const timestamps: number[] = []
@@ -192,8 +192,8 @@ describe('ToconlineClient — retry, timeout e rate limit', () => {
     }
     const client = makeClient(timedFetch, { minIntervalMs: 120 })
 
-    await client.getSupplierByNif('509888777')
-    await client.getSupplierByNif('504426292')
+    await client.getSupplierByNif('509888771')
+    await client.getSupplierByNif('504426290')
 
     expect(timestamps).toHaveLength(2)
     expect(timestamps[1] - timestamps[0]).toBeGreaterThanOrEqual(100)
@@ -206,7 +206,7 @@ describe('ToconlineClient — retry, timeout e rate limit', () => {
 
     let caught: unknown
     try {
-      await client.getSupplierByNif('509888777')
+      await client.getSupplierByNif('509888771')
     } catch (error) {
       caught = error
     }

@@ -80,7 +80,7 @@ async function makeValidatedInvoice(officeId: string, clientId: string) {
       status: 'VALIDATED',
       type: 'INVOICE_RECEIVED',
       supplierName: 'Fornecedor Lda',
-      supplierNif: '509888777',
+      supplierNif: '509888771',
       issueDate: new Date('2026-06-15T12:00:00.000Z'),
       currency: 'EUR',
       totalAmount: '123.00',

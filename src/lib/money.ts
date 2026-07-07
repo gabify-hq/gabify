@@ -30,6 +30,16 @@ export function formatCents(cents: number): string {
   return decimalStringFromCents(cents)
 }
 
+/**
+ * Integer cents → euro Number with exactly the cent value (e.g. 8134 → 81.34).
+ * For use ONLY at external API boundaries that require JSON numbers (TOConline
+ * purchase lines): the value serializes to the exact 2-decimal string.
+ * All internal arithmetic stays in integer cents.
+ */
+export function euroNumberFromCents(cents: number): number {
+  return Number(new Decimal(cents).dividedBy(100).toFixed(2))
+}
+
 /** Parses a nullable numeric-ish input safely into cents, or null. */
 export function centsFromUnknown(value: unknown): number | null {
   if (value === null || value === undefined) return null

@@ -18,7 +18,8 @@
     "test:coverage": "vitest run --coverage",
     "seed:bootstrap": "tsx --env-file=.env.local scripts/seed-office.ts",
     "gate": "node scripts/gate.mjs",
-    "toconline:types": "openapi-typescript integrations/toconline/openapi.json -o integrations/toconline/types.ts"
+    "toconline:types": "openapi-typescript integrations/toconline/openapi.json -o integrations/toconline/types.ts",
+    "worker:toconline": "tsx --env-file=.env.local src/queues/toconline-push.worker.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",
