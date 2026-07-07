@@ -80,6 +80,16 @@ Estados de documento de compra (doc v0): `0` = não finalizado, `1` = finalizado
 10. **`redirect_uri`** — a doc fixa `https://oauth.pstmn.io/v1/callback` como valor
     pré-configurado pelo serviço OAuth deles. Usado como constante; se o integrador
     tiver alterado o redirect na empresa, a ligação falha — documentado na UI.
+11. **Refresh sem `refresh_token` novo** — o exemplo documentado da resposta ao
+    refresh (§2.3) NÃO traz `refresh_token`, mas o texto fala em "novo
+    refresh_token". Decisão conservadora: se o campo vier, usa-se; se não vier,
+    mantém-se o anterior. Como fallback final existe sempre o fluxo
+    authorization_code completo.
+12. **`retention_type`** — quando há retenção enviamos só `retention_total`; o
+    tipo (TD/TI/C/P/CPS/O) não é derivável do documento com segurança e a API
+    assume TD por omissão. Escolher TI automaticamente seria interpretação
+    fiscal — fica visível no preview para o contabilista confirmar. A rever com
+    contabilista na validação humana.
 
 ## Arquitetura (resumo)
 

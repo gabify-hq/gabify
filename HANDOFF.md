@@ -1,7 +1,21 @@
 # HANDOFF.md — Gabify v2
 
 Execução autónoma de SPEC_GABIFY_V2 + ADDENDUM em `feature/gabify-v2`.
-**Último estado estável: `npm run gate` verde — 407 testes (42 ficheiros), tsc 0 erros, eslint 0 erros, thresholds de cobertura enforced (queues ≥80, api ≥70, server ≥75).**
+**Último estado estável: `npm run gate` verde — 478 testes (49 ficheiros), tsc 0 erros, eslint 0 erros, thresholds de cobertura enforced (queues ≥80, api ≥70, server ≥75).**
+
+## Integração TOConline v1 — push de compras (2026-07-07, branch `feature/toconline-integration`)
+
+> **⚠️ IMPLEMENTADO / NÃO TESTADO CONTRA API REAL** — módulo doc-driven por
+> decisão do dono. Fonte de verdade: `integrations/toconline/` (spec OpenAPI +
+> páginas markdown oficiais, verbatim). Ambiguidades, decisões e o **checklist
+> de validação humana obrigatório** antes de produção: `INTEGRATION_NOTES.md`.
+> Detalhe técnico: `docs/technical/toconline.md`.
+
+- **Arquitetura**: interface `ExportTarget` criada (`src/server/export-targets/` — a spec §7 reservava-a): `FileExportTarget` delega no `runExport` existente sem mudar nada; `ToconlineExportTarget` novo. Config por CLIENTE (`ToconlineConnection`, clientId unique, 4 dados do integrador, secret+tokens AES-GCM); `ToconlineEntityMap` (cache NIF→id); `ToconlinePushPreview` (dry-run). Job BullMQ `toconline-push` (worker novo `npm run worker:toconline` — só entra no Railway quando fôr para envios reais).
+- **Fluxo**: rota push por item → PENDING + job → fornecedor (EntityMap→GET NIF→POST auditado) → idempotência remota (filtro documentado + marcador `GABIFY:<id>` em external_reference) → AuditLog ANTES do POST → compra v1 (cabeçalho+linhas, auto-finalizada) → SENT. Linhas do `vatBreakdown` em cêntimos, euros SÓ na fronteira. ENVIADO nunca re-envia; falha a meio retoma sem duplicar fornecedor.
+- **Dry-run [INV]**: ligação nasce dryRun=true → zero rede (teste com fetch proibido), previews exatos sem segredos na UI; desligar = `toconline:goLive` OWNER-only com aviso explícito "nunca foi testada contra o TOConline real".
+- **Limites v1 conscientes**: linhas isentas 0% recusadas (motivo de isenção não derivável), só EUR, `retention_type` omitido — tudo com erro/preview claro e registado nas notas.
+- Gate no fecho: verde — 478 testes (49 ficheiros), thresholds mantidos.
 
 ## Fase P — Portal do cliente final v1 (2026-07-07, branch `feature/client-portal-v1`)
 

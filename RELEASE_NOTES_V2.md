@@ -1,7 +1,7 @@
 # RELEASE_NOTES_V2.md — Gabify v2
 
 Execução autónoma da SPEC_GABIFY_V2 (+ ADDENDUM) na branch `feature/gabify-v2`.
-Estado final: **Fases 0–3 completas + slice de UI + slice S5 + Fase C (conciliação bancária v1), gate verde (349 testes, thresholds de cobertura enforced)**. Fase 4 não executada (regra 13 — ver HANDOFF.md).
+Estado final: **Fases 0–3 completas + slice de UI + slice S5 + Fase C (conciliação bancária v1), gate verde (478 testes, thresholds de cobertura enforced)**. Fase 4 não executada (regra 13 — ver HANDOFF.md).
 
 ## Dependências adicionadas (bibliotecas, não infraestrutura — A6)
 
@@ -108,5 +108,41 @@ Nenhum teste `[INV]` foi apagado, skipado ou enfraquecido.
 Fora de âmbito respeitado: sem notificações ao cliente final, sem comentários, sem multi-cliente por user, sem chasing, sem download em massa, sem visibilidade financeira agregada.
 
 Envs novas: `RATE_LIMIT_CLIENT_API_PER_MIN` (30), `RATE_LIMIT_CLIENT_UPLOAD_PER_MIN` (10).
+
+Nenhum teste `[INV]` foi apagado, skipado ou enfraquecido.
+
+### Integração TOConline v1 — push de compras (spec adicional, 2026-07-07, branch `feature/toconline-integration`)
+
+> **⚠️ ESTADO: IMPLEMENTADO / NÃO TESTADO CONTRA API REAL.** Módulo doc-driven
+> por decisão explícita do dono: todo o código nasceu da documentação oficial
+> guardada em `integrations/toconline/` (spec OpenAPI + páginas markdown) e de
+> mocks derivados dela. Nenhum pedido foi feito ao TOConline real. Antes de
+> qualquer uso em produção, seguir o checklist de validação humana em
+> `INTEGRATION_NOTES.md`. Toda a ligação nasce em **dry-run** (zero rede) e só
+> o OWNER a pode pôr em envios reais, com aviso explícito.
+
+| AC | Resultado | Notas |
+|---|---|---|
+| TC.a [INV] (fornecedor existente por NIF não é recriado; EntityMap cacheia o id) | PASS (contra mock da doc) | |
+| TC.b [INV] (fatura 23%+6% → linhas com bases certas AO CÊNTIMO; asserção numérica + contrato OpenAPI + headers da doc) | PASS (contra mock da doc) | euros só na fronteira (`euroNumberFromCents`) |
+| TC.c [INV] (re-push de ENVIADO → no-op com aviso, zero chamadas HTTP) | PASS (contra mock da doc) | |
+| TC.d [INV] (falha pós-criação de fornecedor → retry retoma sem duplicar; payload do fornecedor validado contra o contrato) | PASS (contra mock da doc) | |
+| TC.e [INV] (token expirado → refresh e repetição transparente; tokens rodados persistidos encriptados) | PASS (contra mock da doc) | refresh sem refresh_token novo mantém o antigo (ambiguidade #11) |
+| TC.f [INV] (dry-run → NENHUMA chamada HTTP — fetch proibido que falha o teste; preview exato sem segredos) | PASS | |
+| TC.g [INV] (credenciais NUNCA em console/AuditLog/erros/previews/lastError — grep ao output) | PASS | |
+| TC.h (AuditLog TOCONLINE_PUSH_STARTED existe ANTES do POST de criação) | PASS (contra mock da doc) | verificado DENTRO do fetch |
+| TC.i (idempotência remota: estado local perdido → filtro documentado por NIF+estado encontra o marcador GABIFY:<id> e reutiliza) | PASS (contra mock da doc) | |
+| TC.j (linha isenta 0% → erro claro pt-PT, sem escrita — motivo de isenção não suportado na v1) | PASS | decisão: nunca adivinhar motivos fiscais |
+| TC.k (moeda ≠ EUR → erro claro, zero chamadas) | PASS | |
+| TC.l (retenção → retention_total em euros exatos) | PASS (contra mock da doc) | retention_type omitido (ambiguidade #12) |
+| TC.m (processor JobLog início/fim; retry idempotente) | PASS | |
+| TR.a–f (rotas: PUT valida OAuth ao guardar e nunca devolve segredos; cross-tenant 404 nas 6 rotas novas [INV]; VIEWER read-only; dry-run OFF é OWNER-only auditado; push com relatório por item; previews sem segredos) | PASS (contra mock da doc) | rotas novas também no loop de negação CLIENT (fase P1) |
+| Cliente HTTP (9 testes unit: fluxo auth code, refresh 401 transparente, fallback re-auth, retry 3x SÓ 5xx/timeout, 4xx sem retry, timeout 30s, rate limit 2 req/s, redaction) | PASS (contra mock da doc) | |
+
+**Dependências novas:** `openapi-typescript` (dev — gera `integrations/toconline/types.ts` a partir do spec guardado; `npm run toconline:types`).
+
+**Deploy:** worker novo `npm run worker:toconline` (fila BullMQ `toconline-push`) — adicionar ao Railway apenas quando a integração for validada e posta em envios reais. Sem envs novas (config por cliente vive na BD, encriptada com a `TOKEN_ENCRYPTION_KEY` existente).
+
+**Fora de âmbito respeitado:** vendas/emissão, plano de contas, pull de dados (exceto lookups de fornecedor), outros ERPs (interface `ExportTarget` pronta: `FileExportTarget` + `ToconlineExportTarget`).
 
 Nenhum teste `[INV]` foi apagado, skipado ou enfraquecido.
