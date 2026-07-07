@@ -79,7 +79,8 @@ describe('contract: schemas are strict (undocumented fields rejected)', () => {
   })
 
   it('rejects a missing documented field', () => {
-    const { net_value: _dropped, ...withoutNetValue } = invoiceMultiRateDetail
+    const withoutNetValue: Record<string, unknown> = { ...invoiceMultiRateDetail }
+    delete withoutNetValue.net_value
     const result = moloniDocumentDetailSchema.safeParse(withoutNetValue)
     expect(result.success).toBe(false)
   })

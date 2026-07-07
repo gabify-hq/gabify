@@ -7,6 +7,7 @@
  * Values are floats on purpose: that is what the Moloni doc specifies, and
  * the whole point of the mapper is converting them to cents exactly once.
  */
+import type { MoloniDocumentDetail } from './schemas'
 
 /** Grant response — integrations/moloni/docs/autenticacao.md §3º Passo. */
 export function grantResponseFixture(overrides?: {
@@ -242,7 +243,7 @@ export const draftDetail = {
  * integrations/moloni/docs/documents_documents_getall.md (summary shape has
  * no products/payments/associated_documents and no per-entity city fields).
  */
-export function summaryOf(detail: typeof invoiceMultiRateDetail) {
+export function summaryOf(detail: MoloniDocumentDetail) {
   return {
     document_id: detail.document_id,
     document_type_id: detail.document_type_id,
