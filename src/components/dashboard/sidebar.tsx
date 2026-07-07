@@ -18,7 +18,8 @@ interface SidebarProps {
   user?: SidebarUser
 }
 
-const navItems = [
+/** Shared between the desktop sidebar and the mobile drawer (audit F1.4). */
+export const NAV_ITEMS = [
   { href: '/inbox', label: 'Caixa de entrada', icon: Inbox, badgeKey: 'unread' as const },
   { href: '/clients', label: 'Clientes', icon: Users, badgeKey: null },
   { href: '/documents', label: 'Documentos', icon: FileText, badgeKey: null },
@@ -28,7 +29,7 @@ const navItems = [
   { href: '/assistant', label: 'Assistente', icon: MessageCircleQuestion, badgeKey: null },
 ]
 
-function getInitials(name?: string | null, email?: string | null): string {
+export function getInitials(name?: string | null, email?: string | null): string {
   if (name) {
     const parts = name.trim().split(/\s+/)
     if (parts.length >= 2) {
@@ -42,7 +43,7 @@ function getInitials(name?: string | null, email?: string | null): string {
   return '?'
 }
 
-function LogoutButton() {
+export function LogoutButton() {
   return (
     <button
       type="button"
@@ -70,7 +71,7 @@ export function Sidebar({ unreadCount, pendingCount, user }: SidebarProps) {
   const displayEmail = user?.email ?? ''
 
   return (
-    <aside className="flex w-56 shrink-0 flex-col border-r border-gray-200 bg-gray-50">
+    <aside className="hidden w-56 shrink-0 flex-col border-r border-gray-200 bg-gray-50 md:flex">
       {/* Logo */}
       <div className="flex h-13 items-center border-b border-gray-200 px-4 py-3.5">
         <Link href="/inbox" className="flex flex-1 items-center gap-2.5">
@@ -104,7 +105,7 @@ export function Sidebar({ unreadCount, pendingCount, user }: SidebarProps) {
         )}
 
         <ul className="space-y-0.5">
-          {navItems.map((item) => {
+          {NAV_ITEMS.map((item) => {
             const active = isActive(item.href)
             const badge = getBadge(item.badgeKey)
             return (

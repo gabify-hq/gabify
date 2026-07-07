@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { redirect } from 'next/navigation'
 import { Sidebar } from '@/components/dashboard/sidebar'
+import { MobileNav } from '@/components/dashboard/mobile-nav'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { resolveAreaRedirect } from '@/lib/area-redirect'
@@ -40,13 +41,18 @@ export default async function DashboardLayout({ children }: { children: ReactNod
       >
         Saltar para o conteúdo principal
       </a>
-      <div className="flex h-screen overflow-hidden bg-white">
+      <div className="flex h-screen flex-col overflow-hidden bg-white md:flex-row">
+        <MobileNav
+          unreadCount={unreadCount}
+          pendingCount={pendingCount}
+          user={session?.user}
+        />
         <Sidebar
           unreadCount={unreadCount}
           pendingCount={pendingCount}
           user={session?.user}
         />
-        <main id="main-content" className="flex flex-1 flex-col overflow-hidden">{children}</main>
+        <main id="main-content" className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</main>
       </div>
     </>
   )

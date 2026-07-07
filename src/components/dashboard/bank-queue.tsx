@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Landmark, Loader2, RefreshCw, Check, Undo2, EyeOff, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { ScoreBreakdownLine } from './score-breakdown'
 
 /**
  * Bank reconciliation queue (fase C3) — mobile-first. Suggestions show the
@@ -389,7 +390,6 @@ export function BankQueue({ initialStatus, initialAccountId }: BankQueueProps) {
                             {decimalToPt(s.totalAmount)}
                           </span>
                           <span
-                            title={`Montante ${s.scoreBreakdown.amount} · Data ${s.scoreBreakdown.date} · Entidade ${s.scoreBreakdown.entity} · Referência ${s.scoreBreakdown.reference}`}
                             className={cn(
                               'data inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-bold ring-1 ring-inset',
                               s.scoreTotal >= 75
@@ -398,9 +398,6 @@ export function BankQueue({ initialStatus, initialAccountId }: BankQueueProps) {
                             )}
                           >
                             {s.scoreTotal}
-                          </span>
-                          <span className="hidden text-[10px] text-gray-400 sm:inline">
-                            M{s.scoreBreakdown.amount} · D{s.scoreBreakdown.date} · E{s.scoreBreakdown.entity} · R{s.scoreBreakdown.reference}
                           </span>
                           {s.autoMatch && (
                             <button
@@ -412,6 +409,7 @@ export function BankQueue({ initialStatus, initialAccountId }: BankQueueProps) {
                               Aceitar
                             </button>
                           )}
+                          <ScoreBreakdownLine breakdown={s.scoreBreakdown} />
                         </li>
                       ))}
                     </ul>
