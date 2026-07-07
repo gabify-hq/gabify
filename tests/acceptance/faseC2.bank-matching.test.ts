@@ -242,13 +242,30 @@ describe('🔴RED C2 — motor de matching determinístico', () => {
 
   it('C2.e [INV] — documento já conciliado ou não VALIDADO/EXPORTADO nunca é candidato', async () => {
     const { office, client, account, statementImport } = await seedBase()
+    // Entry real (C3 adicionou a FK): transação antiga já conciliada
+    const reconciledTx = await makeTx({
+      officeId: office.id,
+      bankAccountId: account.id,
+      importId: statementImport.id,
+      amountCents: -24600,
+      bookingDate: '2026-05-01',
+      description: 'MOVIMENTO ANTIGO CONCILIADO',
+    })
+    const entry = await prisma.reconciliationEntry.create({
+      data: {
+        officeId: office.id,
+        bankTransactionId: reconciledTx.id,
+        documentIds: [],
+        reconciledByUserId: null,
+      },
+    })
     await makeDoc({
       officeId: office.id,
       clientId: client.id,
       totalAmount: '246.00',
       supplierNif: '509888777',
       dueDate: '2026-06-12',
-      reconciledEntryId: 'entry-x', // já conciliado
+      reconciledEntryId: entry.id, // já conciliado
     })
     await makeDoc({
       officeId: office.id,
