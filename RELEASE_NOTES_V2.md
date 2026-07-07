@@ -190,3 +190,27 @@ Nenhum teste `[INV]` foi apagado, skipado ou enfraquecido.
 **Envs novas:** `MOLONI_PULL_INTERVAL_MS`, `INVOICEXPRESS_PULL_INTERVAL_MS` (default 1800000 — 30 min). **Deploy:** `npm run worker:moloni` e `npm run worker:invoicexpress` FORA do railway.toml até validação humana real dos 3 sistemas (checklist em `docs/technical/sources.md`).
 
 Nenhum teste `[INV]` foi apagado, skipado ou enfraquecido.
+
+## Seed de demonstração (feature/seed-demo)
+
+`npm run seed:demo` cria um office **"Gabinete Demo"** completo e realista, via services (nunca SQL direto), **idempotente** (2ª corrida é no-op — marcador: email do OWNER demo).
+
+**Como correr a demo:**
+
+```bash
+docker compose up -d                 # Postgres + Redis
+npx prisma migrate deploy
+npm run seed:demo                    # SEED_DEMO_OWNER_EMAIL opcional (default demo@gabify.local)
+npm run dev                          # entrar com magic link do email demo
+```
+
+O que é criado: 3 utilizadores (OWNER/ACCOUNTANT/VIEWER), 3 clientes (serviços, restaurante, freelancer com retenção IRS), 30 documentos (recebidas+emitidas, estados A_REVER/PRE_VALIDADO/VALIDADO/EXPORTADO, par duplicado, suspeita de cliente errado, IVA 23%/6+23%/isento/retenção, PDFs sintéticos carregados para o storage — sem R2 configurado a demo corre na mesma, com aviso), 1 SupplierRule ativa + sugestão SNC, 1 conta bancária com extrato de 16 movimentos (5 conciliados, 4 sugestões pendentes com scores variados incl. autoMatch, 6 por conciliar, 1 ignorado por BankRule), 1 draft de resposta PENDING_REVIEW no copiloto (texto fixo — IA nunca invocada). NIFs todos FICTÍCIOS mas válidos por checksum. Zero ligações externas.
+
+| Verificação | Estado |
+|---|---|
+| SD.a guard: recusa NODE_ENV=production sem SEED_DEMO_FORCE=true | PASS |
+| SD.b [INV] idempotência: 2ª corrida → contagens iguais, zero duplicados | PASS |
+| SD.c office completo (~30 docs, estados variados, par duplicado, wrong-client) | PASS |
+| SD.d [INV] NIFs fictícios passam checksum | PASS |
+| SD.e [INV] Σbases+ΣIVA−retenção=total ao cêntimo em todos os docs | PASS |
+| SD.f banco: 5 conciliados / sugestões variadas c/ autoMatch / 6 limpos / 1 ignorado por regra | PASS |

@@ -127,6 +127,10 @@ As três insuficiências documentadas pelo slice de UI foram fechadas com TDD RE
 4. Re-encriptação GCM é lazy (no próximo refresh de token) — tokens antigos continuam CBC até lá, por desenho (A12).
 5. ~~Correções de `vatBreakdown`/retenção/moeda na review — bloqueadas pela API~~ — resolvido no slice S5 (ver acima).
 
+## Demo (`npm run seed:demo`)
+
+Office "Gabinete Demo" completo para demonstrações: 3 users, 3 clientes (serviços/restaurante/freelancer c/ retenção), 30 docs em estados variados com PDFs sintéticos, regra de fornecedor + sugestão SNC, banco com 16 movimentos (5 conciliados, sugestões pendentes c/ autoMatch, 1 ignorado por regra), draft PENDING_REVIEW no copiloto. Via services, idempotente (marcador: `SEED_DEMO_OWNER_EMAIL`, default `demo@gabify.local`), NIFs fictícios checksum-válidos, IA nunca invocada, recusa `NODE_ENV=production` sem `SEED_DEMO_FORCE=true`. Detalhe e verificações em RELEASE_NOTES_V2.md.
+
 ## Arranque num ambiente novo
 
 ```bash
