@@ -27,12 +27,14 @@ export async function makeUser(params: {
   role?: UserRole
   email?: string
   name?: string
+  clientId?: string | null
 }) {
   return createUserInOffice({
     officeId: params.officeId,
     email: params.email ?? `user${next()}@test.gabify.pt`,
     name: params.name ?? `User ${seq}`,
     role: params.role ?? 'ACCOUNTANT',
+    clientId: params.clientId ?? null,
   })
 }
 
