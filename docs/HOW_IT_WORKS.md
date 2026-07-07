@@ -234,3 +234,32 @@ If a client issues invoices in **Moloni** or **InvoiceXpress**, Gabify can impor
 - Each connection shows its status, the last sync time, how many documents were imported, and any error, plus a clear notice that the connection has **not yet been tested against the real service**.
 
 > Coming soon: importing from other billing platforms (Jasmin, Vendus, Primavera) using the same one-way, read-only approach.
+
+## What changed after the first full audit (July 2026)
+
+Gabify went through a complete engineering and usability audit, and the biggest findings
+were fixed straight away:
+
+- **Invitation links now work end to end.** Clicking the link in an invitation email opens
+  a proper page that recognises the invite, explains everything in Portuguese (including
+  expired or already-used invitations), and sends the sign-in link — no passwords, ever.
+- **Every document shows up, whatever the way in.** Files uploaded by hand, sent by clients
+  through the portal, imported from spreadsheets or pulled from billing software now appear
+  in the Documents page and in each client's history, with a small label saying how each
+  one arrived.
+- **Exporting has a proper screen.** Pick the clients and the months, press Export, and
+  Gabify builds the ZIP in the background — the history below shows progress and gives you
+  the download button when it is ready.
+- **Gabify works on the phone.** The menu collapses into a drawer on small screens, so
+  reviewing documents or accepting bank matches at a client's office actually works.
+- **Rejecting a document asks first — and can be undone.** One accidental click no longer
+  makes a document disappear for good.
+- **Bank movements without a suggestion can be matched by hand.** Search the client's
+  validated documents by number or supplier and link them; Gabify still checks that the
+  amounts add up.
+- **Duplicate questions now have answer buttons.** When Gabify asks "Duplicado?", you can
+  archive the duplicate or say the documents are distinct.
+- **The export files are safer.** Supplier names with unusual characters no longer break
+  the CSV, and invoices with Azores/Madeira VAT rates keep their amounts in the file.
+- **The office owner can see what ran overnight.** A new screen lists every background
+  task (email syncs, document processing, exports) and shows failures in red.

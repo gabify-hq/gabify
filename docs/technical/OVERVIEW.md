@@ -221,3 +221,37 @@ npx tsc --noEmit                                 # type check
 npm run lint                                     # lint
 npm run test                                     # run tests
 ```
+
+## Audit-fixes slice (2026-07-08 — branch feature/audit-fixes)
+
+Cross-cutting changes from the post-audit correction slice (full map: PROGRESS.md,
+REVIEW_ISSUES.md with per-item commits):
+
+- **New queue**: `export` (BullMQ) consumed by the documents worker process
+  (`document-parse.worker.ts` hosts a second Worker, concurrency 1). `POST /api/exports`
+  now returns 202 and enqueues; `src/queues/export.processor.ts` runs the engine, logs to
+  JobLog and records a FAILED ExportBatch on refusal/crash so history never shows zombies.
+- **OAuth token refresh serialized per account**: `src/server/email-providers/token-refresh.ts`
+  (`pg_advisory_xact_lock` inside an interactive transaction, double-checked read). Both
+  providers delegate; concurrent workers produce exactly one refresh.
+- **GmailProvider**: incremental sync follows `nextPageToken` to exhaustion and only then
+  persists the cursor; `startHistoryId` 404 clears the cursor and falls back to a paginated
+  full sync (cap 200 messages) whose highest message historyId becomes the new watermark.
+  `GmailApiError` carries the HTTP status.
+- **Draft generation failures propagate** (job FAILED → BullMQ retry, max 3) after releasing
+  the EmailAction slot — no more silently lost drafts.
+- **New routes**: `POST /api/documents/[id]/resolve-duplicate` · `POST .../approve-split` ·
+  `POST .../restore` (undo of reject) · `GET /api/bank/transactions/[id]/candidates`
+  (manual reconciliation search). All behind `can('document:review')` / `can('bank:read')`
+  with office scoping (cross-tenant → 404).
+- **Document listings** (`/documents` page, client detail) read via
+  `listOfficeDocuments`/`listClientDocuments` (`document-service.ts`): `Document.officeId`
+  scoping, every intake source, REAL lifecycle status; DTO gained `source`/`sourceLabel`.
+  `assignClientToDocument` scoping fixed accordingly.
+- **Export files**: RFC 4180 escaping everywhere; dynamic `base_<região>_<taxa>` /
+  `iva_<região>_<taxa>` columns for non-continental VAT bands; `resumo_iva.csv` now has a
+  `regiao` column (rows: `regiao;taxa;base;iva`).
+- **Shell**: desktop sidebar is `hidden md:flex`; `MobileNav` drawer below `md`;
+  `/admin/jobs` (OWNER-only, linked from Definições) reads JobLog: per-queue summary,
+  failures in red, attempt counts by repeated jobId. External alerting stays future work
+  (BACKLOG.md).

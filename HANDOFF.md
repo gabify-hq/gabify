@@ -153,3 +153,24 @@ Seeds: `npm run seed:bootstrap` (office+owner); taxonomia SNC: `seedSncTaxonomy(
 - `npm run gate` = tsc + eslint + testes + cobertura com thresholds.
 
 ## Decisões com latitude — ver secção "Decisões" do PROGRESS.md.
+
+## Slice pós-auditoria — audit-fixes (2026-07-08, branch `feature/audit-fixes`)
+
+Fecho dos CRÍTICOS e paredes de adoção da auditoria dupla (REVIEW_ISSUES.md + UX_CONTABILISTA.md,
+ambos agora registo vivo com ✅+commit). 12 itens em 3 fases, RED-first, gate verde por fase.
+
+- **Novas superfícies**: página `/accept-invite` (estados pt-PT, magic link por role);
+  página `/exports` (job BullMQ `export` no worker de documentos, histórico, download);
+  página `/admin/jobs` (OWNER; lê JobLog); rotas `resolve-duplicate`, `approve-split`,
+  `restore` (documentos) e `candidates` (conciliação manual); `MobileNav` (drawer <768px).
+- **Comportamento alterado**: POST /api/exports agora devolve **202 e enfileira** (era 201 síncrono);
+  GmailProvider segue nextPageToken e faz fallback de full sync em 404 de historyId;
+  refresh de tokens OAuth serializado por conta (`token-refresh.ts`, pg_advisory_xact_lock);
+  falha de geração de rascunho AI propaga (retry BullMQ, máx 3) em vez de morrer em silêncio;
+  Rejeitar na fila exige confirmação e tem "Anular" (soft-delete reversível via /restore);
+  `lancamentos.csv` com escaping RFC 4180 + colunas dinâmicas para taxas AC/MA;
+  `resumo_iva.csv` ganhou coluna `regiao`; listagens de documentos usam `Document.officeId`
+  direto (todas as origens) com estado real + badge/filtro de origem.
+- **Pendentes**: BACKLOG.md (MÉDIOs/BAIXOs + ALTOs A-4/A-7/A-8/A-9/A-10 fora do slice,
+  alertas externos de operação, onboarding do gabinete vazio).
+- **Sem merge/push** — branch local `feature/audit-fixes` (12 commits RED/GREEN), à espera de PR humano.
