@@ -159,12 +159,31 @@ Nota: a tabela por cliente do dashboard continua server-side (`groupBy`) — o e
 
 **Fim do C2: `npm run gate` verde — 341 testes (36 ficheiros), thresholds mantidos.**
 
+### RED C3 (2026-07-07)
+
+`tests/acceptance/faseC3.reconcile.test.ts` (8 testes) — **RED import-level confirmado** (rotas reconcile/unreconcile/rules inexistentes) antes de implementar.
+
+| Slice | Estado | RED | Gate |
+|---|---|---|---|
+| C3 Modelos (ReconciliationEntry 1:1 tx c/ documentIds snapshot, BankRule, BankTransaction.version A7, FK Document.reconciledEntryId) + migração `20260707000003_c3_reconciliation_entries_bank_rules` | DONE | ✅ | ✅ |
+| C3 POST reconcile (documentIds[] OU ignore+motivo, expectedVersion): claim condicional + entry + links + sugestões ACCEPTED/REJECTED + AuditLog num único $transaction atómico; multi-doc Σ±tolerância → 422; 2ª conciliação/versão errada → 409 | DONE | ✅ | ✅ |
+| C3 POST unreconcile: reverte tx→UNRECONCILED, documentos desligados, sugestões→PENDING, entry apagada, AuditLog do undo | DONE | ✅ | ✅ |
+| C3 BankRule engine (prioridade asc, first-match; CONTAINS/EQUALS accent-insensitive, SIMPLE_REGEX seguro) aplicado ANTES do scoring: IGNORE→entry+audit+IGNORED sem sugestões; SUGGEST_CLIENT redireciona candidatos + CRUD /api/bank/rules (bankRule:manage) | DONE | ✅ | ✅ |
+| C3 UI mobile-first pt-PT: /bank (contas por cliente + fila com score/breakdown visível, aceitar 1 toque em autoMatch, multi-doc por checkbox, ignorar com motivo, reverter), /bank/import (wizard 3 passos + força reimport), /settings/bank-rules, item "Banco" na sidebar, contadores por conciliar/sugeridas no dashboard | DONE | — (UI) | ✅ |
+
+**Fim do C3: `npm run gate` verde — 349 testes (37 ficheiros), thresholds mantidos. Fase C completa.**
+
 ### Decisões C (latitude da spec)
 
 - 45–74 gera sugestão com autoMatch=false mas NÃO muda o estado da transação (a spec só manda SUGERIDA para ≥75); a fila da UI mostra ambas.
 - Débito casa com INVOICE_RECEIVED/INVOICE_RECEIPT/RECEIPT; crédito com INVOICE_ISSUED (o repo tem os dois lados — testados os dois).
 - `Document.reconciledEntryId` entra em C2 como coluna simples (candidatura exclui conciliados desde já); a FK para ReconciliationEntry chega com o modelo em C3.
 - Matching corre sincronamente no fim do confirm do import (determinístico, zero IA, sem custo) — sem job novo.
+- Conciliação manual multi-documento aceita documentos de qualquer cliente do office (o contabilista decide); a restrição ao cliente da conta aplica-se só aos CANDIDATOS do scoring. Regras SUGGEST_CLIENT legitimam o cross-client.
+- AuditLog da conciliação vive dentro do $transaction atómico (existe sse a ação aconteceu) — sem ação externa não há ordering "antes" observável; padrão igual ao interno da review.
+- Undo apaga a ReconciliationEntry (o rasto imutável fica nos DOIS AuditLogs: reconcile e unreconcile com o payload da entry).
+- DELETE de BankRule é hard delete (registo de configuração, não de negócio); entries antigas mantêm ruleId a null via SetNull.
+- amountMin/amountMax das regras comparam contra amountCents COM sinal (débitos são negativos) — documentado na UI pelo placeholder.
 
 - Enums em inglês por regra da casa (precedente DocumentStatus): POR_CONCILIAR→UNRECONCILED, SUGERIDA→SUGGESTED, CONCILIADA→RECONCILED, IGNORADA→IGNORED; PENDENTE/ACEITE/REJEITADA→PENDING/ACCEPTED/REJECTED.
 - Confirmação humana do mapeamento é obrigatória nos DOIS caminhos (heurística e IA) — a heurística só evita a chamada à IA; consistente com o wizard de import de documentos (AC-2.5.c).

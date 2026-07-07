@@ -69,7 +69,14 @@ EmailAttachment ──1 Document
 EmailAction     ──1 EmailReview
                 ──1 AuditLog     (nullable)
 Document        ──1 DocumentReview
+
+Client ──< BankAccount ──< BankStatementImport ──< BankTransaction
+BankTransaction ──< ReconciliationSuggestion >── Document
+                ──1 ReconciliationEntry ──< Document (reconciledEntryId)
+Office ──< BankRule   (applied before matching; IGNORE / SUGGEST_CLIENT)
 ```
+
+Bank reconciliation module detail: [bank-reconciliation.md](bank-reconciliation.md).
 
 ### Cross-cutting schema decisions
 

@@ -1,7 +1,16 @@
 # HANDOFF.md — Gabify v2
 
 Execução autónoma de SPEC_GABIFY_V2 + ADDENDUM em `feature/gabify-v2`.
-**Último estado estável: `npm run gate` verde — 302 testes (32 ficheiros), tsc 0 erros, eslint 0 erros, thresholds de cobertura enforced (queues ≥80, api ≥70, server ≥75).**
+**Último estado estável: `npm run gate` verde — 349 testes (37 ficheiros), tsc 0 erros, eslint 0 erros, thresholds de cobertura enforced (queues ≥80, api ≥70, server ≥75).**
+
+## Fase C — Conciliação bancária v1 (2026-07-07, spec adicional)
+
+Módulo novo (import de extratos, sem PSD2), C1→C2→C3 com RED-first e gate verde entre fases. Detalhe técnico em `docs/technical/bank-reconciliation.md`; decisões e ACs em PROGRESS.md/RELEASE_NOTES_V2.md.
+
+- **C1 Import**: BankAccount/BankStatementImport/BankTransaction; wizard 2 passos com deteção heurística de colunas PT (zero IA) e fallback IA — confirmação humana SEMPRE obrigatória; parser dedicado `centsFromBankAmount` (A1, nunca float); dedupHash unique por office (duplicados = skip+relatório, nunca 500); fileHash repetido → 409 com `force` explícito; magic bytes + 10MB.
+- **C2 Matching determinístico**: pesos 50 (montante, eliminatório, tolerância por office `Office.reconciliationToleranceCents`)/25 (data)/20 (NIF>nome)/+15 (nº doc); ≥75 autoMatch (pré-seleciona na UI, NUNCA concilia sozinho), 45–74 revisão, máx 5 por transação; candidatos só do cliente da conta, VALIDATED/EXPORTADO, não conciliados; corre automático e síncrono pós-import.
+- **C3 Conciliar**: reconcile multi-documento (Σ±tolerância→422) com optimistic locking A7 e entry+audit+estados num $transaction atómico; unreconcile reverte tudo; BankRule (IGNORE/SUGGEST_CLIENT, prioridade asc, aplicada ANTES do scoring); UI mobile-first /bank + /bank/import + /settings/bank-rules (OWNER+ACCOUNTANT via `bankRule:manage`); contadores por conciliar/sugeridas no dashboard.
+- **Nota de execução**: fase C construída na worktree `.claude/worktrees/bank-c1` (o diretório principal mudou de branch durante a sessão); BD de teste isolada `gabify_test_bankc1` via env `TEST_DATABASE_URL` (opcional — o default `gabify_test` continua válido sem suites concorrentes).
 
 ## O que foi entregue (Fases 0–3, todas com gate verde)
 

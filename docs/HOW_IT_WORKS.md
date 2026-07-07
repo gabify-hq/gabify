@@ -133,6 +133,14 @@ Documents that Gabify is confident about arrive **pre-validated** — one click 
 
 When a period is done, export it: a ZIP organised as Client/Year/Month/Type with every PDF, plus a `lancamentos.csv` that opens correctly in Portuguese Excel and an Excel file with proper numeric cells — ready to enter your accounting software. Exported documents are locked; only the firm owner can reopen one, with a mandatory reason, and everything is logged.
 
+## Bank reconciliation
+
+Upload a bank statement (the CSV or Excel your homebanking exports) and Gabify reads the movements — it recognises the usual Portuguese column names automatically, shows you what it understood, and only imports after you confirm. Importing the same statement twice never duplicates movements.
+
+For each movement, Gabify looks at the validated documents of that client and suggests matches, with a transparent score: does the amount match, is the date close to the due date, is the supplier's NIF or name in the bank description, is the invoice number mentioned. Strong matches come pre-selected — you accept with one tap. A payment can be matched against several invoices at once, as long as the amounts add up. Gabify **never reconciles anything on its own**: every match is confirmed by you, every action is logged, and everything can be undone.
+
+Recurring noise — bank fees, standing charges — can be silenced with simple rules ("if the description contains COMISSÃO, ignore it"), so your reconciliation queue only shows what actually needs your attention.
+
 ## Coming soon
 
 ### Client Portal
