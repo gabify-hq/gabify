@@ -451,5 +451,9 @@ export async function confirmBankStatementImport(params: {
     },
   })
 
+  // C2 wiring: deterministic matching (zero AI, cheap) runs right after import
+  const { runMatchingForImport } = await import('./bank-matching')
+  await runMatchingForImport({ officeId: params.officeId, importId: pending.id })
+
   return { ok: true, report }
 }

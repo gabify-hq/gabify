@@ -109,6 +109,12 @@ enum BankTransactionStatus {
   IGNORED      // IGNORADA
 }
 
+enum SuggestionStatus {
+  PENDING  // PENDENTE
+  ACCEPTED // ACEITE
+  REJECTED // REJEITADA
+}
+
 // ─────────────────────────────────────────
 // OFFICE (gabinete de contabilidade)
 // ─────────────────────────────────────────
@@ -120,6 +126,8 @@ model Office {
   email       String?
   phone       String?
   address     String?
+  // Bank matching (C2): amount tolerance in integer cents — A1, never float
+  reconciliationToleranceCents Int @default(2)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   deletedAt   DateTime?
@@ -141,6 +149,7 @@ model Office {
   bankAccounts     BankAccount[]
   bankImports      BankStatementImport[]
   bankTransactions BankTransaction[]
+  reconciliationSuggestions ReconciliationSuggestion[]
 
   @@index([deletedAt])
 }
@@ -530,6 +539,12 @@ model Document {
   // ── Export linkage (S3.3/A9) ──
   exportBatchId String?
 
+  // ── Bank reconciliation (C2/C3) ──
+  // Set when the document is reconciled against bank transactions; a reconciled
+  // document never re-enters candidate matching. FK relation lands in C3 with
+  // the ReconciliationEntry model — never touches the document state machine.
+  reconciledEntryId String?
+
   office       Office          @relation(fields: [officeId], references: [id], onDelete: Restrict)
   attachment   EmailAttachment? @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
   client       Client?         @relation(fields: [clientId], references: [id])
@@ -537,6 +552,7 @@ model Document {
   parent       Document?       @relation("DocumentSplit", fields: [parentDocumentId], references: [id])
   children     Document[]      @relation("DocumentSplit")
   exportLinks  ExportDocument[]
+  reconciliationSuggestions ReconciliationSuggestion[]
 
   @@index([officeId, status])
   @@index([officeId, supplierNif, documentNumber])
@@ -843,8 +859,32 @@ model BankTransaction {
   office      Office              @relation(fields: [officeId], references: [id], onDelete: Cascade)
   bankAccount BankAccount         @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
   import      BankStatementImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+  suggestions ReconciliationSuggestion[]
 
   @@unique([officeId, dedupHash])
   @@index([officeId, status])
   @@index([bankAccountId, bookingDate])
+}
+
+// C2 — deterministic matching suggestions. autoMatch=true only pre-selects in
+// the UI; reconciliation itself ALWAYS requires a human action in v1.
+model ReconciliationSuggestion {
+  id                String           @id @default(cuid())
+  officeId          String
+  bankTransactionId String
+  documentId        String
+  scoreTotal        Int
+  scoreBreakdown    Json // { amount, date, entity, reference }
+  autoMatch         Boolean          @default(false)
+  status            SuggestionStatus @default(PENDING)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  office          Office          @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  bankTransaction BankTransaction @relation(fields: [bankTransactionId], references: [id], onDelete: Cascade)
+  document        Document        @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([bankTransactionId, documentId])
+  @@index([officeId, status])
+  @@index([documentId])
 }

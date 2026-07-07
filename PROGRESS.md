@@ -146,7 +146,25 @@ Nota: a tabela por cliente do dashboard continua server-side (`groupBy`) — o e
 
 **Fim do C1: `npm run gate` verde — 322 testes (34 ficheiros), thresholds mantidos.**
 
+### RED C2 (2026-07-07)
+
+`tests/acceptance/faseC2.bank-matching.test.ts` (10 testes) — **RED import-level confirmado** (`@/server/services/bank-matching` inexistente) antes de implementar.
+
+| Slice | Estado | RED | Gate |
+|---|---|---|---|
+| C2 Modelos (ReconciliationSuggestion unique (tx,doc), Office.reconciliationToleranceCents default 2, Document.reconciledEntryId) + migração `20260707000002_c2_reconciliation_suggestions` | DONE | ✅ | ✅ |
+| C2 Scorer puro (`scoreCandidate`): montante 50/45 eliminatório, data 25/15/5 (dueDate→issueDate), NIF 20 com fronteira de dígitos / nome normalizado ≥4 chars word-boundary 12, referência +15 space-insensitive — fixture 95 EXATO [INV] | DONE | ✅ | ✅ |
+| C2 `generateSuggestionsForTransaction`: candidatos só do MESMO cliente da conta, VALIDATED/EXPORTED, não conciliados, pré-filtro SQL por janela de tolerância; ≥75 autoMatch + tx→SUGGESTED (transição condicional), 45–74 revisão, máx 5 ordenadas, idempotente (skipDuplicates) | DONE | ✅ | ✅ |
+| C2 `validateReconciliationTotals` (multi-doc: Σtotais = |amountCents| ± tolerância — 422 no ato de conciliar em C3) + wiring: confirm do import corre matching automaticamente (zero IA) | DONE | ✅ | ✅ |
+
+**Fim do C2: `npm run gate` verde — 341 testes (36 ficheiros), thresholds mantidos.**
+
 ### Decisões C (latitude da spec)
+
+- 45–74 gera sugestão com autoMatch=false mas NÃO muda o estado da transação (a spec só manda SUGERIDA para ≥75); a fila da UI mostra ambas.
+- Débito casa com INVOICE_RECEIVED/INVOICE_RECEIPT/RECEIPT; crédito com INVOICE_ISSUED (o repo tem os dois lados — testados os dois).
+- `Document.reconciledEntryId` entra em C2 como coluna simples (candidatura exclui conciliados desde já); a FK para ReconciliationEntry chega com o modelo em C3.
+- Matching corre sincronamente no fim do confirm do import (determinístico, zero IA, sem custo) — sem job novo.
 
 - Enums em inglês por regra da casa (precedente DocumentStatus): POR_CONCILIAR→UNRECONCILED, SUGERIDA→SUGGESTED, CONCILIADA→RECONCILED, IGNORADA→IGNORED; PENDENTE/ACEITE/REJEITADA→PENDING/ACCEPTED/REJECTED.
 - Confirmação humana do mapeamento é obrigatória nos DOIS caminhos (heurística e IA) — a heurística só evita a chamada à IA; consistente com o wizard de import de documentos (AC-2.5.c).
