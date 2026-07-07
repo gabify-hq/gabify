@@ -38,6 +38,8 @@ export type AuthzAction =
   | 'toconline:read'
   | 'toconline:manage'
   | 'toconline:goLive'
+  | 'source:read'
+  | 'source:manage'
 
 const READ_ACTIONS: AuthzAction[] = [
   'client:read',
@@ -47,6 +49,9 @@ const READ_ACTIONS: AuthzAction[] = [
   // TOConline integration v1: connection status + dry-run previews are readable
   // by every internal role; changing anything requires toconline:manage
   'toconline:read',
+  // Source connectors (Moloni / InvoiceXpress): connection status is readable by
+  // every internal role; managing credentials/toggles requires source:manage
+  'source:read',
 ]
 
 const INTERNAL_ACTIONS: AuthzAction[] = [
@@ -77,6 +82,10 @@ const INTERNAL_ACTIONS: AuthzAction[] = [
   // never tested against the real API, so going live is an owner decision.
   'toconline:manage',
   'toconline:goLive',
+  // Source connectors (Moloni / InvoiceXpress): connect/edit/toggle/sync are
+  // OWNER+ACCOUNTANT. These are SOURCE-only (pull) — no go-live gate exists
+  // (importing never writes to the external system).
+  'source:manage',
 ]
 
 const OWNER_ONLY: AuthzAction[] = [
