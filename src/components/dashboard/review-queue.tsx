@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { Check, X, Eye, Loader2, CheckCheck, AlertTriangle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -141,9 +142,12 @@ export function ReviewQueue({ items }: { items: ReviewItemDTO[] }) {
           >
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-1.5">
-                <span className="truncate text-[13px] font-semibold text-gray-800">
+                <Link
+                  href={`/review/${item.id}`}
+                  className="truncate text-[13px] font-semibold text-gray-800 hover:text-green-700 hover:underline"
+                >
                   {item.documentNumber ?? item.filename}
-                </span>
+                </Link>
                 <span
                   className={cn(
                     'rounded-full px-2 py-0.5 text-[10px] font-semibold',

@@ -64,6 +64,9 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/adm-zip": "^0.5.8",
     "@types/imap": "^0.8.43",
     "@types/mailparser": "^3.4.6",
@@ -77,6 +80,7 @@
     "concurrently": "^10.0.3",
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
+    "jsdom": "^29.1.1",
     "qrcode": "^1.5.4",
     "tailwindcss": "^4",
     "tsx": "^4.22.3",
