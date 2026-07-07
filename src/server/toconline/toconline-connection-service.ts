@@ -64,24 +64,35 @@ export async function saveConnection(params: {
     oauthClientId: params.oauthClientId,
     oauthClientSecret: encryptToken(params.oauthClientSecret),
   }
-  const connection = await prisma.toconlineConnection.upsert({
-    where: { clientId: params.clientId },
-    create: {
-      officeId: params.officeId,
-      clientId: params.clientId,
-      ...base,
-      status: 'ACTIVE',
-    },
-    update: {
-      ...base,
-      // fresh credentials invalidate stored tokens
-      accessToken: null,
-      refreshToken: null,
-      tokenExpiresAt: null,
-      status: 'ACTIVE',
-      lastError: null,
-    },
+  // clientId stopped being globally unique with the Ligações model (a client
+  // may hold several source connections); the UI still manages ONE TOConline
+  // connection per client — the oldest row is "the" connection.
+  const existing = await prisma.toconlineConnection.findFirst({
+    where: { officeId: params.officeId, clientId: params.clientId },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true },
   })
+  const connection = existing
+    ? await prisma.toconlineConnection.update({
+        where: { id: existing.id },
+        data: {
+          ...base,
+          // fresh credentials invalidate stored tokens
+          accessToken: null,
+          refreshToken: null,
+          tokenExpiresAt: null,
+          status: 'ACTIVE',
+          lastError: null,
+        },
+      })
+    : await prisma.toconlineConnection.create({
+        data: {
+          officeId: params.officeId,
+          clientId: params.clientId,
+          ...base,
+          status: 'ACTIVE',
+        },
+      })
 
   // Audit before the external validation call (house rule)
   await prisma.auditLog.create({

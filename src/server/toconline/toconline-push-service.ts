@@ -198,10 +198,10 @@ async function resolveSupplierId(params: {
 
   const cached = await prisma.toconlineEntityMap.findUnique({
     where: {
-      connectionId_entityType_nif: {
+      connectionId_entityType_externalKey: {
         connectionId: connection.id,
         entityType: 'SUPPLIER',
-        nif,
+        externalKey: nif,
       },
     },
   })
@@ -229,16 +229,16 @@ async function resolveSupplierId(params: {
 
   await prisma.toconlineEntityMap.upsert({
     where: {
-      connectionId_entityType_nif: {
+      connectionId_entityType_externalKey: {
         connectionId: connection.id,
         entityType: 'SUPPLIER',
-        nif,
+        externalKey: nif,
       },
     },
     create: {
       connectionId: connection.id,
       entityType: 'SUPPLIER',
-      nif,
+      externalKey: nif,
       toconlineId,
     },
     update: { toconlineId },

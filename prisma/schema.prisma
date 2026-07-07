@@ -84,6 +84,7 @@ enum DocumentSource {
   MANUAL_UPLOAD  // web/mobile upload (S2.1)
   IMPORT         // spreadsheet import (S2.4)
   PORTAL_UPLOAD  // uploaded by the end-client in the portal (fase P2)
+  API_PULL       // pulled from an external system API (TOConline sales pull) — AI pipeline NEVER runs on these
 }
 
 enum JobStatus {
@@ -330,7 +331,7 @@ model Client {
   bankRuleTargets BankRule[] @relation("BankRuleTargetClient")
   portalUsers       User[]       @relation("ClientPortalUsers")
   portalInvitations Invitation[] @relation("ClientPortalInvitations")
-  toconlineConnection ToconlineConnection?
+  toconlineConnections ToconlineConnection[]
 
   @@index([officeId])
   @@index([deletedAt])
@@ -557,6 +558,7 @@ model Document {
   vatBreakdown      Json?    // [{region, rate, baseCents, vatCents}] — integer cents (A1)
   documentLines     Json?    // [{description, qty, unitPriceCents, vatRate, totalCents}]
   buyerNif          String?
+  buyerName         String?  // final customer name (issued invoices pulled from external APIs)
   atcud             String?
   extractionSource  String?  // QR | XML | AI_VISION | AI_PDF | AI_TEXT | IMPORT
 
@@ -1010,7 +1012,11 @@ model BankRule {
 model ToconlineConnection {
   id       String @id @default(cuid())
   officeId String
-  clientId String @unique // one TOConline company per Gabify client
+  // "Ligações" model (pull slice): a client may hold N source connections but
+  // at most ONE push-enabled destination — enforced by a partial unique index
+  // in SQL (Prisma cannot express partials):
+  //   CREATE UNIQUE INDEX ... ON "ToconlineConnection"("clientId") WHERE "pushEnabled"
+  clientId String
 
   oauthUrl String // OAUTH_URL from the integrator credentials
   apiUrl   String // API_URL from the integrator credentials
@@ -1030,6 +1036,15 @@ model ToconlineConnection {
   // Only OWNER can disable it (toconline:goLive), with explicit confirmation.
   dryRun Boolean @default(true)
 
+  // Capability toggles (Ligações): source (pull issued invoices) and
+  // destination (push purchases) are independent.
+  pullEnabled Boolean @default(false)
+  pushEnabled Boolean @default(true)
+
+  // Sales pull state (incremental sync — see toconline-pull-service)
+  lastPullAt     DateTime?
+  lastPullCursor String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1040,21 +1055,25 @@ model ToconlineConnection {
   previews   ToconlinePushPreview[]
 
   @@index([officeId])
+  @@index([clientId])
 }
 
-// Cache of Gabify → TOConline entity ids (suppliers by NIF for now) so retries
-// and subsequent pushes never repeat lookups or re-create entities.
+// Cache of Gabify ↔ TOConline entity ids so retries and re-pulls never repeat
+// lookups, re-create entities or re-import documents.
+// entityType 'SUPPLIER': externalKey = supplier NIF → toconlineId = supplier id.
+// entityType 'SALES_DOCUMENT': externalKey = toconlineId = sales document id
+// (pull dedup — a known id is a no-op on every subsequent pull).
 model ToconlineEntityMap {
   id           String   @id @default(cuid())
   connectionId String
-  entityType   String // 'SUPPLIER' (only type in v1)
-  nif          String
+  entityType   String // 'SUPPLIER' | 'SALES_DOCUMENT'
+  externalKey  String // NIF for suppliers; TOConline id for pulled documents
   toconlineId  String // TOConline internal id (JSONAPI ids are strings)
   createdAt    DateTime @default(now())
 
   connection ToconlineConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
 
-  @@unique([connectionId, entityType, nif])
+  @@unique([connectionId, entityType, externalKey])
 }
 
 // Dry-run output: the EXACT request the push job would send (endpoint, method,
@@ -1062,7 +1081,9 @@ model ToconlineEntityMap {
 model ToconlinePushPreview {
   id           String   @id @default(cuid())
   connectionId String
-  documentId   String
+  // Nullable since the pull slice: dry-run PULL previews describe a Document
+  // that would be CREATED (it does not exist yet) — documentId stays null.
+  documentId   String?
   endpoint     String // path relative to apiUrl, e.g. /api/v1/commercial_purchases_documents
   method       String
   headers      Json // secret-free: Authorization is redacted
@@ -1070,7 +1091,7 @@ model ToconlinePushPreview {
   createdAt    DateTime @default(now())
 
   connection ToconlineConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
-  document   Document            @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  document   Document?           @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   @@index([connectionId, createdAt])
   @@index([documentId])
