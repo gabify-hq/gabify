@@ -308,3 +308,22 @@ Doc de vendas guardada verbatim ANTES de código (`apis_vendas_*`, `apis_versoes
 - Scan repeatable enfileira 1 job por ligação ativa; runs agendados auditam com userId null (sistema).
 
 **Fim da extensão de pull: `npm run gate` verde — 497 testes (51 ficheiros), tsc 0 erros, eslint 0 erros, thresholds mantidos. Estado: IMPLEMENTADO / NÃO TESTADO CONTRA API REAL.**
+
+## Unificação de fontes — Moloni + InvoiceXpress (feature/sources-unification)
+
+| Fase | Estado | Testes |
+|---|---|---|
+| U1 Contrato único (permil, `withholdingCents` et al. absorvidos; IVX implementa `DocumentSourceConnector`; `types-local.ts` apagado) | DONE | ✅ regressão zero + `rate-equivalence` |
+| U2 Persistência (`MoloniConnection`/`InvoicexpressConnection`, `SourceEntityMap` genérico) + `runSourcePull` + jobs `moloni-pull`/`invoicexpress-pull` | DONE | ✅ [INV] job→BD (cêntimos, dedup no-op, IA nunca, NIF 1-chamada-p/-N, cifrado, cross-tenant 404, fora do push) |
+| U3 Ligações UI + rotas `sources/[system]` + RBAC `source:read`/`source:manage` (CLIENT negado) | DONE | ✅ persist cifrado, VIEWER negado, cross-tenant, sync, componente |
+| U4 TOConline pull no contrato (`ToconlineSourceConnector`); serviço mantém dry-run/anti-eco | DONE | ✅ regressão zero em todas as suites toconline |
+
+### Decisões (latitude)
+
+- `SourceEntityMap` unique inclui `entityType` (endurece o `(system, externalId, clientId)` da spec — evita colisão doc-id vs client-id no cache CLIENT).
+- Representação de taxa: **permil** (Moloni já; IVX adaptado com prova numérica). `withholdingCents` entra no contrato como opcional.
+- TOConline pull NÃO migra para `runSourcePull`: o **dry-run** (previews em vez de Document) e o **anti-eco GABIFY:** são incompatíveis com o runner genérico; o conector cobre só o lado de leitura (listing + PDF). Nenhum [INV] enfraquecido.
+- Moloni v1 re-scan do offset 0 por run (dedup garante correção); `getModifiedSince` documentado como evolução.
+- `worker:moloni`/`worker:invoicexpress` documentados mas FORA do railway.toml até validação humana.
+
+**Estado: IMPLEMENTADO / NÃO TESTADO CONTRA AS APIs REAIS. Checklist humano consolidado em `docs/technical/sources.md`.**

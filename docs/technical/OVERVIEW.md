@@ -82,6 +82,11 @@ Client ──< ToconlineConnection ──< ToconlineEntityMap    (SUPPLIER: NIF�
                                 ──< ToconlinePushPreview (dry-run: exact push request / would-be pulled Document)
        (N source connections; partial unique: at most ONE with pushEnabled)
 Document: toconlinePushStatus / toconlineDocumentId / toconlinePushedAt / toconlinePushError
+
+Client ──< MoloniConnection          (source pull; credentials AES-GCM; pullEnabled)
+Client ──< InvoicexpressConnection   (source pull; api_key AES-GCM; pullEnabled)
+Office ──< SourceEntityMap           (generic: SALES_DOCUMENT dedup + CLIENT NIF cache;
+                                      unique system+entityType+externalId+clientId)  — see docs/technical/sources.md
           source API_PULL + buyerName/buyerNif (issued invoices pulled from TOConline)
 ```
 
@@ -180,6 +185,7 @@ npm run gate            # tsc + eslint + tests + coverage
 | Rate limits | `RATE_LIMIT_API_PER_HOUR`, `RATE_LIMIT_MAGIC_LINK_PER_HOUR`, `RATE_LIMIT_WEBHOOK_PER_MIN`, `RATE_LIMIT_UPLOAD_USER_PER_HOUR`, `RATE_LIMIT_UPLOAD_OFFICE_PER_HOUR`, `RATE_LIMIT_INGEST_PER_HOUR`, `RATE_LIMIT_CLIENT_API_PER_MIN`, `RATE_LIMIT_CLIENT_UPLOAD_PER_MIN`, `RATE_LIMIT_ASSISTANT_PER_MIN` |
 | Assistant | `ASSISTANT_MODEL` (economical model for the read-only Q&A loop — see `docs/technical/assistant.md`) |
 | TOConline | `TOCONLINE_PULL_INTERVAL_MS` (repeatable sales-pull scan; default 30 min) |
+| Sources | `MOLONI_CLIENT_ID` / `MOLONI_CLIENT_SECRET` (developer app), `MOLONI_PULL_INTERVAL_MS`, `INVOICEXPRESS_PULL_INTERVAL_MS` (repeatable source-pull scans; default 30 min) — see docs/technical/sources.md |
 
 Full descriptions and example values in `.env.example`.
 
@@ -195,6 +201,8 @@ Three services in `railway.toml`:
 | `worker-email-sync` | `npm run worker:email` | BullMQ email sync worker |
 | `worker-document-parse` | `npm run worker:documents` | BullMQ document parse worker |
 | `worker-toconline` | `npm run worker:toconline` | BullMQ TOConline workers: push + sales pull + repeatable pull scan (new — deploy only when the integration goes live) |
+| `worker-moloni` | `npm run worker:moloni` | BullMQ Moloni source pull + repeatable scan — NOT in railway.toml until validated for real |
+| `worker-invoicexpress` | `npm run worker:invoicexpress` | BullMQ InvoiceXpress source pull + repeatable scan — NOT in railway.toml until validated for real |
 
 Health check: `GET /api/health` (⏳ TODO: implement endpoint)
 

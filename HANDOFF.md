@@ -27,6 +27,44 @@ Execução autónoma de SPEC_GABIFY_V2 + ADDENDUM em `feature/gabify-v2`.
 
 > **Worktrees — setup obrigatório antes de testar:** todo o worktree novo precisa de `npm ci` (ou `npm install`) **+ `npx prisma generate`**. Sem o generate local, o Node resolve o `.prisma/client` do node_modules de um diretório ancestral (schema de outro branch) → dezenas de falhas fantasma "column does not exist". O global setup dos testes acceptance aborta com instrução de correção se detetar este drift (`checkPrismaClientDrift` em `tests/setup/test-env.ts`).
 
+## Unificação de fontes — Moloni + InvoiceXpress ligados à BD (2026-07-07, branch `feature/sources-unification`)
+
+> **⚠️ IMPLEMENTADO / NÃO TESTADO CONTRA AS APIs REAIS.** Consolida os
+> conectores Moloni e InvoiceXpress (antes puros, sem BD) e unifica o contrato
+> de fontes. Detalhe técnico completo: `docs/technical/sources.md`. Os handoffs
+> originais `HANDOFF_MOLONI.md` e `HANDOFF_IVX.md` ficam como histórico.
+
+- **U1 — contrato único** (`src/server/sources/types.ts`): `types-local.ts` do
+  IVX fundido no contrato; taxa de IVA unificada em **permil** (Moloni já o era;
+  IVX converte percent→permil com equivalência numérica provada em
+  `rate-equivalence.test.ts`); `withholdingCents`/retenção/`dueDate`/`atcud`/…
+  absorvidos como campos opcionais; `InvoicexpressConnector` passa a implementar
+  `DocumentSourceConnector` (uma página por chamada, PDF → Buffer). Regressão
+  zero nos dois conectores.
+- **U2 — persistência + jobs**: modelos `MoloniConnection` /
+  `InvoicexpressConnection` (por cliente, credenciais AES-GCM, `pullEnabled`
+  default false) + **`SourceEntityMap` genérico** (dedup SALES_DOCUMENT + cache
+  CLIENT do NIF; unique `(system, entityType, externalId, clientId)`). Runner
+  partilhado `runSourcePull`: pagina o contrato, dedup, cria `Document`
+  API_PULL/INVOICE_ISSUED/PRE_VALIDATED/confiança 1.0 (**IA nunca invocada**) +
+  `SourceEntityMap` + `AuditLog` numa transação. Jobs BullMQ `moloni-pull` /
+  `invoicexpress-pull` (repeatable, `*_PULL_INTERVAL_MS` default 30 min, +
+  Sincronizar agora). NIF do IVX resolvido **1 chamada por cliente final**
+  (memo + cache). [INV] job→BD: cêntimos exatos, re-pull no-op, credenciais
+  cifradas, cross-tenant 404, API_PULL fora do seletor de push TOConline.
+- **U3 — Ligações (UI + RBAC)**: `SourceConnectionsPanel` na ficha do cliente
+  (só-fonte, sem toggle de destino/dry-run); rotas
+  `/api/clients/[id]/sources/[system]` + `/sync`; RBAC `source:read` /
+  `source:manage` (CLIENT negado, loop faseP1 atualizado).
+- **U4 — TOConline pull no contrato**: `ToconlineSourceConnector implements
+  DocumentSourceConnector` (listing + PDF); o serviço de pull mantém a
+  orquestração própria (**dry-run** e **anti-eco GABIFY:** não cabem no runner
+  genérico) e consome o conector. Regressão zero. Mapeamento extraído para
+  `toconline-sales-mapping.ts`.
+- **Fora do railway.toml**: `worker:moloni` e `worker:invoicexpress` só entram
+  após validação humana (checklist consolidado em `docs/technical/sources.md`).
+- Gate no fecho: verde.
+
 ## Fase P — Portal do cliente final v1 (2026-07-07, branch `feature/client-portal-v1`)
 
 Módulo novo: os clientes finais de cada gabinete têm login próprio num portal minimal (carregar documentos + ver estado público dos seus). Módulo de maior sensibilidade de segurança — em dúvida, isolamento ganha SEMPRE. Detalhe em `docs/technical/client-portal.md`; ACs e decisões em PROGRESS.md/RELEASE_NOTES_V2.md.
