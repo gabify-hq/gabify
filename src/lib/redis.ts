@@ -16,6 +16,8 @@ export const QUEUE_DOCUMENT_PARSE = 'document-parse'
 export const QUEUE_SUBSCRIPTION_RENEWAL = 'subscription-renewal'
 export const QUEUE_TOCONLINE_PUSH = 'toconline-push'
 export const QUEUE_TOCONLINE_PULL = 'toconline-pull'
+export const QUEUE_MOLONI_PULL = 'moloni-pull'
+export const QUEUE_INVOICEXPRESS_PULL = 'invoicexpress-pull'
 
 // Default job options
 export const DEFAULT_JOB_OPTIONS = {
@@ -34,6 +36,8 @@ let documentParseQueue: Queue | null = null
 let subscriptionRenewalQueue: Queue | null = null
 let toconlinePushQueue: Queue | null = null
 let toconlinePullQueue: Queue | null = null
+let moloniPullQueue: Queue | null = null
+let invoicexpressPullQueue: Queue | null = null
 
 export function getEmailSyncQueue(): Queue {
   if (!emailSyncQueue) {
@@ -68,6 +72,20 @@ export function getToconlinePullQueue(): Queue {
     toconlinePullQueue = new Queue(QUEUE_TOCONLINE_PULL, { connection: redisConnection })
   }
   return toconlinePullQueue
+}
+
+export function getMoloniPullQueue(): Queue {
+  if (!moloniPullQueue) {
+    moloniPullQueue = new Queue(QUEUE_MOLONI_PULL, { connection: redisConnection })
+  }
+  return moloniPullQueue
+}
+
+export function getInvoicexpressPullQueue(): Queue {
+  if (!invoicexpressPullQueue) {
+    invoicexpressPullQueue = new Queue(QUEUE_INVOICEXPRESS_PULL, { connection: redisConnection })
+  }
+  return invoicexpressPullQueue
 }
 
 export { Queue, Worker, QueueEvents }

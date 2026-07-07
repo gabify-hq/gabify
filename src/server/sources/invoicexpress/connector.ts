@@ -1,6 +1,6 @@
 import { InvoicexpressApiError, InvoicexpressClient } from './invoicexpress-client'
 import { mapListInvoiceToSourceDocument, toApiDate } from './mapping'
-import { listInvoicesResponseSchema, pdfResponseSchema } from './schemas'
+import { clientDetailResponseSchema, listInvoicesResponseSchema, pdfResponseSchema } from './schemas'
 import type { DocumentSourceConnector, Page, SourceDocument } from '../types'
 
 /**
@@ -132,6 +132,28 @@ export class InvoicexpressConnector implements DocumentSourceConnector {
     const totalPages = parsed.data.pagination.total_pages
     const nextCursor = page < totalPages ? String(page + 1) : null
     return { items, nextCursor }
+  }
+
+  /**
+   * Resolves a customer's NIF via `GET /clients/{client-id}.json`
+   * (`client.fiscal_id`). Document responses never carry the NIF, so the pull
+   * job calls this ONCE per final customer (cached). Returns null when the
+   * client is unknown (4xx) or exposes no fiscal id.
+   */
+  async resolveClientNif(externalId: string): Promise<string | null> {
+    let body: unknown
+    try {
+      body = await this.client.getJson(`/clients/${encodeURIComponent(externalId)}.json`)
+    } catch (error) {
+      if (error instanceof InvoicexpressApiError && error.status && error.status < 500) {
+        return null
+      }
+      throw error
+    }
+    const parsed = clientDetailResponseSchema.safeParse(body)
+    if (!parsed.success) return null
+    const nif = parsed.data.client.fiscal_id
+    return nif && nif.trim() !== '' ? nif.trim() : null
   }
 
   /**

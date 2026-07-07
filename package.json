@@ -19,7 +19,9 @@
     "seed:bootstrap": "tsx --env-file=.env.local scripts/seed-office.ts",
     "gate": "node scripts/gate.mjs",
     "toconline:types": "openapi-typescript integrations/toconline/openapi.json -o integrations/toconline/types.ts",
-    "worker:toconline": "tsx --env-file=.env.local src/queues/toconline.worker.ts"
+    "worker:toconline": "tsx --env-file=.env.local src/queues/toconline.worker.ts",
+    "worker:moloni": "tsx --env-file=.env.local src/queues/moloni.worker.ts",
+    "worker:invoicexpress": "tsx --env-file=.env.local src/queues/invoicexpress.worker.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",
