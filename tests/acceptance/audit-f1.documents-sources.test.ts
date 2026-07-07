@@ -12,6 +12,24 @@ vi.mock('@/lib/auth', () => authMockFactory())
 vi.mock('@/lib/r2', async () => (await import('../mocks/r2')).r2MockFactory())
 vi.mock('@/lib/anthropic', async () => (await import('../mocks/ai')).aiMockFactory())
 
+// Server-side render of pages with client components: the Next router context
+// does not exist outside the Next runtime — stub the hooks the components use.
+vi.mock('next/navigation', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('next/navigation')>()
+  return {
+    ...actual,
+    useRouter: () => ({
+      push: vi.fn(),
+      replace: vi.fn(),
+      refresh: vi.fn(),
+      back: vi.fn(),
+      prefetch: vi.fn(),
+    }),
+    usePathname: () => '/',
+    useSearchParams: () => new URLSearchParams(),
+  }
+})
+
 const queueAddMock = vi.fn(async () => ({}))
 vi.mock('@/lib/redis', () => ({
   getEmailSyncQueue: () => ({ add: queueAddMock }),
