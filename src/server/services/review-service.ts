@@ -1,9 +1,9 @@
 import { prisma } from '@/lib/prisma'
 import { can } from '@/server/authz/can'
 import { parsePtDate } from '@/lib/dates'
-import { decimalStringFromCents } from '@/lib/money'
+import { decimalStringFromCents, centsFromDecimalString, COHERENCE_TOLERANCE_CENTS } from '@/lib/money'
 import { normalizeDocumentNumber } from './extraction'
-import type { DocumentStatus, DocumentType, UserRole } from '@prisma/client'
+import type { DocumentStatus, DocumentType, Prisma, UserRole } from '@prisma/client'
 
 /**
  * Document review queue (S3.1) with optimistic locking (A7).
@@ -12,13 +12,24 @@ import type { DocumentStatus, DocumentType, UserRole } from '@prisma/client'
  * Every decision creates a DocumentReview (full history) + AuditLog.
  */
 
+export interface CorrectionVatBand {
+  region?: string
+  rate: number
+  baseCents: number
+  vatCents: number
+}
+
 export interface ReviewCorrections {
   type?: DocumentType
   supplierName?: string
   supplierNif?: string
   documentNumber?: string
   issueDate?: string // DD/MM/YYYY
+  dueDate?: string // DD/MM/YYYY
   totalCents?: number
+  withholdingCents?: number
+  currency?: string // ISO 4217
+  vatBreakdown?: CorrectionVatBand[]
   accountCode?: string
   vatTreatment?: string
   clientId?: string
@@ -26,19 +37,134 @@ export interface ReviewCorrections {
 
 export type ReviewResult =
   | { ok: true; status: DocumentStatus; version: number }
-  | { ok: false; httpStatus: 400 | 403 | 404 | 409; error: string; currentStatus?: DocumentStatus }
+  | {
+      ok: false
+      httpStatus: 400 | 403 | 404 | 409 | 422
+      error: string
+      currentStatus?: DocumentStatus
+      details?: Record<string, string>
+    }
 
+/**
+ * VALIDATED is intentionally absent: a validated document is immutable except
+ * through the reopen escape valve (A9) — see reopenWindowIsOpen().
+ */
 const REVIEWABLE_FROM: DocumentStatus[] = [
-  'PENDING_CLASSIFICATION', 'CLASSIFIED', 'NEEDS_REVIEW', 'REVIEWED', 'PRE_VALIDATED', 'VALIDATED',
+  'PENDING_CLASSIFICATION', 'CLASSIFIED', 'NEEDS_REVIEW', 'REVIEWED', 'PRE_VALIDATED',
 ]
 
+/** Valid PT VAT rates per fiscal region (mainland, Açores, Madeira). */
+export const VALID_VAT_RATES: Record<string, readonly number[]> = {
+  PT: [0, 6, 13, 23],
+  'PT-AC': [0, 4, 9, 16],
+  'PT-MA': [0, 5, 12, 22],
+}
+
 const REVIEW_FIELDS = [
-  'type', 'supplierName', 'supplierNif', 'documentNumber', 'issueDate',
-  'totalAmount', 'accountCode', 'vatTreatment', 'clientId', 'status', 'flags',
+  'type', 'supplierName', 'supplierNif', 'documentNumber', 'issueDate', 'dueDate',
+  'totalAmount', 'withholdingAmount', 'currency', 'vatBreakdown',
+  'accountCode', 'vatTreatment', 'clientId', 'status', 'flags',
 ] as const
 
 function snapshot(doc: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(REVIEW_FIELDS.map((f) => [f, doc[f] ?? null]))
+}
+
+function centsOfDecimal(value: Prisma.Decimal | null): number | null {
+  return value === null ? null : centsFromDecimalString(String(value))
+}
+
+/**
+ * Server-side validation of the extended corrections (S5.1). The client-side
+ * coherence hint is advisory only — THIS is the authority. Returns per-field
+ * errors; empty object means valid.
+ */
+export function validateCorrections(
+  doc: {
+    issueDate: Date | null
+    totalAmount: Prisma.Decimal | null
+    withholdingAmount: Prisma.Decimal | null
+    vatBreakdown: unknown
+  },
+  c: ReviewCorrections,
+): Record<string, string> {
+  const errors: Record<string, string> = {}
+
+  if (c.vatBreakdown !== undefined) {
+    for (const [i, band] of c.vatBreakdown.entries()) {
+      const region = band.region ?? 'PT'
+      const allowed = VALID_VAT_RATES[region]
+      if (!allowed) {
+        errors[`vatBreakdown.${i}.region`] = `Região desconhecida: ${region}`
+      } else if (!allowed.includes(band.rate)) {
+        errors[`vatBreakdown.${i}.rate`] =
+          `Taxa de IVA inválida para ${region}: ${band.rate} (válidas: ${allowed.join(', ')})`
+      }
+      if (!Number.isInteger(band.baseCents) || band.baseCents < 0) {
+        errors[`vatBreakdown.${i}.baseCents`] = 'Base deve ser cêntimos inteiros ≥ 0'
+      }
+      if (!Number.isInteger(band.vatCents) || band.vatCents < 0) {
+        errors[`vatBreakdown.${i}.vatCents`] = 'IVA deve ser cêntimos inteiros ≥ 0'
+      }
+    }
+  }
+  if (c.withholdingCents !== undefined && (!Number.isInteger(c.withholdingCents) || c.withholdingCents < 0)) {
+    errors.withholdingCents = 'Retenção deve ser cêntimos inteiros ≥ 0'
+  }
+  if (c.currency !== undefined && !/^[A-Z]{3}$/.test(c.currency)) {
+    errors.currency = 'Moeda deve ser um código ISO 4217 (ex: EUR)'
+  }
+
+  const issueDate = c.issueDate !== undefined ? parsePtDate(c.issueDate) : doc.issueDate
+  if (c.issueDate !== undefined && !issueDate) {
+    errors.issueDate = 'Data de emissão inválida (DD/MM/AAAA)'
+  }
+  if (c.dueDate !== undefined) {
+    const dueDate = parsePtDate(c.dueDate)
+    if (!dueDate) {
+      errors.dueDate = 'Data de vencimento inválida (DD/MM/AAAA)'
+    } else if (issueDate && dueDate.getTime() < issueDate.getTime()) {
+      errors.dueDate = 'Data de vencimento anterior à data de emissão'
+    }
+  }
+
+  // Arithmetic coherence (A1) — only when the correction touches money and the
+  // effective values are computable. Both PT conventions accepted: gross total
+  // (AT QR field O) or total net of withholding.
+  const touchesMoney =
+    c.vatBreakdown !== undefined || c.withholdingCents !== undefined || c.totalCents !== undefined
+  if (touchesMoney && Object.keys(errors).length === 0) {
+    const bands =
+      c.vatBreakdown ?? ((doc.vatBreakdown as CorrectionVatBand[] | null) ?? [])
+    const withholding = c.withholdingCents ?? centsOfDecimal(doc.withholdingAmount) ?? 0
+    const total = c.totalCents ?? centsOfDecimal(doc.totalAmount)
+    if (bands.length > 0 && total !== null) {
+      const bases = bands.reduce((acc, b) => acc + b.baseCents, 0)
+      const vats = bands.reduce((acc, b) => acc + b.vatCents, 0)
+      const grossDelta = Math.abs(bases + vats - total)
+      const netDelta = Math.abs(bases + vats - withholding - total)
+      if (Math.min(grossDelta, netDelta) > COHERENCE_TOLERANCE_CENTS) {
+        errors.totalCents =
+          `Σbases+ΣIVA−retenção não corresponde ao total (desvio ${Math.min(grossDelta, netDelta)} cêntimos, tolerância ${COHERENCE_TOLERANCE_CENTS})`
+      }
+    }
+  }
+
+  return errors
+}
+
+/**
+ * A VALIDATED document can only be reviewed inside the post-reopen window:
+ * the latest DocumentReview entry is a `reopen` (A9). The window closes with
+ * the next review decision.
+ */
+async function reopenWindowIsOpen(documentId: string): Promise<boolean> {
+  const last = await prisma.documentReview.findFirst({
+    where: { documentId },
+    orderBy: [{ reviewedAt: 'desc' }, { id: 'desc' }],
+    select: { decision: true },
+  })
+  return last?.decision === 'reopen'
 }
 
 export async function reviewDocument(params: {
@@ -69,8 +195,28 @@ export async function reviewDocument(params: {
     }
   }
 
+  // VALIDATED is immutable except inside the post-reopen window (A9/S5.1)
+  const fromStatuses: DocumentStatus[] =
+    doc.status === 'VALIDATED'
+      ? (await reopenWindowIsOpen(doc.id)) ? ['VALIDATED'] : []
+      : REVIEWABLE_FROM
+  if (fromStatuses.length === 0) {
+    return {
+      ok: false, httpStatus: 409,
+      error: 'Documento validado — imutável sem reabertura',
+      currentStatus: doc.status,
+    }
+  }
+
   const before = snapshot(doc as unknown as Record<string, unknown>)
   const c = params.corrections ?? {}
+
+  if (params.decision === 'correct') {
+    const fieldErrors = validateCorrections(doc, c)
+    if (Object.keys(fieldErrors).length > 0) {
+      return { ok: false, httpStatus: 422, error: 'Correções inválidas', details: fieldErrors }
+    }
+  }
 
   // Validate cross-office client assignment (AC-1.4.e applies here too)
   if (c.clientId) {
@@ -99,7 +245,20 @@ export async function reviewDocument(params: {
       data.documentNumber = normalizeDocumentNumber(c.documentNumber)
     }
     if (c.issueDate !== undefined) data.issueDate = parsePtDate(c.issueDate)
+    if (c.dueDate !== undefined) data.dueDate = parsePtDate(c.dueDate)
     if (c.totalCents !== undefined) data.totalAmount = decimalStringFromCents(c.totalCents)
+    if (c.withholdingCents !== undefined) {
+      data.withholdingAmount = decimalStringFromCents(c.withholdingCents)
+    }
+    if (c.currency !== undefined) data.currency = c.currency
+    if (c.vatBreakdown !== undefined) {
+      data.vatBreakdown = c.vatBreakdown.map((b) => ({
+        region: b.region ?? 'PT',
+        rate: b.rate,
+        baseCents: b.baseCents,
+        vatCents: b.vatCents,
+      }))
+    }
     if (c.accountCode !== undefined) {
       data.accountCode = c.accountCode
       data.sncSource = 'RULE' === doc.sncSource ? doc.sncSource : 'HUMAN'
@@ -117,7 +276,7 @@ export async function reviewDocument(params: {
       id: doc.id,
       officeId: params.officeId,
       version: params.expectedVersion,
-      status: { in: REVIEWABLE_FROM },
+      status: { in: fromStatuses },
     },
     data: data as never,
   })

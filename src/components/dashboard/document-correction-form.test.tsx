@@ -68,7 +68,7 @@ describe('DocumentCorrectionForm', () => {
     await user.clear(supplierInput)
     await user.type(supplierInput, 'Fornecedor Corrigido Lda')
 
-    const totalInput = screen.getByPlaceholderText('0,00')
+    const totalInput = screen.getByLabelText(/^Total/)
     await user.clear(totalInput)
     await user.type(totalInput, '150,00')
 
@@ -84,6 +84,61 @@ describe('DocumentCorrectionForm', () => {
     expect(body.corrections.totalCents).toBe(15000)
 
     await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/review'))
+  })
+
+  it('S5.1 — editar IVA por taxa e retenção envia vatBreakdown/withholdingCents em cêntimos', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ success: true }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const user = userEvent.setup()
+    render(<DocumentCorrectionForm document={makeDoc()} clients={clients} role="ACCOUNTANT" />)
+
+    const baseInput = screen.getByLabelText('Base da taxa 23%')
+    await user.clear(baseInput)
+    await user.type(baseInput, '200,00')
+    const vatInput = screen.getByLabelText('IVA da taxa 23%')
+    await user.clear(vatInput)
+    await user.type(vatInput, '46,00')
+
+    const withholdingInput = screen.getByLabelText('Retenção na fonte')
+    await user.type(withholdingInput, '0,00')
+
+    const totalInput = screen.getByLabelText(/^Total/)
+    await user.clear(totalInput)
+    await user.type(totalInput, '246,00')
+
+    await user.click(screen.getByRole('button', { name: /Guardar correções e validar/ }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    const body = JSON.parse(init.body as string)
+    expect(body.corrections.vatBreakdown).toEqual([
+      { region: 'PT', rate: 23, baseCents: 20000, vatCents: 4600 },
+    ])
+    expect(body.corrections.withholdingCents).toBe(0)
+    expect(body.corrections.totalCents).toBe(24600)
+    // Coherent values — no warning shown
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('S5.1 — adicionar e remover linhas de taxa funciona; VIEWER não vê os controlos', async () => {
+    vi.stubGlobal('fetch', vi.fn())
+    const user = userEvent.setup()
+    const { unmount } = render(
+      <DocumentCorrectionForm document={makeDoc()} clients={clients} role="OWNER" />,
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Adicionar taxa' }))
+    expect(screen.getAllByLabelText(/^Base da taxa/)).toHaveLength(2)
+
+    await user.click(screen.getAllByRole('button', { name: /^Remover taxa/ })[1])
+    expect(screen.getAllByLabelText(/^Base da taxa/)).toHaveLength(1)
+    unmount()
+
+    render(<DocumentCorrectionForm document={makeDoc()} clients={clients} role="VIEWER" />)
+    expect(screen.queryByRole('button', { name: 'Adicionar taxa' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Remover taxa/ })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Base da taxa 23%')).toBeDisabled()
   })
 
   it('VIEWER não vê ações de escrita e os campos estão desativados', () => {
@@ -123,7 +178,7 @@ describe('DocumentCorrectionForm', () => {
     const user = userEvent.setup()
     render(<DocumentCorrectionForm document={makeDoc()} clients={clients} role="OWNER" />)
 
-    const totalInput = screen.getByPlaceholderText('0,00')
+    const totalInput = screen.getByLabelText(/^Total/)
     await user.clear(totalInput)
     await user.type(totalInput, '999,99')
 

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
-  Check, X, ChevronLeft, ChevronDown, ChevronUp, Loader2, AlertTriangle, FileText,
+  Check, X, ChevronLeft, ChevronDown, ChevronUp, Loader2, AlertTriangle, FileText, Plus, Trash2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { DOCUMENT_TYPE_LABELS } from '@/lib/document-types'
@@ -46,6 +46,51 @@ interface DocumentCorrectionFormProps {
 }
 
 const VAT_TREATMENTS = ['DEDUTIVEL_TOTAL', 'NAO_DEDUTIVEL', 'AUTOLIQUIDACAO', 'ISENTO'] as const
+
+/** Valid PT VAT rates per fiscal region — mirrors the server (S5.1). */
+const VAT_RATES_BY_REGION: Record<string, readonly number[]> = {
+  PT: [0, 6, 13, 23],
+  'PT-AC': [0, 4, 9, 16],
+  'PT-MA': [0, 5, 12, 22],
+}
+
+const REGION_LABELS: Record<string, string> = {
+  PT: 'Continente',
+  'PT-AC': 'Açores',
+  'PT-MA': 'Madeira',
+}
+
+interface VatBandInput {
+  region: string
+  rate: number
+  base: string // euro input, e.g. "100,00"
+  vat: string
+}
+
+function bandsFromDoc(
+  bands: Array<{ region?: string; rate: number; baseCents: number; vatCents: number }>,
+): VatBandInput[] {
+  return bands.map((b) => ({
+    region: b.region ?? 'PT',
+    rate: b.rate,
+    base: centsToEuroInput(b.baseCents),
+    vat: centsToEuroInput(b.vatCents),
+  }))
+}
+
+/** Parses the editable rows into API cents; null when any row has garbage. */
+function bandsToCents(
+  bands: VatBandInput[],
+): Array<{ region: string; rate: number; baseCents: number; vatCents: number }> | null {
+  const out: Array<{ region: string; rate: number; baseCents: number; vatCents: number }> = []
+  for (const band of bands) {
+    const baseCents = euroInputToCents(band.base)
+    const vatCents = euroInputToCents(band.vat)
+    if (baseCents === null || vatCents === null || baseCents < 0 || vatCents < 0) return null
+    out.push({ region: band.region, rate: band.rate, baseCents, vatCents })
+  }
+  return out
+}
 
 const VAT_TREATMENT_LABELS: Record<string, string> = {
   DEDUTIVEL_TOTAL: 'Dedutível total',
@@ -102,13 +147,19 @@ export function DocumentCorrectionForm({ document: doc, clients, role }: Documen
   const canWrite = role !== 'VIEWER'
   const isLocked = doc.status === 'EXPORTED' || doc.status === 'SPLIT'
 
-  // Editable fields (subset the review API accepts — see HANDOFF for the rest)
+  // Editable fields — full correction set accepted by the review API (S5.1)
   const [type, setType] = useState(doc.type)
   const [supplierName, setSupplierName] = useState(doc.supplierName ?? '')
   const [supplierNif, setSupplierNif] = useState(doc.supplierNif ?? '')
   const [documentNumber, setDocumentNumber] = useState(doc.documentNumber ?? '')
   const [issueDate, setIssueDate] = useState(doc.issueDate)
+  const [dueDate, setDueDate] = useState(doc.dueDate ?? '')
+  const [currency, setCurrency] = useState(doc.currency)
   const [totalInput, setTotalInput] = useState(centsToEuroInput(doc.totalCents))
+  const [withholdingInput, setWithholdingInput] = useState(
+    doc.withholdingCents !== null ? centsToEuroInput(doc.withholdingCents) : '',
+  )
+  const [vatBands, setVatBands] = useState<VatBandInput[]>(bandsFromDoc(doc.vatBreakdown))
   const [accountCode, setAccountCode] = useState(doc.accountCode ?? '')
   const [vatTreatment, setVatTreatment] = useState(doc.vatTreatment ?? '')
   const [clientId, setClientId] = useState(doc.clientId ?? '')
@@ -141,15 +192,16 @@ export function DocumentCorrectionForm({ document: doc, clients, role }: Documen
   // convention, mirroring the server) — warning only, never a block
   const coherence = useMemo(() => {
     const totalCents = euroInputToCents(totalInput)
-    if (totalCents === null || doc.vatBreakdown.length === 0) return null
-    const bases = doc.vatBreakdown.reduce((acc, b) => acc + b.baseCents, 0)
-    const vats = doc.vatBreakdown.reduce((acc, b) => acc + b.vatCents, 0)
-    const withholding = doc.withholdingCents ?? 0
+    const bands = bandsToCents(vatBands)
+    if (totalCents === null || bands === null || bands.length === 0) return null
+    const bases = bands.reduce((acc, b) => acc + b.baseCents, 0)
+    const vats = bands.reduce((acc, b) => acc + b.vatCents, 0)
+    const withholding = euroInputToCents(withholdingInput) ?? 0
     const grossDelta = Math.abs(bases + vats - totalCents)
     const netDelta = Math.abs(bases + vats - withholding - totalCents)
     const delta = Math.min(grossDelta, netDelta)
     return { delta, coherent: delta <= 2 }
-  }, [totalInput, doc.vatBreakdown, doc.withholdingCents])
+  }, [totalInput, vatBands, withholdingInput])
 
   function buildCorrections(): Record<string, unknown> {
     const corrections: Record<string, unknown> = {}
@@ -160,8 +212,18 @@ export function DocumentCorrectionForm({ document: doc, clients, role }: Documen
     }
     if (documentNumber !== (doc.documentNumber ?? '')) corrections.documentNumber = documentNumber
     if (issueDate !== doc.issueDate && issueDate.trim() !== '') corrections.issueDate = issueDate
+    if (dueDate !== (doc.dueDate ?? '') && dueDate.trim() !== '') corrections.dueDate = dueDate
+    if (currency !== doc.currency && /^[A-Z]{3}$/.test(currency)) corrections.currency = currency
     const totalCents = euroInputToCents(totalInput)
     if (totalCents !== null && totalCents !== doc.totalCents) corrections.totalCents = totalCents
+    const withholdingCents = euroInputToCents(withholdingInput)
+    if (withholdingCents !== null && withholdingCents !== (doc.withholdingCents ?? null)) {
+      corrections.withholdingCents = withholdingCents
+    }
+    const bands = bandsToCents(vatBands)
+    if (bands !== null && JSON.stringify(bands) !== JSON.stringify(bandsToCents(bandsFromDoc(doc.vatBreakdown)))) {
+      corrections.vatBreakdown = bands
+    }
     if (accountCode !== (doc.accountCode ?? '') && accountCode.trim() !== '') {
       corrections.accountCode = accountCode.trim()
     }
@@ -372,7 +434,45 @@ export function DocumentCorrectionForm({ document: doc, clients, role }: Documen
             </label>
 
             <label className="flex flex-col gap-1">
-              <span className={labelClass}>Total ({doc.currency})</span>
+              <span className={labelClass}>Vencimento (DD/MM/AAAA)</span>
+              <input
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+                disabled={!canWrite || isLocked}
+                placeholder="30/01/2027"
+                className={cn(fieldClass, 'data')}
+                aria-label="Data de vencimento"
+              />
+            </label>
+
+            <label className="flex flex-col gap-1">
+              <span className={labelClass}>Moeda (ISO)</span>
+              <input
+                value={currency}
+                onChange={(e) => setCurrency(e.target.value.toUpperCase())}
+                disabled={!canWrite || isLocked}
+                placeholder="EUR"
+                maxLength={3}
+                className={cn(fieldClass, 'data uppercase', currency !== '' && !/^[A-Z]{3}$/.test(currency) && 'border-amber-300')}
+                aria-label="Moeda"
+              />
+            </label>
+
+            <label className="flex flex-col gap-1">
+              <span className={labelClass}>Retenção ({currency || doc.currency})</span>
+              <input
+                value={withholdingInput}
+                onChange={(e) => setWithholdingInput(e.target.value)}
+                disabled={!canWrite || isLocked}
+                placeholder="0,00"
+                inputMode="decimal"
+                className={cn(fieldClass, 'data text-right')}
+                aria-label="Retenção na fonte"
+              />
+            </label>
+
+            <label className="flex flex-col gap-1">
+              <span className={labelClass}>Total ({currency || doc.currency})</span>
               <input
                 value={totalInput}
                 onChange={(e) => setTotalInput(e.target.value)}
@@ -429,33 +529,96 @@ export function DocumentCorrectionForm({ document: doc, clients, role }: Documen
             </label>
           </div>
 
-          {/* VAT breakdown — read-only: the review API does not accept per-rate
-              corrections yet (see HANDOFF.md); shown here to feed the coherence check */}
-          {doc.vatBreakdown.length > 0 && (
-            <div className="rounded-xl border border-gray-200 bg-white">
-              <p className="border-b border-gray-100 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">
-                IVA por taxa (leitura)
+          {/* VAT breakdown — editable per-rate rows (S5.1) */}
+          <div className="rounded-xl border border-gray-200 bg-white">
+            <div className="flex items-center justify-between border-b border-gray-100 px-3 py-2">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                IVA por taxa
               </p>
-              <table className="w-full text-[12px]">
-                <tbody>
-                  {doc.vatBreakdown.map((band, i) => (
-                    <tr key={i} className="border-b border-gray-50 last:border-0">
-                      <td className="px-3 py-1.5 text-gray-500">{band.rate}%{band.region && band.region !== 'PT' ? ` (${band.region})` : ''}</td>
-                      <td className="data px-3 py-1.5 text-right text-gray-700">{centsToDisplay(band.baseCents)}</td>
-                      <td className="data px-3 py-1.5 text-right text-gray-700">{centsToDisplay(band.vatCents)}</td>
-                    </tr>
-                  ))}
-                  {doc.withholdingCents !== null && doc.withholdingCents !== 0 && (
-                    <tr>
-                      <td className="px-3 py-1.5 text-gray-500">Retenção</td>
-                      <td />
-                      <td className="data px-3 py-1.5 text-right text-red-600">−{centsToDisplay(doc.withholdingCents)}</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+              {canWrite && !isLocked && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setVatBands((bands) => [...bands, { region: 'PT', rate: 23, base: '', vat: '' }])
+                  }
+                  className="pressable flex items-center gap-1 text-[11px] font-semibold text-green-700 hover:text-green-800"
+                >
+                  <Plus className="h-3 w-3 stroke-[2.5]" />
+                  Adicionar taxa
+                </button>
+              )}
             </div>
-          )}
+            {vatBands.length === 0 ? (
+              <p className="px-3 py-2.5 text-[12px] text-gray-400">Sem discriminação de IVA.</p>
+            ) : (
+              <div className="flex flex-col gap-1.5 p-2">
+                {vatBands.map((band, i) => {
+                  const rates = VAT_RATES_BY_REGION[band.region] ?? [band.rate]
+                  const rateOptions = rates.includes(band.rate) ? rates : [band.rate, ...rates]
+                  const update = (patch: Partial<VatBandInput>) =>
+                    setVatBands((bands) => bands.map((b, j) => (j === i ? { ...b, ...patch } : b)))
+                  return (
+                    <div key={i} className="flex flex-wrap items-center gap-1.5">
+                      <select
+                        value={band.region}
+                        onChange={(e) => {
+                          const region = e.target.value
+                          const allowed = VAT_RATES_BY_REGION[region] ?? []
+                          update({ region, rate: allowed.includes(band.rate) ? band.rate : allowed[allowed.length - 1] })
+                        }}
+                        disabled={!canWrite || isLocked}
+                        aria-label={`Região da taxa ${i + 1}`}
+                        className={cn(fieldClass, 'h-8 w-[110px] text-[12px]')}
+                      >
+                        {Object.keys(VAT_RATES_BY_REGION).map((r) => (
+                          <option key={r} value={r}>{REGION_LABELS[r]}</option>
+                        ))}
+                      </select>
+                      <select
+                        value={band.rate}
+                        onChange={(e) => update({ rate: Number(e.target.value) })}
+                        disabled={!canWrite || isLocked}
+                        aria-label={`Taxa de IVA da linha ${i + 1}`}
+                        className={cn(fieldClass, 'data h-8 w-[72px] text-[12px]')}
+                      >
+                        {rateOptions.map((r) => (
+                          <option key={r} value={r}>{r}%</option>
+                        ))}
+                      </select>
+                      <input
+                        value={band.base}
+                        onChange={(e) => update({ base: e.target.value })}
+                        disabled={!canWrite || isLocked}
+                        placeholder="Base 0,00"
+                        inputMode="decimal"
+                        aria-label={`Base da taxa ${band.rate}%`}
+                        className={cn(fieldClass, 'data h-8 min-w-[80px] flex-1 text-right text-[12px]')}
+                      />
+                      <input
+                        value={band.vat}
+                        onChange={(e) => update({ vat: e.target.value })}
+                        disabled={!canWrite || isLocked}
+                        placeholder="IVA 0,00"
+                        inputMode="decimal"
+                        aria-label={`IVA da taxa ${band.rate}%`}
+                        className={cn(fieldClass, 'data h-8 min-w-[80px] flex-1 text-right text-[12px]')}
+                      />
+                      {canWrite && !isLocked && (
+                        <button
+                          type="button"
+                          onClick={() => setVatBands((bands) => bands.filter((_, j) => j !== i))}
+                          aria-label={`Remover taxa ${band.rate}%`}
+                          className="pressable rounded p-1.5 text-gray-300 transition-colors hover:bg-red-50 hover:text-red-500"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
 
           {/* Coherence warning — advisory only, the server is the authority */}
           {coherence && !coherence.coherent && (

@@ -3,6 +3,7 @@ import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { DocumentCorrectionForm, type CorrectionDocumentDTO } from '@/components/dashboard/document-correction-form'
 import { DOCUMENT_TYPE_LABELS } from '@/lib/document-types'
+import { centsFromDecimalString } from '@/lib/money'
 import type { DocumentType } from '@/types'
 
 interface ReviewDetailPageProps {
@@ -53,8 +54,8 @@ export default async function ReviewDetailPage({ params }: ReviewDetailPageProps
     dueDate: doc.dueDate ? doc.dueDate.toLocaleDateString('pt-PT') : null,
     currency: doc.currency,
     vatBreakdown,
-    withholdingCents: doc.withholdingAmount !== null ? Math.round(Number(doc.withholdingAmount) * 100) : null,
-    totalCents: doc.totalAmount !== null ? Math.round(Number(doc.totalAmount) * 100) : null,
+    withholdingCents: doc.withholdingAmount !== null ? centsFromDecimalString(String(doc.withholdingAmount)) : null,
+    totalCents: doc.totalAmount !== null ? centsFromDecimalString(String(doc.totalAmount)) : null,
     accountCode: doc.accountCode ?? doc.suggestedAccountCode,
     accountIsSuggestion: doc.accountCode === null && doc.suggestedAccountCode !== null,
     vatTreatment: doc.vatTreatment ?? doc.suggestedVatTreatment,
