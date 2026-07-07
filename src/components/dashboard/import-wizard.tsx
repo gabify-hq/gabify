@@ -38,7 +38,14 @@ interface ReportError {
 
 type Step =
   | { name: 'pick' }
-  | { name: 'mapping'; batchId: string; mapping: Mapping; sample: Array<Record<string, string>>; filename: string }
+  | {
+      name: 'mapping'
+      batchId: string
+      mapping: Mapping
+      sample: Array<Record<string, string>>
+      headers: string[]
+      filename: string
+    }
   | { name: 'done'; imported: number; errors: ReportError[]; filename: string }
 
 /**
@@ -52,9 +59,12 @@ export function ImportWizard({ clients, canWrite }: ImportWizardProps) {
   const [busy, setBusy] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
+  // Detected headers come from the API in file order (S5.3); the sample-row
+  // keys are only the fallback for responses without them
   const headers = useMemo(() => {
-    if (step.name !== 'mapping' || step.sample.length === 0) return []
-    return Object.keys(step.sample[0])
+    if (step.name !== 'mapping') return []
+    if (step.headers.length > 0) return step.headers
+    return step.sample.length > 0 ? Object.keys(step.sample[0]) : []
   }, [step])
 
   async function uploadSheet(file: File): Promise<void> {
@@ -75,6 +85,7 @@ export function ImportWizard({ clients, canWrite }: ImportWizardProps) {
         batchId: body.data.batchId,
         mapping: body.data.proposedMapping,
         sample: body.data.sample ?? [],
+        headers: ((body.data.headers ?? []) as Array<{ original: string }>).map((h) => h.original),
         filename: file.name,
       })
     } catch {

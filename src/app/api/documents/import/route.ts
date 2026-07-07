@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
   const clientIdRaw = form.get('clientId')
   const buffer = Buffer.from(await file.arrayBuffer())
 
-  const { batch, proposedMapping, sample } = await createImportBatch({
+  const { batch, proposedMapping, sample, headers } = await createImportBatch({
     officeId: gate.user.officeId,
     userId: gate.user.id,
     filename: file.name,
@@ -49,6 +49,6 @@ export async function POST(request: NextRequest) {
 
   return NextResponse.json({
     success: true,
-    data: { batchId: batch.id, proposedMapping, sample },
+    data: { batchId: batch.id, proposedMapping, sample, headers },
   })
 }

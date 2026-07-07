@@ -182,13 +182,23 @@ export async function confirmImportBatch(params: {
   return { ok: true, report }
 }
 
+export interface DetectedHeader {
+  original: string
+  normalized: string
+}
+
 export async function createImportBatch(params: {
   officeId: string
   userId: string
   filename: string
   buffer: Buffer
   clientId?: string | null
-}): Promise<{ batch: ImportBatch; proposedMapping: ColumnMapping; sample: Array<Record<string, string>> }> {
+}): Promise<{
+  batch: ImportBatch
+  proposedMapping: ColumnMapping
+  sample: Array<Record<string, string>>
+  headers: DetectedHeader[]
+}> {
   const sheet = parseSheet(params.buffer, params.filename)
   const proposedMapping = await proposeMapping(sheet)
 
@@ -202,5 +212,12 @@ export async function createImportBatch(params: {
       rowsData: sheet.rows as object,
     },
   })
-  return { batch, proposedMapping, sample: sheet.rows.slice(0, 5) }
+  return {
+    batch,
+    proposedMapping,
+    sample: sheet.rows.slice(0, 5),
+    // File order preserved (S5.3) — the mapping UI needs the real columns,
+    // not whatever keys survive in the sample rows
+    headers: sheet.headers.map((h) => ({ original: h, normalized: h.trim().toLowerCase() })),
+  }
 }
