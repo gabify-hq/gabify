@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Landmark, Loader2, RefreshCw, Check, Undo2, EyeOff, X } from 'lucide-react'
+import { Landmark, Loader2, RefreshCw, Check, Undo2, EyeOff, X, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ScoreBreakdownLine } from './score-breakdown'
 
@@ -41,6 +41,15 @@ interface AccountOptionDTO {
   id: string
   name: string
   clientName: string
+}
+
+/** Candidate returned by /candidates for manual reconciliation (audit F3.10). */
+interface CandidateDTO {
+  id: string
+  documentNumber: string | null
+  supplierName: string | null
+  issueDate: string | null
+  totalAmount: string | null
 }
 
 const STATUS_CHIPS = [
@@ -97,6 +106,34 @@ export function BankQueue({ initialStatus, initialAccountId }: BankQueueProps) {
   const [selected, setSelected] = useState<Record<string, string[]>>({})
   const [ignoreOpen, setIgnoreOpen] = useState<string | null>(null)
   const [ignoreReason, setIgnoreReason] = useState('')
+  // Manual reconciliation (audit F3.10): search panel per transaction
+  const [manualOpenId, setManualOpenId] = useState<string | null>(null)
+  const [manualQuery, setManualQuery] = useState('')
+  const [manualResults, setManualResults] = useState<CandidateDTO[] | null>(null)
+
+  useEffect(() => {
+    if (manualOpenId === null || manualQuery.trim() === '') return
+    let cancelled = false
+    const txId = manualOpenId
+    fetch(`/api/bank/transactions/${txId}/candidates?q=${encodeURIComponent(manualQuery.trim())}`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error()
+        const { data } = await res.json()
+        if (!cancelled) setManualResults(data.items)
+      })
+      .catch(() => {
+        if (!cancelled) setManualResults([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [manualOpenId, manualQuery])
+
+  function toggleManualPanel(txId: string): void {
+    setManualQuery('')
+    setManualResults(null)
+    setManualOpenId((current) => (current === txId ? null : txId))
+  }
 
   useEffect(() => {
     fetch('/api/bank/accounts?limit=200')
@@ -172,12 +209,19 @@ export function BankQueue({ initialStatus, initialAccountId }: BankQueueProps) {
     return (tx: TransactionDTO): string | null => {
       const ids = selected[tx.id] ?? []
       if (ids.length < 2) return null
-      const sum = tx.suggestions
-        .filter((s) => ids.includes(s.documentId) && s.totalAmount !== null)
-        .reduce((acc, s) => acc + Math.round(Number(s.totalAmount) * 100), 0)
+      // Amounts may come from suggestions OR from manual search results
+      const amountByDocId = new Map<string, string | null>()
+      for (const s of tx.suggestions) amountByDocId.set(s.documentId, s.totalAmount)
+      if (manualOpenId === tx.id) {
+        for (const c of manualResults ?? []) amountByDocId.set(c.id, c.totalAmount)
+      }
+      const sum = ids.reduce((acc, id) => {
+        const amount = amountByDocId.get(id)
+        return amount != null ? acc + Math.round(Number(amount) * 100) : acc
+      }, 0)
       return `Selecionados: ${formatCentsPt(sum)} · Movimento: ${formatCentsPt(Math.abs(tx.amountCents))}`
     }
-  }, [selected])
+  }, [selected, manualOpenId, manualResults])
 
   return (
     <div className="flex flex-col gap-3">
@@ -333,14 +377,24 @@ export function BankQueue({ initialStatus, initialAccountId }: BankQueueProps) {
                           </button>
                         </span>
                       ) : (
-                        <button
-                          disabled={busy}
-                          onClick={() => setIgnoreOpen(tx.id)}
-                          className="pressable flex items-center gap-1 rounded-lg border border-gray-200 px-2 py-1 text-[11px] font-semibold text-gray-500 hover:text-gray-700 disabled:opacity-50"
-                        >
-                          <EyeOff className="h-3 w-3" />
-                          Ignorar
-                        </button>
+                        <>
+                          <button
+                            disabled={busy}
+                            onClick={() => toggleManualPanel(tx.id)}
+                            className="pressable flex items-center gap-1 rounded-lg border border-gray-200 px-2 py-1 text-[11px] font-semibold text-gray-500 hover:text-gray-700 disabled:opacity-50"
+                          >
+                            <Search className="h-3 w-3" />
+                            Conciliar manualmente
+                          </button>
+                          <button
+                            disabled={busy}
+                            onClick={() => setIgnoreOpen(tx.id)}
+                            className="pressable flex items-center gap-1 rounded-lg border border-gray-200 px-2 py-1 text-[11px] font-semibold text-gray-500 hover:text-gray-700 disabled:opacity-50"
+                          >
+                            <EyeOff className="h-3 w-3" />
+                            Ignorar
+                          </button>
+                        </>
                       )}
                     </>
                   )}
@@ -413,20 +467,80 @@ export function BankQueue({ initialStatus, initialAccountId }: BankQueueProps) {
                         </li>
                       ))}
                     </ul>
-                    {txSelected.length > 0 && (
-                      <div className="mt-2 flex flex-wrap items-center gap-2">
-                        <button
-                          disabled={busy}
-                          onClick={() => reconcile(tx, txSelected)}
-                          className="pressable flex items-center gap-1 rounded-lg bg-green-600 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-green-700 disabled:opacity-50"
-                        >
-                          {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-                          Conciliar {txSelected.length} documento{txSelected.length !== 1 ? 's' : ''}
-                        </button>
-                        {selectedSumHint(tx) && (
-                          <span className="data text-[10px] text-gray-400">{selectedSumHint(tx)}</span>
+                  </div>
+                )}
+
+                {/* Manual reconciliation panel (audit F3.10) */}
+                {actionable && manualOpenId === tx.id && (
+                  <div className="border-t border-gray-100 px-3 py-2">
+                    <input
+                      autoFocus
+                      value={manualQuery}
+                      onChange={(e) => {
+                        setManualQuery(e.target.value)
+                        if (e.target.value.trim() === '') setManualResults(null)
+                      }}
+                      placeholder="Procurar documento por nº ou fornecedor"
+                      aria-label="Procurar documento por nº ou fornecedor"
+                      className="h-8 w-full rounded-lg border border-gray-200 px-2.5 text-[12px] focus:outline-none focus:ring-1 focus:ring-green-400"
+                    />
+                    {manualResults !== null && (
+                      <ul className="mt-2 space-y-1.5">
+                        {manualResults.map((candidate) => (
+                          <li key={candidate.id} className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={txSelected.includes(candidate.id)}
+                                onChange={(e) =>
+                                  setSelected((prev) => ({
+                                    ...prev,
+                                    [tx.id]: e.target.checked
+                                      ? [...(prev[tx.id] ?? []), candidate.id]
+                                      : (prev[tx.id] ?? []).filter((id) => id !== candidate.id),
+                                  }))
+                                }
+                                aria-label={`Selecionar documento ${candidate.documentNumber ?? candidate.id}`}
+                                className="h-3.5 w-3.5 rounded border-gray-300 text-green-600 focus:ring-green-400"
+                              />
+                              <span className="min-w-0 truncate text-[12px] text-gray-700">
+                                <span className="font-semibold">{candidate.supplierName ?? 'Fornecedor'}</span>
+                                {candidate.documentNumber && (
+                                  <span className="text-gray-400"> · {candidate.documentNumber}</span>
+                                )}
+                                {candidate.issueDate && (
+                                  <span className="text-gray-400"> · {isoToPt(candidate.issueDate)}</span>
+                                )}
+                              </span>
+                            </label>
+                            <span className="data text-[12px] font-semibold text-gray-700">
+                              {decimalToPt(candidate.totalAmount)}
+                            </span>
+                          </li>
+                        ))}
+                        {manualResults.length === 0 && (
+                          <li className="text-[12px] text-gray-400">
+                            Nenhum documento validado por conciliar corresponde à pesquisa.
+                          </li>
                         )}
-                      </div>
+                      </ul>
+                    )}
+                  </div>
+                )}
+
+                {/* Shared reconcile bar — suggestions and manual picks use the same selection */}
+                {actionable && txSelected.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-2 border-t border-gray-100 px-3 py-2">
+                    <button
+                      disabled={busy}
+                      onClick={() => reconcile(tx, txSelected)}
+                      className="pressable flex items-center gap-1 rounded-lg bg-green-600 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-green-700 disabled:opacity-50"
+                    >
+                      {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                      Conciliar {txSelected.length} documento{txSelected.length !== 1 ? 's' : ''}
+                    </button>
+                    {selectedSumHint(tx) && (
+                      <span className="data text-[10px] text-gray-400">{selectedSumHint(tx)}</span>
                     )}
                   </div>
                 )}

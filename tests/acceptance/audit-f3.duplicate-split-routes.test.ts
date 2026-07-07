@@ -192,8 +192,11 @@ describe('AUDIT-F3.8 rotas de duplicado e divisão', () => {
       data: {
         officeId: officeA.id,
         sha256: hash,
-        confidence: 0.6,
-        boundaries: { invoices: [{ startPage: 1, endPage: 2 }, { startPage: 3, endPage: 5 }] },
+        method: 'ai',
+        boundaries: {
+          confidence: 0.6,
+          invoices: [{ startPage: 1, endPage: 2 }, { startPage: 3, endPage: 5 }],
+        },
       },
     })
 

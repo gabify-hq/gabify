@@ -45,6 +45,8 @@ async function seedBankWorld() {
       fileHash: 'hash-1',
       status: 'PROCESSED',
       mappingSource: 'heuristic',
+      proposedMapping: { bookingDate: 'Data', description: 'Descritivo', amount: 'Montante' },
+      rowsData: [],
       rowCount: 1,
       importedByUserId: ownerA.id,
     },
