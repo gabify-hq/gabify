@@ -178,3 +178,15 @@ Send classified documents directly to TOConline, Primavera, or Sage — no re-en
 | Microsoft Outlook / Microsoft 365 | Microsoft Graph API | Supported |
 | Gmail / Google Workspace | Gmail API | Supported |
 | Other (IMAP) | Standard IMAP protocol | Coming soon |
+
+---
+
+## Ask Gabify (assistant)
+
+You can now ask Gabify questions about your own firm's data, in plain Portuguese — for example "EDP invoices above 100€ in May", "23% VAT total per supplier this quarter", "are there duplicate invoices?" or "unreconciled bank movements".
+
+- Gabify answers by looking at your documents and bank movements, and shows the matching table under the answer, with a link to open those items in the review queue, documents or bank screens.
+- Any table in an answer can be downloaded as a CSV file that opens correctly in Excel.
+- The assistant is read-only by design: it can never create, change, send or delete anything — it only consults. Every question is recorded in the activity log.
+- It only sees the data of your own firm. Nothing from any other firm is ever visible.
+- The conversation is not stored: when you leave the page, the chat starts fresh.
