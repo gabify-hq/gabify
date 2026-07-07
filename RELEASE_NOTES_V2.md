@@ -82,3 +82,31 @@ Estado final: **Fases 0–3 completas + slice de UI + slice S5 + Fase C (concili
 Fora de âmbito respeitado: sem PSD2/agregadores, sem matching IA, sem extratos PDF, sem lógica multi-moeda (campo existe), sem export contável dos movimentos.
 
 Nenhum teste `[INV]` foi apagado, skipado ou enfraquecido.
+
+### Fase P — Portal do cliente final v1 (spec adicional, 2026-07-07, branch `feature/client-portal-v1`)
+
+| AC | Resultado | Notas |
+|---|---|---|
+| P1.a [INV] (convite CLIENT sem clientId → 422; clientId de outro office → 404; nada criado) | PASS | validação zod + verificação no serviço |
+| P1.b [INV] (aceitação cria User com role CLIENT + clientId EXATOS do convite — anti-escalada) | PASS | role/clientId copiados SÓ da linha do convite |
+| P1.c [INV] (matriz can(): CLIENT negado em TODAS as ações internas; portal:* exclusivo de CLIENT) | PASS | ações dedicadas `portal:document:read/upload` — ver decisões no PROGRESS |
+| P1.d [INV] (loop parametrizado: CLIENT → 403/404 em 25 rotas internas, uma a uma) | PASS | emails, clients, invitations, documents, review, export, bank, supplier-rules, users, attachments |
+| P1.e [INV] (regressão zero na matriz OWNER/ACCOUNTANT/VIEWER) | PASS | |
+| P1.f [INV] (mudar role de/para CLIENT via /api/users → 409/422; role e clientId intactos) | PASS | |
+| P1.g [INV] (constraints BD: role CLIENT ⇔ clientId, em User e Invitation) | PASS | CHECK constraints em SQL puro |
+| P1.h (rate limiting CLIENT: API 30/min, upload 10/min, env-configurável) | PASS | |
+| P2.a [INV] (DTO shape estrito — chaves exatas, nenhum campo interno, anti-spread) | PASS | protege contra leaks futuros |
+| P2.b [INV] (masking: internos/flags → Em processamento; VALIDATED/EXPORTADO → Processado; rejeitado → Devolvido; DUPLICATE_SUSPECT nunca visível) | PASS | mapa deny-by-default |
+| P2.c [INV] (âmbito: documentos de outro cliente/office nunca aparecem) | PASS | |
+| P2.d [INV] (upload: clientId do body IGNORADO — documento fica no clientId do user; AuditLog com o user CLIENT) | PASS | source PORTAL_UPLOAD |
+| P2.e [INV] (signed URL: só do próprio clientId, TTL 300s; de outro cliente → 404) | PASS | |
+| P2.f (pipeline mantido: magic bytes/zip-bomb/limites iguais ao upload manual) | PASS | `intakeUploadedFiles` partilhado |
+| P3.a [INV] (CLIENT → /dashboard redireciona /portal; internos → /portal redireciona dashboard) | PASS | `resolveAreaRedirect` nos dois layouts |
+| P3.b [INV] (lista do portal renderiza estados públicos pt-PT, nunca strings internas) | PASS | teste de componente |
+| P3.c [INV] (gestão de acessos: revogar apaga Sessions + audit; internos/outros clientes → 404; VIEWER/CLIENT negados) | PASS | |
+
+Fora de âmbito respeitado: sem notificações ao cliente final, sem comentários, sem multi-cliente por user, sem chasing, sem download em massa, sem visibilidade financeira agregada.
+
+Envs novas: `RATE_LIMIT_CLIENT_API_PER_MIN` (30), `RATE_LIMIT_CLIENT_UPLOAD_PER_MIN` (10).
+
+Nenhum teste `[INV]` foi apagado, skipado ou enfraquecido.

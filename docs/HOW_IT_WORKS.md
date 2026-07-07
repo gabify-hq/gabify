@@ -141,10 +141,15 @@ For each movement, Gabify looks at the validated documents of that client and su
 
 Recurring noise — bank fees, standing charges — can be silenced with simple rules ("if the description contains COMISSÃO, ignore it"), so your reconciliation queue only shows what actually needs your attention.
 
-## Coming soon
+## The client portal
 
-### Client Portal
-Clients get a personal link (no password needed) where they can upload documents directly — no more attachments by email.
+Your clients can now have their own login — a minimal portal, made for the phone, where they do exactly two things: **upload documents** (drag & drop on the computer, photograph a receipt on the phone) and **see the state of what they sent**. Nothing else.
+
+What the client sees is deliberately simple. Each document shows one of three states: **Em processamento** (you're working on it), **Processado** (validated or exported), or **Devolvido** (you rejected it and they should resend). They never see your internal review states, confidence scores, duplicate flags, or anything about your accounting — that stays inside the firm.
+
+You control access from the client's page: invite by email (the client signs in with a link, no password), see who has access, and revoke it at any moment — revocation is immediate. A portal user only ever sees the documents of their own company, and everything they upload lands in your normal intake pipeline, flagged with who sent it.
+
+## Coming soon
 
 ### Deadline Tracker
 Gabify tracks Portuguese fiscal deadlines (IVA, IRS, IRC, Social Security, IMI) and alerts you — and your clients — before anything is due.

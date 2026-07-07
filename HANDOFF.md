@@ -1,7 +1,15 @@
 # HANDOFF.md — Gabify v2
 
 Execução autónoma de SPEC_GABIFY_V2 + ADDENDUM em `feature/gabify-v2`.
-**Último estado estável: `npm run gate` verde — 349 testes (37 ficheiros), tsc 0 erros, eslint 0 erros, thresholds de cobertura enforced (queues ≥80, api ≥70, server ≥75).**
+**Último estado estável: `npm run gate` verde — 407 testes (42 ficheiros), tsc 0 erros, eslint 0 erros, thresholds de cobertura enforced (queues ≥80, api ≥70, server ≥75).**
+
+## Fase P — Portal do cliente final v1 (2026-07-07, branch `feature/client-portal-v1`)
+
+Módulo novo: os clientes finais de cada gabinete têm login próprio num portal minimal (carregar documentos + ver estado público dos seus). Módulo de maior sensibilidade de segurança — em dúvida, isolamento ganha SEMPRE. Detalhe em `docs/technical/client-portal.md`; ACs e decisões em PROGRESS.md/RELEASE_NOTES_V2.md.
+
+- **P1 Role e convites**: `UserRole.CLIENT` + `User.clientId`/`Invitation.clientId` com CHECK `role='CLIENT' ⇔ clientId`; matriz can() dá a CLIENT APENAS `portal:document:read/upload` (decisão: conceder document:* internos abriria rotas internas — ações dedicadas); `clientInvitation:manage` (OWNER+ACCOUNTANT) para convites/gestão de acessos; aceitação copia role+clientId SÓ do convite; PATCH users nunca muda role de/para CLIENT; rate limits CLIENT 30/min API + 10/min upload.
+- **P2 API com masking**: `/api/portal/documents` (+upload, +download) com DTO próprio campo-a-campo e mapa de estados público deny-by-default (internos→"Em processamento", VALIDATED/EXPORTADO→"Processado", rejeitado(soft-delete)→"Devolvido"); shape test estrito anti-spread; upload reutiliza pipeline A4 via `intakeUploadedFiles` (partilhado com a rota interna) com clientId forçado da sessão + AuditLog com o user CLIENT; signed URLs TTL 5min.
+- **P3 UI**: layout `/portal` próprio mobile-first pt-PT (Documentos/Carregar/Sair); dupla barreira de role nos DOIS layouts via `resolveAreaRedirect` (proxy edge continua só cookie — §1.2); "Acessos do portal" na ficha do cliente (convidar/estados/revogar; revogação apaga Sessions + audit).
 
 ## Fase C — Conciliação bancária v1 (2026-07-07, spec adicional)
 

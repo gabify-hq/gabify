@@ -59,6 +59,9 @@ Office ──< User
        ──< JobLog
        ──< Invitation      (closed onboarding — entry only by invite)
 
+User >── Client         (portal users only: role CLIENT ⇔ clientId, CHECK constraint — fase P1)
+Invitation >── Client   (portal invitations: role CLIENT ⇔ clientId, CHECK constraint)
+
 EmailAccount ──< InboundEmail
 InboundEmail >── Client          (nullable, matched post-sync)
              ──< EmailAttachment
@@ -77,6 +80,7 @@ Office ──< BankRule   (applied before matching; IGNORE / SUGGEST_CLIENT)
 ```
 
 Bank reconciliation module detail: [bank-reconciliation.md](bank-reconciliation.md).
+Client portal module detail: [client-portal.md](client-portal.md).
 
 ### Cross-cutting schema decisions
 
@@ -109,8 +113,9 @@ Bank reconciliation module detail: [bank-reconciliation.md](bank-reconciliation.
 | Gmail webhook JWT | Fail-closed: 401 without `Authorization` or with invalid Google-signed JWT | ✅ |
 | Attachment limits | 25MB per attachment, 15 per message; inline/item attachments skipped (A4) | ✅ |
 | RBAC | Central `can()` matrix with DENY-precedence via `guard()` in every API route. OWNER = all; ACCOUNTANT = all except invitation/user/settings management; VIEWER = reads only. Denial → 404 on resources, 403 on global actions | ✅ |
-| Sessions | Database strategy — revocable, role/office read fresh per request; edge proxy does optimistic cookie check only | ✅ |
-| Rate limiting | Per endpoint class (A11): API 600/h per user, magic-link 5/h per email+IP, webhooks 120/min per subscription, uploads 60/h user + 300/h office | ✅ |
+| Portal isolation (fase P) | Role CLIENT holds ONLY `portal:document:read/upload`, scoped to its own `clientId` (session-derived, never input); internal roles hold zero portal actions. Portal DTO is reduced + masked (public statuses only), built field-by-field with a strict shape test. Role split enforced by both area layouts (`area-redirect`) | ✅ |
+| Sessions | Database strategy — revocable, role/office read fresh per request; edge proxy does optimistic cookie check only. Portal access revocation deletes Session rows (immediate) | ✅ |
+| Rate limiting | Per endpoint class (A11): API 600/h per user, magic-link 5/h per email+IP, webhooks 120/min per subscription, uploads 60/h user + 300/h office. CLIENT (external) users: API 30/min, upload 10/min | ✅ |
 | Token encryption | AES-256-GCM (v2 prefix) with legacy CBC read + lazy re-encryption | ✅ |
 | Webhook subscriptions | Created at OAuth connect, renewed daily when expiring <48h; failure falls back to 30s polling | ✅ |
 | Pagination | All list endpoints: default 50, max 200, cursor-based | ✅ |
@@ -161,6 +166,7 @@ npm run gate            # tsc + eslint + tests + coverage
 | Sync | `EMAIL_POLL_INTERVAL_MS` |
 | Encryption | `TOKEN_ENCRYPTION_KEY` |
 | Bootstrap | `BOOTSTRAP_OWNER_EMAIL`, `BOOTSTRAP_OFFICE_NAME`, `BOOTSTRAP_OWNER_NAME` |
+| Rate limits | `RATE_LIMIT_API_PER_HOUR`, `RATE_LIMIT_MAGIC_LINK_PER_HOUR`, `RATE_LIMIT_WEBHOOK_PER_MIN`, `RATE_LIMIT_UPLOAD_USER_PER_HOUR`, `RATE_LIMIT_UPLOAD_OFFICE_PER_HOUR`, `RATE_LIMIT_INGEST_PER_HOUR`, `RATE_LIMIT_CLIENT_API_PER_MIN`, `RATE_LIMIT_CLIENT_UPLOAD_PER_MIN` |
 
 Full descriptions and example values in `.env.example`.
 
