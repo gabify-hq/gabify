@@ -24,20 +24,30 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { StatusPill } from './status-badge'
-import type { MockDocument } from '@/lib/mock-data'
-import { MOCK_CLIENTS, DOCUMENT_TYPE_LABELS } from '@/lib/mock-data'
+import type { DocumentDTO, ClientOptionDTO } from '@/server/dto'
+import { DOCUMENT_TYPE_LABELS } from '@/lib/document-types'
 import { cn } from '@/lib/utils'
 
+const SOURCE_LABEL: Record<string, string> = {
+  'at-qr-code':       'QR Code Fiscal AT',
+  'filename-pattern': 'Nome do ficheiro',
+  'claude-vision':    'Visão artificial (imagem)',
+  'claude-pdf':       'Leitura de PDF',
+  'claude-text':      'Análise de texto',
+}
+
 interface DocumentTableProps {
-  documents: MockDocument[]
+  documents: DocumentDTO[]
+  /** Real clients of the session office — populates the client filter. */
+  clients?: ClientOptionDTO[]
   hideClientFilter?: boolean
 }
 
-export function DocumentTable({ documents, hideClientFilter = false }: DocumentTableProps) {
+export function DocumentTable({ documents, clients = [], hideClientFilter = false }: DocumentTableProps) {
   const [filterClient, setFilterClient] = useState<string>('all')
   const [filterType, setFilterType] = useState<string>('all')
   const [filterPeriod, setFilterPeriod] = useState<string>('all')
-  const [previewDoc, setPreviewDoc] = useState<MockDocument | null>(null)
+  const [previewDoc, setPreviewDoc] = useState<DocumentDTO | null>(null)
 
   const handleClientChange = (v: string | null) => setFilterClient(v ?? 'all')
   const handleTypeChange = (v: string | null) => setFilterType(v ?? 'all')
@@ -52,13 +62,13 @@ export function DocumentTable({ documents, hideClientFilter = false }: DocumentT
     return true
   })
 
-  const docStatusVariant = (status: MockDocument['status']) => {
+  const docStatusVariant = (status: DocumentDTO['status']) => {
     if (status === 'CLASSIFIED') return 'classified' as const
     if (status === 'NEEDS_REVIEW') return 'needs-review' as const
     return 'reviewed' as const
   }
 
-  const docStatusLabel = (status: MockDocument['status']) => {
+  const docStatusLabel = (status: DocumentDTO['status']) => {
     if (status === 'CLASSIFIED') return 'Classificado'
     if (status === 'NEEDS_REVIEW') return 'Rever'
     return 'Confirmado'
@@ -81,7 +91,7 @@ export function DocumentTable({ documents, hideClientFilter = false }: DocumentT
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all" className="text-[12px]">Todos os clientes</SelectItem>
-              {MOCK_CLIENTS.map((c) => (
+              {clients.map((c) => (
                 <SelectItem key={c.id} value={c.id} className="text-[12px]">
                   {c.name}
                 </SelectItem>
@@ -145,6 +155,9 @@ export function DocumentTable({ documents, hideClientFilter = false }: DocumentT
               <TableHead className="h-9 text-right text-[10px] font-bold uppercase tracking-wider text-gray-400">
                 Valor
               </TableHead>
+              <TableHead className="h-9 text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                Origem
+              </TableHead>
               <TableHead className="h-9 text-right text-[10px] font-bold uppercase tracking-wider text-gray-400">
                 Conf.
               </TableHead>
@@ -163,7 +176,7 @@ export function DocumentTable({ documents, hideClientFilter = false }: DocumentT
                 <TableCell className="py-2.5">
                   <div className="flex items-center gap-2">
                     <FileText className="h-3.5 w-3.5 shrink-0 stroke-[1.5] text-gray-400" />
-                    <span className="max-w-[220px] truncate text-[12px] font-medium text-gray-700">
+                    <span className="max-w-[220px] truncate text-[12px] font-medium text-gray-700" spellCheck={false}>
                       {doc.filename}
                     </span>
                   </div>
@@ -185,6 +198,15 @@ export function DocumentTable({ documents, hideClientFilter = false }: DocumentT
                       ? `€${doc.extractedAmount.toLocaleString('pt-PT', { minimumFractionDigits: 2 })}`
                       : <span className="font-normal text-gray-300">-</span>}
                   </span>
+                </TableCell>
+                <TableCell className="py-2.5">
+                  {doc.classificationSource ? (
+                    <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
+                      {SOURCE_LABEL[doc.classificationSource] ?? doc.classificationSource}
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-gray-300">—</span>
+                  )}
                 </TableCell>
                 <TableCell className="py-2.5 text-right">
                   <span className={cn('data text-[12px] font-bold', confidenceClass(doc.confidence))}>
@@ -274,6 +296,14 @@ export function DocumentTable({ documents, hideClientFilter = false }: DocumentT
                 <dd className={cn('data font-bold', confidenceClass(previewDoc.confidence))}>
                   {Math.round(previewDoc.confidence * 100)}%
                 </dd>
+                {previewDoc.classificationSource && (
+                  <>
+                    <dt className="text-gray-400">Origem</dt>
+                    <dd className="font-semibold text-gray-800">
+                      {SOURCE_LABEL[previewDoc.classificationSource] ?? previewDoc.classificationSource}
+                    </dd>
+                  </>
+                )}
               </dl>
               <div className="rounded-xl bg-gray-50 p-3">
                 <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-gray-400">

@@ -1,3 +1,4 @@
+import { parsePtDate } from '@/lib/dates'
 import { anthropic, CLAUDE_MODEL, CLASSIFICATION_MAX_TOKENS, DRAFT_MAX_TOKENS } from '@/lib/anthropic'
 import { prisma } from '@/lib/prisma'
 import type { ClassificationResult, DocumentType } from '@/types'
@@ -69,6 +70,7 @@ export async function classifyDocument(
       extractedAmount: result.extractedAmount ?? null,
       extractedVATNumber: result.extractedVATNumber ?? null,
       aiModel: CLAUDE_MODEL,
+      classificationSource: 'claude-text',
     },
   })
 
@@ -123,7 +125,8 @@ export async function classifyImage(
 
   let result: ClassificationResult
   try {
-    result = JSON.parse(content.text)
+    const jsonText = content.text.trim().replace(/^```json?\n?/, '').replace(/\n?```$/, '')
+    result = JSON.parse(jsonText)
   } catch {
     throw new Error(`Failed to parse Vision classification response: ${content.text}`)
   }
@@ -144,6 +147,7 @@ export async function classifyImage(
       extractedAmount: result.extractedAmount ?? null,
       extractedVATNumber: result.extractedVATNumber ?? null,
       aiModel: CLAUDE_MODEL,
+      classificationSource: 'claude-vision',
     },
   })
 
@@ -209,6 +213,7 @@ export async function classifyPdfDocument(
       extractedAmount: result.extractedAmount ?? null,
       extractedVATNumber: result.extractedVATNumber ?? null,
       aiModel: CLAUDE_MODEL,
+      classificationSource: 'claude-pdf',
     },
   })
 
@@ -244,6 +249,7 @@ export async function classifyFromFilename(
         extractedAmount: null,
         extractedVATNumber: nif,
         aiModel: 'filename-pattern',
+        classificationSource: 'filename-pattern',
       },
     })
 
@@ -284,6 +290,7 @@ export async function classifyFromATQR(
       extractedAmount: atData.totalAmount ?? null,
       extractedVATNumber: atData.nifEmitter || null,
       aiModel: 'at-qr-code',
+      classificationSource: 'at-qr-code',
     },
   })
 
@@ -464,10 +471,4 @@ ${bodyText?.slice(0, 3000) ?? '(sem corpo)'}`
 
 // ── Helpers ──
 
-function parsePtDate(dateStr: string): Date | null {
-  // DD/MM/YYYY
-  const [day, month, year] = dateStr.split('/')
-  if (!day || !month || !year) return null
-  const d = new Date(`${year}-${month}-${day}`)
-  return isNaN(d.getTime()) ? null : d
-}
+export { parsePtDate } from '@/lib/dates'

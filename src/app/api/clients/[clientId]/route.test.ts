@@ -33,7 +33,7 @@ function makeRequest(body: unknown): NextRequest {
 const PARAMS = Promise.resolve({ clientId: 'client-123' })
 
 function makeSession(officeId = 'office-1') {
-  return { user: { officeId, id: 'user-1' } }
+  return { user: { officeId, id: 'user-1', email: 'user@test.pt', role: 'ACCOUNTANT' } }
 }
 
 function makeExistingClient() {

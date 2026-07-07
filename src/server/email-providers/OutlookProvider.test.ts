@@ -291,7 +291,7 @@ describe('OutlookProvider', () => {
       const result = await provider.syncInbox()
 
       const url = fetchMock.mock.calls[0][0] as string
-      expect(url).toContain('$select=id,subject,from,receivedDateTime')
+      expect(url).toContain('$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime')
       expect(result.newMessages).toBe(1)
       expect(result.messagesProcessed).toBe(1)
       expect(result.deltaLink).toBe('abc')

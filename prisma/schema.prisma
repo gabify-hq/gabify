@@ -42,11 +42,13 @@ enum ActionType {
 }
 
 enum ActionStatus {
-  PENDING_REVIEW  // waiting for accountant approval
-  APPROVED        // accountant approved
-  REJECTED        // accountant rejected
-  SENT            // approved + sent
-  EDITED_SENT     // edited by accountant then sent
+  PENDING_REVIEW       // waiting for accountant approval
+  APPROVED             // transient: approved, send in progress
+  REJECTED             // accountant rejected
+  SENT                 // legacy: approved + sent
+  EDITED_SENT          // legacy: edited by accountant then sent
+  APPROVED_SENT        // approved and reply sent successfully (A3)
+  APPROVED_SEND_FAILED // approved but sendReply failed — retry possible (A3)
 }
 
 enum DocumentType {
@@ -67,9 +69,19 @@ enum DocumentType {
 
 enum DocumentStatus {
   PENDING_CLASSIFICATION
-  CLASSIFIED
-  NEEDS_REVIEW            // low confidence classification
-  REVIEWED                // accountant confirmed classification
+  CLASSIFIED              // legacy — new pipeline uses PRE_VALIDATED
+  NEEDS_REVIEW            // A_REVER: needs human review
+  REVIEWED                // legacy accountant confirmation
+  SPLIT                   // multi-invoice parent — children carry the data (S2.2)
+  PRE_VALIDATED           // high confidence, coherent, no flags (S3.1)
+  VALIDATED               // human-validated (or auto by supplier rule) — immutable except new review
+  EXPORTED                // included in an export batch (reopen possible — A9)
+}
+
+enum DocumentSource {
+  EMAIL          // attachment from a synced inbox
+  MANUAL_UPLOAD  // web/mobile upload (S2.1)
+  IMPORT         // spreadsheet import (S2.4)
 }
 
 enum JobStatus {
@@ -100,6 +112,15 @@ model Office {
   emailAccounts EmailAccount[]
   auditLogs     AuditLog[]
   jobLogs       JobLog[]
+  invitations   Invitation[]
+  emailThreads  EmailThread[]
+  documents     Document[]
+  ingestAliases ClientIngestAlias[]
+  importBatches ImportBatch[]
+  splitCaches   DocumentSplitCache[]
+  suppliers     Supplier[]
+  supplierRules SupplierRule[]
+  exportBatches ExportBatch[]
 
   @@index([deletedAt])
 }
@@ -129,6 +150,7 @@ model User {
   docReviews       DocumentReview[]
   auditLogsCreated AuditLog[]    @relation("AuditCreator")
   auditLogsApproved AuditLog[]   @relation("AuditApprover")
+  invitationsSent  Invitation[]  @relation("InvitationInviter")
 
   @@index([officeId])
   @@index([email])
@@ -170,6 +192,29 @@ model Session {
   @@index([userId])
 }
 
+// ─────────────────────────────────────────
+// INVITATION (closed onboarding — S0.1, A2)
+// ─────────────────────────────────────────
+
+model Invitation {
+  id              String    @id @default(cuid())
+  officeId        String
+  email           String    // stored lowercase
+  role            UserRole
+  tokenHash       String    @unique // SHA-256 of the raw token (raw token only in the email)
+  expiresAt       DateTime  // 72h from creation/resend
+  acceptedAt      DateTime?
+  revokedAt       DateTime?
+  invitedByUserId String
+  createdAt       DateTime  @default(now())
+
+  office    Office @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  invitedBy User   @relation("InvitationInviter", fields: [invitedByUserId], references: [id])
+
+  @@index([officeId, email])
+  @@index([email])
+}
+
 model VerificationToken {
   identifier String
   token      String   @unique
@@ -198,9 +243,18 @@ model Client {
   emailDomains String[]  // e.g. ["empresa.pt", "empresa.com"]
   knownEmails  String[]  // e.g. ["joao@empresa.pt", "faturacao@empresa.pt"]
 
+  // Optional sender allowlist for the dedicated ingest address (A5):
+  // when non-empty, senders outside these domains are quarantined
+  allowedSenderDomains String[]
+
+  // Per-client SNC account overrides applied at export (AC-5.1.e):
+  // { "<sncCode>": "<clientSpecificAccount>" }
+  accountOverrides Json?
+
   office       Office         @relation(fields: [officeId], references: [id], onDelete: Restrict)
   inboundEmails InboundEmail[]
   documents    Document[]
+  ingestAliases ClientIngestAlias[]
 
   @@index([officeId])
   @@index([deletedAt])
@@ -228,6 +282,7 @@ model EmailAccount {
   outlookUserId       String?  // Graph user ID
   deltaLink             String?  @db.Text // for delta query sync
   outlookSubscriptionId String?  // Graph subscription ID from watchChanges()
+  outlookSubscriptionExpiry DateTime? // Graph subscription expiry (renewed when <48h away)
 
   // ── Gmail ──
   // Stored encrypted at service layer
@@ -261,13 +316,16 @@ model EmailAccount {
 
 model EmailThread {
   id             String    @id @default(cuid())
+  officeId       String    // multi-tenant scope — threads are never shared across offices
   providerThreadId String? // Graph conversationId / Gmail threadId
   subject        String?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
+  office Office         @relation(fields: [officeId], references: [id], onDelete: Cascade)
   emails InboundEmail[]
 
+  @@index([officeId, providerThreadId])
   @@index([providerThreadId])
 }
 
@@ -343,6 +401,8 @@ model EmailAction {
   aiModel        String?      // Claude model used
   aiPromptTokens Int?
   sentAt         DateTime?
+  sendAttempts   Int          @default(0) // send tries (approve + retries, max per A3)
+  sendError      String?      @db.Text    // last sendReply failure message
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
@@ -350,6 +410,8 @@ model EmailAction {
   review       EmailReview?
   auditLog     AuditLog?
 
+  // One action per type per email — prevents the concurrent draft race (achado #10)
+  @@unique([inboundEmailId, type])
   @@index([inboundEmailId])
   @@index([status])
 }
@@ -362,8 +424,9 @@ model EmailReview {
   id            String       @id @default(cuid())
   emailActionId String       @unique
   reviewerId    String
-  decision      ActionStatus // APPROVED | REJECTED | EDITED_SENT
+  decision      ActionStatus // APPROVED | REJECTED
   notes         String?
+  editedBody    String?      @db.Text // accountant-edited body at approval time
   reviewedAt    DateTime     @default(now())
 
   emailAction EmailAction @relation(fields: [emailActionId], references: [id], onDelete: Cascade)
@@ -378,28 +441,148 @@ model EmailReview {
 
 model Document {
   id           String         @id @default(cuid())
-  attachmentId String         @unique
+  officeId     String         // direct tenant scope — required for non-email sources
+  attachmentId String?        @unique // null for MANUAL_UPLOAD / IMPORT documents
   clientId     String?
+  source       DocumentSource @default(EMAIL)
   type         DocumentType   @default(OTHER)
   status       DocumentStatus @default(PENDING_CLASSIFICATION)
   confidence   Float?         // AI classification confidence (0.0-1.0)
   reasoning    String?        // AI reasoning (one sentence in PT)
   extractedDate DateTime?
-  extractedAmount Float?
-  extractedVATNumber String?  // NIF extracted from document
+  extractedAmount Float?      // legacy display field — rich data lives in totalAmount
+  extractedVATNumber String?  // NIF extracted from document (legacy — see supplierNif)
   textContent  String?        @db.Text  // extracted text used for classification
-  r2Key        String?        // same as attachment r2Key (denormalized for convenience)
-  aiModel      String?
+  r2Key        String?        // R2 object key of the underlying file
+  aiModel              String?
+  classificationSource String?  // at-qr-code | filename-pattern | claude-vision | claude-pdf | claude-text
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
 
-  attachment   EmailAttachment @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
-  client       Client?         @relation(fields: [clientId], references: [id])
-  review       DocumentReview?
+  // ── Upload metadata (S2.1) ──
+  uploadedByUserId String?
+  originalFilename String?
+  mimeType         String?
+  sizeBytes        Int?
+  contentSha256    String?   // for split cache and duplicate detection
 
+  // ── Rich extraction (S2.3, A1: money = Decimal in columns, cents in JSONB) ──
+  supplierName      String?
+  supplierNif       String?
+  documentNumber    String?  // normalized: trim, collapsed spaces, uppercase (A8)
+  documentNumberRaw String?  // original, when different from normalized
+  issueDate         DateTime?
+  dueDate           DateTime?
+  currency          String   @default("EUR")
+  totalAmount       Decimal? @db.Decimal(14, 2)
+  netAmount         Decimal? @db.Decimal(14, 2)
+  vatAmount         Decimal? @db.Decimal(14, 2)
+  withholdingAmount Decimal? @db.Decimal(14, 2)
+  vatBreakdown      Json?    // [{region, rate, baseCents, vatCents}] — integer cents (A1)
+  documentLines     Json?    // [{description, qty, unitPriceCents, vatRate, totalCents}]
+  buyerNif          String?
+  atcud             String?
+  extractionSource  String?  // QR | XML | AI_VISION | AI_PDF | AI_TEXT | IMPORT
+
+  // ── Multi-invoice split (S2.2, A6) ──
+  parentDocumentId String?
+  pageStart        Int?
+  pageEnd          Int?
+
+  // ── Review flags (S2.5, A5, A6) ──
+  flags             String[] // DUPLICATE_SUSPECT | WRONG_CLIENT_SUSPECT | SENDER_UNVERIFIED | TOO_LARGE_FOR_AUTOSPLIT | ARITHMETIC_MISMATCH | VAT_SENSITIVE
+  duplicateOfId     String?
+  suggestedClientId String?
+
+  // ── Review concurrency + soft delete (A7, S3.1) ──
+  version   Int       @default(1) // optimistic locking — expectedVersion on every review
+  deletedAt DateTime?
+
+  // ── Accounting classification (S3.2/S3.4/A13 — suggestion, never decision) ──
+  suggestedAccountCode  String?
+  suggestedVatTreatment String? // DEDUTIVEL_TOTAL | NAO_DEDUTIVEL | AUTOLIQUIDACAO | ISENTO
+  sncSource             String? // HISTORY | AI | RULE
+  accountCode           String? // definitive — set only by human review or SupplierRule
+  vatTreatment          String?
+  appliedRuleId         String?
+
+  // ── Export linkage (S3.3/A9) ──
+  exportBatchId String?
+
+  office       Office          @relation(fields: [officeId], references: [id], onDelete: Restrict)
+  attachment   EmailAttachment? @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
+  client       Client?         @relation(fields: [clientId], references: [id])
+  reviews      DocumentReview[]
+  parent       Document?       @relation("DocumentSplit", fields: [parentDocumentId], references: [id])
+  children     Document[]      @relation("DocumentSplit")
+  exportLinks  ExportDocument[]
+
+  @@index([officeId, status])
+  @@index([officeId, supplierNif, documentNumber])
   @@index([clientId])
   @@index([type])
   @@index([status])
+  @@index([parentDocumentId])
+  @@index([contentSha256])
+}
+
+// ─────────────────────────────────────────
+// CLIENT INGEST ALIAS (dedicated inbox address — S2.6, A5)
+// ─────────────────────────────────────────
+
+model ClientIngestAlias {
+  id        String   @id @default(cuid())
+  officeId  String
+  clientId  String
+  alias     String   @unique // {slug}-{token10+} — local part of the ingest address
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  office Office @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([officeId])
+  @@index([clientId])
+}
+
+// ─────────────────────────────────────────
+// IMPORT BATCH (spreadsheet import with human-confirmed mapping — S2.4)
+// ─────────────────────────────────────────
+
+model ImportBatch {
+  id               String   @id @default(cuid())
+  officeId         String
+  createdByUserId  String
+  filename         String
+  clientId         String?
+  proposedMapping  Json     // AI-proposed column → field mapping
+  confirmedMapping Json?    // set only after human confirmation (AC-2.5.c)
+  status           String   @default("PENDING_CONFIRMATION") // PENDING_CONFIRMATION | IMPORTED | CANCELLED
+  rowsData         Json     // parsed rows awaiting confirmation
+  report           Json?    // per-row errors after import
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  office Office @relation(fields: [officeId], references: [id], onDelete: Cascade)
+
+  @@index([officeId])
+}
+
+// ─────────────────────────────────────────
+// SPLIT CACHE (A6 — split result per file hash, avoids repeat AI calls)
+// ─────────────────────────────────────────
+
+model DocumentSplitCache {
+  id         String   @id @default(cuid())
+  officeId   String
+  sha256     String
+  boundaries Json     // [{startPage, endPage}]
+  method     String   // qr-deterministic | ai
+  createdAt  DateTime @default(now())
+
+  office Office @relation(fields: [officeId], references: [id], onDelete: Cascade)
+
+  @@unique([officeId, sha256])
 }
 
 // ─────────────────────────────────────────
@@ -408,16 +591,106 @@ model Document {
 
 model DocumentReview {
   id           String       @id @default(cuid())
-  documentId   String       @unique
+  documentId   String       // 1:N — full review history (S3.1)
   reviewerId   String
+  decision     String       @default("validate") // validate | correct | reject | reopen | resolve-duplicate | split-approve
   confirmedType DocumentType
+  before       Json?        // field values before the correction
+  after        Json?        // field values after the correction
   notes        String?
   reviewedAt   DateTime     @default(now())
 
   document  Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
   reviewer  User     @relation(fields: [reviewerId], references: [id])
 
+  @@index([documentId])
   @@index([reviewerId])
+}
+
+// ─────────────────────────────────────────
+// SUPPLIER (per-office supplier registry — extraction upserts it)
+// ─────────────────────────────────────────
+
+model Supplier {
+  id            String   @id @default(cuid())
+  officeId      String
+  nif           String
+  name          String?
+  documentCount Int      @default(0)
+  lastSeenAt    DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  office Office @relation(fields: [officeId], references: [id], onDelete: Cascade)
+
+  @@unique([officeId, nif])
+}
+
+// ─────────────────────────────────────────
+// SUPPLIER RULE (explicit per-supplier defaults — S3.2, differentiator)
+// ─────────────────────────────────────────
+
+model SupplierRule {
+  id                  String   @id @default(cuid())
+  officeId            String
+  clientId            String?  // null = applies to every client of the office; specific wins
+  supplierNif         String
+  defaultDocumentType DocumentType?
+  defaultAccountCode  String?
+  defaultVatTreatment String?
+  autoValidate        Boolean  @default(false)
+  createdFromReviewId String?
+  active              Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  office Office @relation(fields: [officeId], references: [id], onDelete: Cascade)
+
+  @@index([officeId, supplierNif])
+}
+
+// ─────────────────────────────────────────
+// EXPORT (ZIP + CSV batches — S3.3, A9)
+// ─────────────────────────────────────────
+
+model ExportBatch {
+  id              String   @id @default(cuid())
+  officeId        String
+  createdByUserId String
+  filters         Json     // clientIds, period, includeExported
+  status          String   @default("PENDING") // PENDING | COMPLETED | FAILED
+  r2Key           String?
+  documentCount   Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  office    Office           @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  documents ExportDocument[]
+
+  @@index([officeId])
+}
+
+// N:M traceability — which export carried which document (A9 re-exports)
+model ExportDocument {
+  exportBatchId String
+  documentId    String
+  createdAt     DateTime @default(now())
+
+  exportBatch ExportBatch @relation(fields: [exportBatchId], references: [id], onDelete: Cascade)
+  document    Document    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@id([exportBatchId, documentId])
+}
+
+// ─────────────────────────────────────────
+// SNC TAXONOMY (reference data, seeded via service — S3.4)
+// Global standard chart — deliberately without officeId (national taxonomy).
+// ─────────────────────────────────────────
+
+model SncAccount {
+  code        String  @id // e.g. "6221"
+  label       String
+  suggestible Boolean @default(true)  // 63x pessoal: never auto-suggested
+  sensitive   Boolean @default(false) // 621x/625x etc. — A13 limited-deductibility
 }
 
 // ─────────────────────────────────────────

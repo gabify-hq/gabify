@@ -72,7 +72,21 @@ For each draft, you can:
 - **Edit** — modify the text, then send with your changes
 - **Reject** — discard the draft, handle manually
 
-Only after you approve does anything get sent. Every decision is recorded with a timestamp.
+Only after you approve does anything get sent. Every decision is recorded permanently — who decided, what was decided, and when. If a reply fails to send (for example, your email provider is briefly unavailable), Gabify shows the failure clearly and lets you retry with one click. Your decision is never lost, even if you close the browser.
+
+A draft can only be decided once: two colleagues cannot accidentally approve and reject the same draft at the same time — the first decision wins and the second person sees the updated state.
+
+---
+
+## Joining Gabify — invitations only
+
+Nobody can create an account in your firm's Gabify by themselves. Access works like this:
+
+1. The firm's owner invites a colleague by email, choosing their permission level (owner, accountant, or read-only).
+2. The colleague receives an invitation link, valid for 72 hours.
+3. They sign in with their email — no password, just a secure link sent to their inbox.
+
+Invitations can be revoked or re-sent at any time. If someone who was never invited tries to sign in, nothing happens — and they can't tell whether the email address exists in Gabify or not. The firm always keeps at least one owner: the last owner can never be removed or downgraded by accident.
 
 ---
 
@@ -98,6 +112,26 @@ The documents view shows every file that Gabify has received and classified. You
 Documents marked **"Rever"** (Review) are ones where the AI was less confident — these need your confirmation before being treated as final.
 
 ---
+
+## Getting documents into Gabify
+
+Besides email, there are three more ways documents arrive:
+
+- **Manual upload** — drag files onto the Documents page (or tap "Fotografar" on your phone to photograph a paper receipt). Gabify checks every file is really what it claims to be before accepting it.
+- **A dedicated email address per client** — each client can get their own private Gabify address (e.g. `padaria-x7k2m9@...`). Anything sent there lands directly in that client's file, no guessing needed. Suspicious senders are quarantined for your review, never processed silently.
+- **Spreadsheet import** — upload a CSV/Excel of entries; Gabify proposes how the columns map, you confirm, and only then are the rows imported. Rows with invalid NIFs or totals that don't add up are reported line by line.
+
+## What Gabify reads from each document
+
+For Portuguese invoices with the official AT QR code, Gabify reads the fiscal data directly from the QR — supplier and buyer NIFs, document number, ATCUD, date, VAT broken down by rate, withholding and totals. That data is authoritative: no AI involved, no cost, no guessing. For everything else, AI extracts the same fields and Gabify double-checks the arithmetic (bases + VAT − withholding must equal the total) — anything that doesn't add up goes to your review queue.
+
+A PDF containing several invoices is automatically split into individual documents. Duplicates and documents addressed to a different client are flagged, never silently accepted.
+
+## The review queue and export
+
+Documents that Gabify is confident about arrive **pre-validated** — one click (or one bulk click) validates them. Everything uncertain waits for you. You can teach Gabify per-supplier rules ("invoices from this supplier always go to account 6221, validate automatically") — rules are only ever created by you, and a flagged document never skips the queue, rule or no rule.
+
+When a period is done, export it: a ZIP organised as Client/Year/Month/Type with every PDF, plus a `lancamentos.csv` that opens correctly in Portuguese Excel and an Excel file with proper numeric cells — ready to enter your accounting software. Exported documents are locked; only the firm owner can reopen one, with a mandatory reason, and everything is logged.
 
 ## Coming soon
 

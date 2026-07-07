@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { guard } from '@/server/authz/guard'
 
 const associateSenderSchema = z.object({
   fromEmail: z.string().email('Email inválido'),
@@ -9,12 +9,10 @@ const associateSenderSchema = z.object({
 })
 
 export async function POST(request: NextRequest) {
-  const session = await auth()
-  if (!session?.user?.officeId) {
-    return NextResponse.json({ error: 'Não autenticado' }, { status: 401 })
-  }
+  const gate = await guard('client:update')
+  if (!gate.ok) return gate.response
 
-  const officeId = session.user.officeId
+  const officeId = gate.user.officeId
 
   let body: unknown
   try {

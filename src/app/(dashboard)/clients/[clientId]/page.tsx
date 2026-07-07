@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { ChevronLeft, Mail, Phone, Building2, Hash, Pencil } from 'lucide-react'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { DOCUMENT_TYPE_LABELS } from '@/lib/mock-data'
+import { DOCUMENT_TYPE_LABELS } from '@/lib/document-types'
 import { EditClientDialog } from '@/components/dashboard/edit-client-dialog'
 import { ClientDocumentTimeline } from '@/components/dashboard/client-document-timeline'
 import type { TimelineDocument, TimelinePeriod } from '@/components/dashboard/client-document-timeline'
@@ -65,6 +65,7 @@ export default async function ClientPage({ params }: ClientPageProps) {
       extractedDate: true,
       extractedAmount: true,
       extractedVATNumber: true,
+      classificationSource: true,
       createdAt: true,
       attachment: { select: { filename: true } },
     },
@@ -90,6 +91,7 @@ export default async function ClientPage({ params }: ClientPageProps) {
       extractedAmount: doc.extractedAmount ?? null,
       extractedVATNumber: doc.extractedVATNumber ?? null,
       r2Key: doc.r2Key ?? null,
+      classificationSource: doc.classificationSource ?? null,
     }
   })
 

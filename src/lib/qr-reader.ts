@@ -72,7 +72,7 @@ function searchATQRInPDFBinary(pdfBuffer: Buffer): string | null {
 
   // AT QR pattern: A: + 9-digit NIF + * + fields up to O: (total) field
   // Full pattern can be 100-500 chars. Use a broad match then validate.
-  const match = text.match(/A:\d{9}\*[A-Z0-9:.*]{20,600}O:\d+[.,]\d{2}[*A-Z0-9:.]*/)
+  const match = text.match(/A:\d{9}\*[^\r\n]{20,600}O:\d+[.,]\d{2}[^\r\n]*/)
   if (!match) return null
 
   // Normalise decimal separator (PDF may store comma as separator)

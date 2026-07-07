@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from 'next/server'
 import { createRemoteJWKSet, jwtVerify } from 'jose'
 import { prisma } from '@/lib/prisma'
 import { getEmailSyncQueue, DEFAULT_JOB_OPTIONS } from '@/lib/redis'
+import { checkWebhookRateLimit } from '@/server/rate-limit'
 
 /**
  * Gmail Pub/Sub Push Notification webhook.
@@ -22,20 +23,22 @@ const GOOGLE_JWKS = createRemoteJWKSet(
 )
 
 export async function POST(request: NextRequest) {
-  // Verify Google JWT signature before processing anything
+  // Fail-closed (spec rule 7): a request without a verifiable Google JWT is rejected.
   const authHeader = request.headers.get('Authorization')
-  if (authHeader) {
-    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader
-    const webhookUrl =
-      process.env.GMAIL_WEBHOOK_URL ??
-      `${process.env.NEXTAUTH_URL}/api/webhooks/gmail`
-    try {
-      await jwtVerify(token, GOOGLE_JWKS, { audience: webhookUrl })
-    } catch {
-      // Do not reveal why validation failed — log internally, return 200 to avoid Pub/Sub retries
-      console.warn('[gmail-webhook] JWT verification failed — ignoring notification')
-      return NextResponse.json({}, { status: 200 })
-    }
+  if (!authHeader) {
+    console.warn('[gmail-webhook] missing Authorization header — rejecting')
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader
+  const webhookUrl =
+    process.env.GMAIL_WEBHOOK_URL ??
+    `${process.env.NEXTAUTH_URL}/api/webhooks/gmail`
+  try {
+    await jwtVerify(token, GOOGLE_JWKS, { audience: webhookUrl })
+  } catch {
+    console.warn('[gmail-webhook] JWT verification failed — rejecting')
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   let body: PubSubPushPayload
@@ -57,6 +60,15 @@ export async function POST(request: NextRequest) {
     notification = JSON.parse(decoded)
   } catch {
     return NextResponse.json({ error: 'Invalid message data' }, { status: 400 })
+  }
+
+  // Rate limit per account address (A11 — Google IPs, never per IP)
+  const rate = checkWebhookRateLimit(`gmail:${notification.emailAddress}`)
+  if (!rate.allowed) {
+    return NextResponse.json(
+      { error: 'Too many requests' },
+      { status: 429, headers: { 'Retry-After': String(rate.retryAfterSeconds) } },
+    )
   }
 
   // Find EmailAccount by Gmail user ID (emailAddress)

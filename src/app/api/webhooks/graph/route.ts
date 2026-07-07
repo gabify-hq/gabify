@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getEmailSyncQueue, DEFAULT_JOB_OPTIONS } from '@/lib/redis'
+import { checkWebhookRateLimit } from '@/server/rate-limit'
 
 /**
  * Microsoft Graph Change Notification webhook.
@@ -9,10 +10,10 @@ import { getEmailSyncQueue, DEFAULT_JOB_OPTIONS } from '@/lib/redis'
  * 1. Validation: GET/POST with ?validationToken=<token> — respond with token as text/plain
  * 2. Notification: POST with array of change notifications in body
  *
- * Security: Graph uses the raw GRAPH_WEBHOOK_SECRET as the clientState value (not HMAC).
- * We verify each notification's clientState matches the secret exactly.
- * On mismatch: log a warning and skip that notification, but still return 202.
- * (Never reveal validation logic via HTTP status codes.)
+ * Security (fail-closed, spec rule 7):
+ * - GRAPH_WEBHOOK_SECRET missing → 503, nothing processed.
+ * - Any notification with a missing/wrong clientState → 401, nothing queued.
+ * - Accounts are matched strictly by outlookSubscriptionId — no fallback.
  *
  * Docs: https://learn.microsoft.com/en-us/graph/change-notifications-delivery-webhooks
  */
@@ -35,32 +36,45 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
+  // Fail-closed: without the secret configured, the webhook refuses to operate
   const expectedClientState = process.env.GRAPH_WEBHOOK_SECRET
+  if (!expectedClientState) {
+    console.error('[graph-webhook] GRAPH_WEBHOOK_SECRET is not configured — refusing notifications')
+    return NextResponse.json({ error: 'Service unavailable' }, { status: 503 })
+  }
+
+  const notifications = body.value ?? []
+
+  // Verify EVERY clientState before queueing anything — one bad notification rejects the batch
+  const allValid = notifications.every((n) => n.clientState === expectedClientState)
+  if (!allValid) {
+    console.warn('[graph-webhook] clientState mismatch — rejecting request')
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  // Rate limit per subscription (A11 — Microsoft IPs, never per IP)
+  for (const notification of notifications) {
+    const rate = checkWebhookRateLimit(`graph:${notification.subscriptionId}`)
+    if (!rate.allowed) {
+      return NextResponse.json(
+        { error: 'Too many requests' },
+        { status: 429, headers: { 'Retry-After': String(rate.retryAfterSeconds) } },
+      )
+    }
+  }
+
   const queue = getEmailSyncQueue()
 
-  for (const notification of body.value ?? []) {
-    // Verify clientState — Graph uses the raw secret as clientState (not HMAC)
-    if (expectedClientState && notification.clientState !== expectedClientState) {
-      console.warn('[graph-webhook] clientState mismatch — skipping notification')
-      continue
-    }
-
+  for (const notification of notifications) {
     const subscriptionId = notification.subscriptionId
 
-    // Look up EmailAccount by outlookSubscriptionId first, fallback to any active OUTLOOK account
-    let account = await prisma.emailAccount.findFirst({
+    // Strict subscription match — the old "any active OUTLOOK account" fallback is gone
+    const account = await prisma.emailAccount.findFirst({
       where: { outlookSubscriptionId: subscriptionId },
     })
 
     if (!account) {
-      // Fallback: find any active OUTLOOK account (temporary until all accounts store subscriptionId)
-      account = await prisma.emailAccount.findFirst({
-        where: { provider: 'OUTLOOK', active: true },
-      })
-    }
-
-    if (!account) {
-      console.warn(`[graph-webhook] no account found for subscription ${subscriptionId}`)
+      console.warn(`[graph-webhook] no account found for subscription ${subscriptionId} — skipped`)
       continue
     }
 

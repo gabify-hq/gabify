@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
+import { can } from '@/server/authz/can'
 import { prisma } from '@/lib/prisma'
 import { encryptToken } from '@/lib/crypto'
 
@@ -57,6 +58,9 @@ export async function GET(request: NextRequest) {
   if (!session?.user?.id || !session.user.officeId) {
     return NextResponse.redirect(new URL('/login', baseUrl))
   }
+  if (!can(session.user.role, 'emailAccount:connect')) {
+    return NextResponse.redirect(new URL('/settings?error=sem_permissao', baseUrl))
+  }
 
   const clientId = process.env.MICROSOFT_CLIENT_ID
   const clientSecret = process.env.MICROSOFT_CLIENT_SECRET
@@ -109,7 +113,7 @@ export async function GET(request: NextRequest) {
     const tokenExpiry = new Date(Date.now() + tokenData.expires_in * 1000)
 
     // Upsert EmailAccount
-    await prisma.emailAccount.upsert({
+    const account = await prisma.emailAccount.upsert({
       where: {
         officeId_email_provider: {
           officeId: session.user.officeId,
@@ -141,6 +145,23 @@ export async function GET(request: NextRequest) {
         active: true,
       },
     })
+
+    // Activate the change-notification webhook (§1.3). Failure is non-fatal —
+    // the account simply stays on 30s polling until the renewal job retries.
+    try {
+      const { createEmailProvider } = await import('@/server/email-providers')
+      const provider = createEmailProvider(account)
+      const watch = await provider.watchChanges(`${baseUrl}/api/webhooks/graph`)
+      await prisma.emailAccount.update({
+        where: { id: account.id },
+        data: {
+          outlookSubscriptionId: watch.subscriptionId ?? null,
+          outlookSubscriptionExpiry: watch.expiresAt ?? null,
+        },
+      })
+    } catch (watchErr) {
+      console.error('[outlook-callback] watchChanges failed — staying on polling:', watchErr)
+    }
 
     // Clear CSRF cookie
     const response = NextResponse.redirect(new URL('/settings?connected=outlook', baseUrl))

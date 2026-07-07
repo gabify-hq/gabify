@@ -2,95 +2,27 @@ import { Worker, type Job } from 'bullmq'
 import {
   redisConnection,
   QUEUE_EMAIL_SYNC,
+  QUEUE_SUBSCRIPTION_RENEWAL,
   DEFAULT_JOB_OPTIONS,
-  getDocumentParseQueue,
   getEmailSyncQueue,
+  getSubscriptionRenewalQueue,
 } from '@/lib/redis'
 import { prisma } from '@/lib/prisma'
-import { createEmailProvider } from '@/server/email-providers'
-import { matchClientByEmail, assignClientToEmail } from '@/server/services/client-matching'
+import { validateSecurityEnv } from '@/lib/env-check'
+import { processEmailSync, type EmailSyncJobData } from './email-sync.processor'
+import { processSubscriptionRenewal } from './subscription-renewal.processor'
+import { shouldPollOnTick } from './polling-policy'
 
-export interface EmailSyncJobData {
-  emailAccountId: string
-  officeId: string
-  triggerSource: 'webhook' | 'scheduled' | 'manual'
-}
+// Fail-closed startup (§1.3): refuse to boot without security env vars
+validateSecurityEnv()
 
 /**
  * BullMQ worker for email inbox synchronisation.
- * Processes jobs from the "email-sync" queue.
- *
- * Flow:
- * 1. Load EmailAccount from DB
- * 2. Create provider via factory (Outlook/Gmail/IMAP)
- * 3. Call syncInbox() — incremental sync
- * 4. For each new InboundEmail: run client matching
- * 5. For each email with attachments: queue document-parse jobs
- * 6. Log result to JobLog
- *
- * Workers must be idempotent — Graph may send duplicate webhook notifications.
+ * Processing logic lives in email-sync.processor.ts (testable without Redis).
  */
 export const emailSyncWorker = new Worker<EmailSyncJobData>(
   QUEUE_EMAIL_SYNC,
-  async (job: Job<EmailSyncJobData>) => {
-    const { emailAccountId, officeId } = job.data
-    const jobLogId = await createJobLog(officeId, QUEUE_EMAIL_SYNC, job.id!, job.data)
-
-    try {
-      await updateJobLog(jobLogId, 'RUNNING')
-
-      // 1. Load email account
-      const account = await prisma.emailAccount.findUniqueOrThrow({
-        where: { id: emailAccountId },
-      })
-
-      // 2. Create provider
-      const provider = createEmailProvider(account)
-
-      // 3. Sync inbox
-      const syncResult = await provider.syncInbox()
-
-      // 4. Match clients for ALL unmatched emails (not just recent)
-      const newEmails = await prisma.inboundEmail.findMany({
-        where: {
-          emailAccountId,
-          clientId: null,
-        },
-        select: { id: true, fromEmail: true },
-      })
-
-      for (const email of newEmails) {
-        const match = await matchClientByEmail(officeId, email.fromEmail)
-        await assignClientToEmail(email.id, match)
-      }
-
-      // 5. Queue document parsing for attachments without a Document record
-      // Note: do NOT filter on uploadedAt/r2Key — those may be set from a failed previous run
-      const attachments = await prisma.emailAttachment.findMany({
-        where: {
-          inboundEmail: { emailAccountId },
-          document: null,
-        },
-        select: { id: true, inboundEmailId: true },
-      })
-
-      const docQueue = getDocumentParseQueue()
-      for (const attachment of attachments) {
-        await docQueue.add(
-          'parse-document',
-          { attachmentId: attachment.id, emailAccountId, officeId },
-          DEFAULT_JOB_OPTIONS
-        )
-      }
-
-      await updateJobLog(jobLogId, 'COMPLETED', { syncResult })
-      return syncResult
-    } catch (error) {
-      const errMsg = error instanceof Error ? error.message : String(error)
-      await updateJobLog(jobLogId, 'FAILED', undefined, errMsg)
-      throw error
-    }
-  },
+  async (job: Job<EmailSyncJobData>) => processEmailSync(job.data, job.id!),
   {
     connection: redisConnection,
     concurrency: 5,
@@ -109,23 +41,54 @@ emailSyncWorker.on('error', (err) => {
   console.error('[email-sync] worker error:', err.message)
 })
 
+// ── Subscription renewal (daily repeatable — §1.3) ─────────────────────────
+
+export const subscriptionRenewalWorker = new Worker(
+  QUEUE_SUBSCRIPTION_RENEWAL,
+  async (job: Job) => processSubscriptionRenewal(job.id ?? `renewal-${Date.now()}`),
+  { connection: redisConnection, concurrency: 1 }
+)
+
+subscriptionRenewalWorker.on('failed', (job, err) => {
+  console.error(`[subscription-renewal] job ${job?.id} failed:`, err.message)
+})
+
+getSubscriptionRenewalQueue()
+  .add(
+    'renew-subscriptions',
+    {},
+    { repeat: { pattern: '0 4 * * *' }, ...DEFAULT_JOB_OPTIONS } // daily 04:00
+  )
+  .catch((err) => console.error('[subscription-renewal] failed to schedule:', err))
+
 // ── Auto-polling scheduler ──────────────────────────────────────────────────
 
 const POLL_INTERVAL_MS = Number(process.env.EMAIL_POLL_INTERVAL_MS ?? 30_000)
+let pollTick = 0
 
 async function schedulePollingJobs(): Promise<void> {
+  pollTick += 1
+  const now = new Date()
   const accounts = await prisma.emailAccount.findMany({
     where: { active: true },
-    select: { id: true, officeId: true },
+    select: {
+      id: true,
+      officeId: true,
+      provider: true,
+      outlookSubscriptionId: true,
+      outlookSubscriptionExpiry: true,
+      pubSubSubscription: true,
+      gmailWatchExpiry: true,
+    },
   })
 
-  if (accounts.length === 0) {
-    console.log('[email-sync] no active accounts to poll')
-    return
-  }
+  // Webhook-backed accounts only poll every 10th tick (5 min fallback — §1.3)
+  const toPoll = accounts.filter((account) => shouldPollOnTick(account, pollTick, now))
+
+  if (toPoll.length === 0) return
 
   const queue = getEmailSyncQueue()
-  for (const account of accounts) {
+  for (const account of toPoll) {
     await queue.add(
       'sync-inbox',
       { emailAccountId: account.id, officeId: account.officeId, triggerSource: 'scheduled' },
@@ -133,7 +96,7 @@ async function schedulePollingJobs(): Promise<void> {
     )
   }
 
-  console.log(`[email-sync] scheduled poll for ${accounts.length} account(s)`)
+  console.log(`[email-sync] scheduled poll for ${toPoll.length}/${accounts.length} account(s)`)
 }
 
 // Run once on startup, then repeat on interval
@@ -142,35 +105,3 @@ setInterval(
   () => schedulePollingJobs().catch((err) => console.error('[email-sync] scheduler error:', err)),
   POLL_INTERVAL_MS,
 )
-
-// ── Helpers ──
-
-async function createJobLog(
-  officeId: string,
-  queue: string,
-  jobId: string,
-  payload: unknown
-): Promise<string> {
-  const log = await prisma.jobLog.create({
-    data: { officeId, queue, jobId, status: 'QUEUED', payload: payload as object },
-  })
-  return log.id
-}
-
-async function updateJobLog(
-  id: string,
-  status: 'RUNNING' | 'COMPLETED' | 'FAILED',
-  result?: unknown,
-  error?: string
-): Promise<void> {
-  await prisma.jobLog.update({
-    where: { id },
-    data: {
-      status,
-      result: result as object | undefined,
-      error,
-      startedAt: status === 'RUNNING' ? new Date() : undefined,
-      completedAt: status !== 'RUNNING' ? new Date() : undefined,
-    },
-  })
-}

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
+import { can } from '@/server/authz/can'
 import { prisma } from '@/lib/prisma'
 import { encryptToken } from '@/lib/crypto'
 
@@ -90,11 +91,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     if (!session?.user?.officeId) {
       return NextResponse.redirect(new URL('/login', request.url))
     }
+    if (!can(session.user.role, 'emailAccount:connect')) {
+      return NextResponse.redirect(new URL('/settings?error=sem_permissao', request.url))
+    }
 
     const { officeId } = session.user
 
     // Upsert EmailAccount in DB with encrypted tokens
-    await prisma.emailAccount.upsert({
+    const account = await prisma.emailAccount.upsert({
       where: {
         officeId_email_provider: {
           officeId,
@@ -124,6 +128,24 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         active: true,
       },
     })
+
+    // Activate the Pub/Sub watch (§1.3). Failure is non-fatal — the account
+    // stays on 30s polling until the renewal job retries.
+    try {
+      const { createEmailProvider } = await import('@/server/email-providers')
+      const provider = createEmailProvider(account)
+      const baseUrl = process.env.NEXTAUTH_URL ?? 'http://localhost:3000'
+      const watch = await provider.watchChanges(`${baseUrl}/api/webhooks/gmail`)
+      await prisma.emailAccount.update({
+        where: { id: account.id },
+        data: {
+          pubSubSubscription: watch.pubSubSubscription ?? null,
+          gmailWatchExpiry: watch.expiresAt ?? null,
+        },
+      })
+    } catch (watchErr) {
+      console.error('[google-callback] watchChanges failed — staying on polling:', watchErr)
+    }
 
     // Clear the state cookie
     const successRedirect = NextResponse.redirect(

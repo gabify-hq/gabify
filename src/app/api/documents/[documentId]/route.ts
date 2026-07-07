@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
-import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { getSignedDownloadUrl } from '@/lib/r2'
+import { guard } from '@/server/authz/guard'
 
 interface RouteParams {
   params: Promise<{ documentId: string }>
@@ -14,10 +14,8 @@ interface RouteParams {
  * URL expires in 15 minutes.
  */
 export async function GET(_req: Request, { params }: RouteParams) {
-  const session = await auth()
-  if (!session?.user?.officeId) {
-    return NextResponse.json({ error: 'Não autenticado' }, { status: 401 })
-  }
+  const gate = await guard('document:read')
+  if (!gate.ok) return gate.response
 
   const { documentId } = await params
 
@@ -26,7 +24,7 @@ export async function GET(_req: Request, { params }: RouteParams) {
       id: documentId,
       attachment: {
         inboundEmail: {
-          emailAccount: { officeId: session.user.officeId },
+          emailAccount: { officeId: gate.user.officeId },
         },
       },
     },

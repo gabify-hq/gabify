@@ -9,7 +9,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
-import { DOCUMENT_TYPE_LABELS } from '@/lib/mock-data'
+import { DOCUMENT_TYPE_LABELS } from '@/lib/document-types'
 import type { DocumentType } from '@/types'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -24,6 +24,7 @@ export interface TimelineDocument {
   extractedAmount: number | null
   extractedVATNumber: string | null
   r2Key: string | null
+  classificationSource: string | null
 }
 
 export interface TimelinePeriod {
@@ -35,6 +36,14 @@ export interface TimelinePeriod {
 
 interface ClientDocumentTimelineProps {
   periods: TimelinePeriod[]
+}
+
+const SOURCE_LABEL: Record<string, string> = {
+  'at-qr-code':       'QR Code Fiscal AT',
+  'filename-pattern': 'Nome do ficheiro',
+  'claude-vision':    'Visão artificial (imagem)',
+  'claude-pdf':       'Leitura de PDF',
+  'claude-text':      'Análise de texto',
 }
 
 // ── Type badge colours ─────────────────────────────────────────────────────────
@@ -218,6 +227,14 @@ function PeriodSection({ period, defaultOpen }: { period: TimelinePeriod; defaul
                 <dd className={cn('data font-bold', confidenceClass(preview.confidence))}>
                   {Math.round(preview.confidence * 100)}%
                 </dd>
+                {preview.classificationSource && (
+                  <>
+                    <dt className="text-gray-400">Origem</dt>
+                    <dd className="font-semibold text-gray-800">
+                      {SOURCE_LABEL[preview.classificationSource] ?? preview.classificationSource}
+                    </dd>
+                  </>
+                )}
               </dl>
               <button
                 className="pressable flex w-full items-center justify-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-[12px] font-medium text-gray-600 transition-colors hover:bg-gray-50"
