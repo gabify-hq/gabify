@@ -115,6 +115,17 @@ enum SuggestionStatus {
   REJECTED // REJEITADA
 }
 
+enum BankRuleMatchType {
+  CONTAINS     // CONTEM
+  EQUALS       // IGUAL
+  SIMPLE_REGEX // REGEX_SIMPLES
+}
+
+enum BankRuleAction {
+  IGNORE         // IGNORAR
+  SUGGEST_CLIENT // SUGERIR_CLIENTE
+}
+
 // ─────────────────────────────────────────
 // OFFICE (gabinete de contabilidade)
 // ─────────────────────────────────────────
@@ -150,6 +161,8 @@ model Office {
   bankImports      BankStatementImport[]
   bankTransactions BankTransaction[]
   reconciliationSuggestions ReconciliationSuggestion[]
+  reconciliationEntries     ReconciliationEntry[]
+  bankRules                 BankRule[]
 
   @@index([deletedAt])
 }
@@ -285,6 +298,7 @@ model Client {
   documents    Document[]
   ingestAliases ClientIngestAlias[]
   bankAccounts BankAccount[]
+  bankRuleTargets BankRule[] @relation("BankRuleTargetClient")
 
   @@index([officeId])
   @@index([deletedAt])
@@ -541,9 +555,10 @@ model Document {
 
   // ── Bank reconciliation (C2/C3) ──
   // Set when the document is reconciled against bank transactions; a reconciled
-  // document never re-enters candidate matching. FK relation lands in C3 with
-  // the ReconciliationEntry model — never touches the document state machine.
+  // document never re-enters candidate matching. Never touches the document
+  // state machine.
   reconciledEntryId String?
+  reconciledEntry   ReconciliationEntry? @relation(fields: [reconciledEntryId], references: [id])
 
   office       Office          @relation(fields: [officeId], references: [id], onDelete: Restrict)
   attachment   EmailAttachment? @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
@@ -805,6 +820,7 @@ model BankAccount {
   client Client @relation(fields: [clientId], references: [id], onDelete: Restrict)
   imports      BankStatementImport[]
   transactions BankTransaction[]
+  rules        BankRule[]
 
   // NULL ibans are distinct in Postgres — uniqueness only applies when iban is present
   @@unique([officeId, clientId, iban])
@@ -853,6 +869,7 @@ model BankTransaction {
   // sha256(bankAccountId|bookingDate|amountCents|normalized description)
   dedupHash     String
   status        BankTransactionStatus @default(UNRECONCILED)
+  version       Int                   @default(1) // optimistic locking (A7)
   createdAt     DateTime              @default(now())
   updatedAt     DateTime              @updatedAt
 
@@ -860,6 +877,7 @@ model BankTransaction {
   bankAccount BankAccount         @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
   import      BankStatementImport @relation(fields: [importId], references: [id], onDelete: Cascade)
   suggestions ReconciliationSuggestion[]
+  entry       ReconciliationEntry?
 
   @@unique([officeId, dedupHash])
   @@index([officeId, status])
@@ -887,4 +905,53 @@ model ReconciliationSuggestion {
   @@unique([bankTransactionId, documentId])
   @@index([officeId, status])
   @@index([documentId])
+}
+
+// C3 — the human (or rule) act of reconciling/ignoring one transaction.
+// One active entry per transaction; undo deletes the entry (AuditLog keeps
+// the immutable trail on both sides).
+model ReconciliationEntry {
+  id                 String   @id @default(cuid())
+  officeId           String
+  bankTransactionId  String   @unique
+  documentIds        String[] // immutable snapshot; live linkage via Document.reconciledEntryId
+  ignored            Boolean  @default(false)
+  ignoreReason       String?
+  ruleId             String? // set when an IGNORE rule applied this entry
+  reconciledByUserId String? // null when applied by a rule (system)
+  createdAt          DateTime @default(now())
+
+  office          Office          @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  bankTransaction BankTransaction @relation(fields: [bankTransactionId], references: [id], onDelete: Cascade)
+  rule            BankRule?       @relation(fields: [ruleId], references: [id])
+  documents       Document[]
+
+  @@index([officeId])
+}
+
+// C3 — bank rules (Kabilio parity): applied BEFORE scoring, first match by
+// ascending priority wins. IGNORE marks the transaction IGNORED with a
+// reference to the rule; SUGGEST_CLIENT redirects candidate matching to the
+// target client.
+model BankRule {
+  id             String            @id @default(cuid())
+  officeId       String
+  bankAccountId  String? // null = every account of the office
+  matchType      BankRuleMatchType
+  pattern        String // matched against the transaction description
+  amountMinCents Int?
+  amountMaxCents Int?
+  action         BankRuleAction
+  targetClientId String? // required for SUGGEST_CLIENT
+  priority       Int               @default(100) // lower runs first
+  active         Boolean           @default(true)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  office       Office       @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  bankAccount  BankAccount? @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  targetClient Client?      @relation("BankRuleTargetClient", fields: [targetClientId], references: [id])
+  entries      ReconciliationEntry[]
+
+  @@index([officeId, active, priority])
 }

@@ -164,6 +164,17 @@ export async function generateSuggestionsForTransaction(params: {
   }
   if (tx.amountCents === 0) return { ok: true, created: 0, autoMatch: false }
 
+  // Bank rules run BEFORE scoring (C3): IGNORE short-circuits; SUGGEST_CLIENT
+  // redirects the candidate search to the target client
+  const { applyRulesBeforeMatching } = await import('./bank-rules')
+  const ruleOutcome = await applyRulesBeforeMatching({
+    officeId: params.officeId,
+    transaction: tx,
+  })
+  if (ruleOutcome?.kind === 'ignored') return { ok: true, created: 0, autoMatch: false }
+  const candidateClientId =
+    ruleOutcome?.kind === 'suggestClient' ? ruleOutcome.targetClientId : tx.bankAccount.clientId
+
   const toleranceCents = tx.office.reconciliationToleranceCents
   const absAmount = Math.abs(tx.amountCents)
   const documentTypes = tx.amountCents < 0 ? DEBIT_DOCUMENT_TYPES : CREDIT_DOCUMENT_TYPES
@@ -172,7 +183,7 @@ export async function generateSuggestionsForTransaction(params: {
   // Decimal column compared against decimal strings built from integer cents)
   const where: Prisma.DocumentWhereInput = {
     officeId: params.officeId,
-    clientId: tx.bankAccount.clientId,
+    clientId: candidateClientId,
     deletedAt: null,
     status: { in: ['VALIDATED', 'EXPORTED'] },
     type: { in: documentTypes },

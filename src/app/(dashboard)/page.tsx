@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { Inbox, Users, Mail, FileText, UserX } from 'lucide-react'
+import { Inbox, Users, Mail, FileText, UserX, Landmark } from 'lucide-react'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { DocumentCounters } from '@/components/dashboard/document-counters'
@@ -56,6 +56,16 @@ export default async function DashboardOverviewPage() {
           where: { emailAccount: { officeId }, clientId: null },
           _count: { id: true },
         }).then((rows) => rows.length)
+      : Promise.resolve(0),
+  ])
+
+  // Bank reconciliation counters (fase C3)
+  const [bankUnreconciled, bankSuggested] = await Promise.all([
+    officeId
+      ? prisma.bankTransaction.count({ where: { officeId, status: 'UNRECONCILED' } })
+      : Promise.resolve(0),
+    officeId
+      ? prisma.bankTransaction.count({ where: { officeId, status: 'SUGGESTED' } })
       : Promise.resolve(0),
   ])
 
@@ -191,6 +201,35 @@ export default async function DashboardOverviewPage() {
               </div>
             )}
           </div>
+
+          {/* Bank reconciliation counters (fase C3) */}
+          {(bankUnreconciled > 0 || bankSuggested > 0) && (
+            <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <h2 className="mb-4 text-[12px] font-bold uppercase tracking-wider text-gray-400">
+                Conciliação bancária
+              </h2>
+              <div className="grid grid-cols-2 gap-4 sm:max-w-sm">
+                <Link href="/bank?status=UNRECONCILED,SUGGESTED" className="group">
+                  <div className="flex flex-col gap-2 rounded-lg border border-gray-200 p-4 transition-colors group-hover:border-amber-300 group-hover:bg-amber-50/40">
+                    <span className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+                      <Landmark className="h-3.5 w-3.5 stroke-[1.75] text-amber-600" />
+                      Por conciliar
+                    </span>
+                    <span className="text-[24px] font-bold leading-none text-amber-700">{bankUnreconciled + bankSuggested}</span>
+                  </div>
+                </Link>
+                <Link href="/bank?status=SUGGESTED" className="group">
+                  <div className="flex flex-col gap-2 rounded-lg border border-gray-200 p-4 transition-colors group-hover:border-blue-300 group-hover:bg-blue-50/40">
+                    <span className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+                      <Landmark className="h-3.5 w-3.5 stroke-[1.75] text-blue-600" />
+                      Sugeridas
+                    </span>
+                    <span className="text-[24px] font-bold leading-none text-blue-700">{bankSuggested}</span>
+                  </div>
+                </Link>
+              </div>
+            </div>
+          )}
 
           {/* Quick actions */}
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
