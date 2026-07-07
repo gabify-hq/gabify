@@ -227,7 +227,9 @@ describe('🔴RED TOConline — pull de faturas emitidas [INV]', () => {
     expect(result.ok).toBe(true) // the throwing anthropic proxy was never touched
     expect(result.imported).toBe(1)
     // No document-parse job was enqueued for the pulled document
-    const parseJobs = queueAddMock.mock.calls.filter(([name]) => name !== 'toconline-pull')
+    const parseJobs = (queueAddMock.mock.calls as unknown as Array<[string]>).filter(
+      ([name]) => name !== 'toconline-pull',
+    )
     expect(parseJobs).toHaveLength(0)
   })
 

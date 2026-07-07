@@ -72,6 +72,11 @@ function centsOfDecimal(value: unknown): number {
  * route can pre-validate per item (defense in depth — the service re-checks).
  */
 export function getPushEligibilityError(doc: Document): string | null {
+  if (doc.source === 'API_PULL') {
+    // Anti-echo defense in depth: documents imported FROM an external API are
+    // never sent back to it
+    return 'Documento importado do TOConline — nunca é reenviado'
+  }
   if (!TOCONLINE_PUSH_ELIGIBLE_STATUSES.includes(doc.status as never)) {
     return `Só documentos validados podem ser enviados (estado atual: ${doc.status})`
   }
@@ -328,6 +333,11 @@ export async function pushDocumentToToconline(
   }
   if (connection.status === 'DISABLED') {
     const error = 'A ligação TOConline deste cliente está desligada'
+    await markDocumentError(doc.id, error)
+    return { ok: false, error }
+  }
+  if (!connection.pushEnabled) {
+    const error = 'O envio (push) está desligado nesta ligação — ative-o primeiro'
     await markDocumentError(doc.id, error)
     return { ok: false, error }
   }

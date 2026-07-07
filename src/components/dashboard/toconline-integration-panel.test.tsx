@@ -23,6 +23,9 @@ function makeConnection(overrides: Partial<ToconlineConnectionInfo> = {}): Tocon
     apiUrl: 'https://api.example.test',
     oauthClientId: 'integrator-id',
     lastError: null,
+    pullEnabled: false,
+    pushEnabled: true,
+    lastPullAt: null,
     ...overrides,
   }
 }
@@ -48,6 +51,7 @@ describe('ToconlineIntegrationPanel', () => {
         clientId="c1"
         connection={makeConnection({ dryRun: true })}
         documents={[]}
+        importedCount={0}
         canManage
         canGoLive
       />,
@@ -68,6 +72,7 @@ describe('ToconlineIntegrationPanel', () => {
         clientId="c1"
         connection={makeConnection({ dryRun: true })}
         documents={[]}
+        importedCount={0}
         canManage
         canGoLive={false}
       />,
@@ -82,6 +87,7 @@ describe('ToconlineIntegrationPanel', () => {
         clientId="c1"
         connection={makeConnection({ dryRun: false })}
         documents={[makeDoc()]}
+        importedCount={0}
         canManage={false}
         canGoLive={false}
       />,
@@ -104,6 +110,7 @@ describe('ToconlineIntegrationPanel', () => {
           makeDoc({ id: 'd3', pushStatus: 'PENDING', number: 'FT 3' }),
           makeDoc({ id: 'd4', pushStatus: null, number: 'FT 4' }),
         ]}
+        importedCount={0}
         canManage
         canGoLive
       />,
@@ -114,5 +121,24 @@ describe('ToconlineIntegrationPanel', () => {
     expect(screen.getByText(/NÃO testada contra o TOConline real/)).toBeInTheDocument()
     // SENT/PENDING rows are not selectable; ERROR is retryable — FT 2 + FT 4
     expect(screen.getAllByRole('checkbox')).toHaveLength(2)
+  })
+
+  it('Ligações: toggles fonte/destino independentes + Sincronizar agora com pull ativo', () => {
+    render(
+      <ToconlineIntegrationPanel
+        clientId="c1"
+        connection={makeConnection({ pullEnabled: true, pushEnabled: false, lastPullAt: '07/07/2026, 15:30' })}
+        documents={[]}
+        importedCount={3}
+        canManage
+        canGoLive
+      />,
+    )
+    expect(screen.getByRole('switch', { name: /Fonte: importar faturas emitidas/ })).toBeChecked()
+    expect(screen.getByRole('switch', { name: /Destino: enviar compras/ })).not.toBeChecked()
+    expect(screen.getByRole('button', { name: /Sincronizar agora/ })).toBeInTheDocument()
+    expect(screen.getByText(/Última sincronização: 07\/07\/2026, 15:30 · 3 importados/)).toBeInTheDocument()
+    // Push desligado → tabela de envio não aparece
+    expect(screen.queryByText('Faturas recebidas validadas')).not.toBeInTheDocument()
   })
 })
