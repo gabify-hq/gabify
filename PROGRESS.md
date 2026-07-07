@@ -129,3 +129,28 @@ Por regra 13 da spec (fases por ordem de valor; melhor 0–3 impecáveis do que 
 
 **Gate no fecho do slice S5: verde — 302 testes (32 ficheiros), zero regressões, thresholds mantidos.**
 Nota: a tabela por cliente do dashboard continua server-side (`groupBy`) — o endpoint de listagem não agrega; documentado em HANDOFF.md.
+
+## Fase C — Conciliação bancária v1 (import de extratos, sem PSD2)
+
+### RED C1 (2026-07-07)
+
+`tests/acceptance/faseC1.bank-import.test.ts` (9 testes) + `src/lib/bank-amount.test.ts` (11 testes) — **RED import-level confirmado** antes de qualquer implementação (2/2 ficheiros falham: módulos `@/app/api/bank/*` e `src/lib/bank-amount` inexistentes).
+
+| Slice | Estado | RED | Gate |
+|---|---|---|---|
+| C1 Modelos (BankAccount, BankStatementImport, BankTransaction) + migração `20260707000001_c1_bank_reconciliation_import` | DONE | ✅ | ✅ |
+| C1 Parser dedicado de montantes PT (`centsFromBankAmount`: "1.234,56"→123456, regras de separador determinísticas, nunca parseFloat) | DONE | ✅ 11/11 | ✅ |
+| C1 Import wizard 2 passos: POST /api/bank/imports (multipart, magic bytes A4, 10MB, fileHash 409+force) → deteção heurística de colunas PT (zero IA) com fallback IA → POST /api/bank/imports/[id]/confirm (confirmação humana obrigatória) | DONE | ✅ | ✅ |
+| C1 dedupHash (officeId unique): linha repetida no ficheiro/re-import → skip + aviso no relatório, nunca 500; débito/crédito separados OU coluna única com sinal → mesmo amountCents | DONE | ✅ | ✅ |
+| C1 GET /api/bank/accounts + GET /api/bank/transactions (filtros AND, cursor 50/200, cross-tenant 404) + ações RBAC novas (bank:read incl. VIEWER; bank:manage/import/reconcile/bankRule:manage OWNER+ACCOUNTANT) | DONE | ✅ | ✅ |
+
+**Fim do C1: `npm run gate` verde — 322 testes (34 ficheiros), thresholds mantidos.**
+
+### Decisões C (latitude da spec)
+
+- Enums em inglês por regra da casa (precedente DocumentStatus): POR_CONCILIAR→UNRECONCILED, SUGERIDA→SUGGESTED, CONCILIADA→RECONCILED, IGNORADA→IGNORED; PENDENTE/ACEITE/REJEITADA→PENDING/ACCEPTED/REJECTED.
+- Confirmação humana do mapeamento é obrigatória nos DOIS caminhos (heurística e IA) — a heurística só evita a chamada à IA; consistente com o wizard de import de documentos (AC-2.5.c).
+- 409 de fileHash aplica-se a imports PENDING e PROCESSED da mesma conta; `force=true` cria na mesma e o dedupHash das linhas garante zero transações duplicadas.
+- `rowCount` = linhas de dados do ficheiro; relatório detalha imported/skippedDuplicates/errors por linha.
+- Ações bancárias RBAC fora do guarda-chuva `settings:manage` (OWNER-only): a spec C3 exige regras bancárias para OWNER **e** ACCOUNTANT.
+- Execução em worktree `.claude/worktrees/bank-c1` (o diretório principal mudou de branch a meio — outra sessão ativa); BD de teste isolada `gabify_test_bankc1` via `TEST_DATABASE_URL` para evitar contenção com outras suites concorrentes.

@@ -92,6 +92,23 @@ enum JobStatus {
   RETRYING
 }
 
+// ── Bank reconciliation v1 (fase C1) ──
+// Spec names these in PT (POR_CONCILIAR/SUGERIDA/CONCILIADA/IGNORADA) — code
+// is English by house rule, same precedent as DocumentStatus (A_REVER → NEEDS_REVIEW).
+
+enum BankImportStatus {
+  PENDING   // uploaded, mapping proposed, awaiting human confirmation
+  PROCESSED
+  FAILED
+}
+
+enum BankTransactionStatus {
+  UNRECONCILED // POR_CONCILIAR
+  SUGGESTED    // SUGERIDA — at least one autoMatch suggestion
+  RECONCILED   // CONCILIADA
+  IGNORED      // IGNORADA
+}
+
 // ─────────────────────────────────────────
 // OFFICE (gabinete de contabilidade)
 // ─────────────────────────────────────────
@@ -121,6 +138,9 @@ model Office {
   suppliers     Supplier[]
   supplierRules SupplierRule[]
   exportBatches ExportBatch[]
+  bankAccounts     BankAccount[]
+  bankImports      BankStatementImport[]
+  bankTransactions BankTransaction[]
 
   @@index([deletedAt])
 }
@@ -255,6 +275,7 @@ model Client {
   inboundEmails InboundEmail[]
   documents    Document[]
   ingestAliases ClientIngestAlias[]
+  bankAccounts BankAccount[]
 
   @@index([officeId])
   @@index([deletedAt])
@@ -747,4 +768,83 @@ model JobLog {
   @@index([officeId])
   @@index([queue, status])
   @@index([jobId])
+}
+
+// ─────────────────────────────────────────
+// BANK RECONCILIATION v1 (fase C1 — statement import, no PSD2)
+// ─────────────────────────────────────────
+
+model BankAccount {
+  id        String   @id @default(cuid())
+  officeId  String
+  clientId  String
+  name      String
+  iban      String?
+  currency  String   @default("EUR") // field exists, non-EUR logic out of scope (v1)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  office Office @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  client Client @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  imports      BankStatementImport[]
+  transactions BankTransaction[]
+
+  // NULL ibans are distinct in Postgres — uniqueness only applies when iban is present
+  @@unique([officeId, clientId, iban])
+  @@index([officeId])
+  @@index([clientId])
+}
+
+model BankStatementImport {
+  id               String           @id @default(cuid())
+  officeId         String
+  bankAccountId    String
+  filename         String
+  fileHash         String // sha256 of the raw uploaded file
+  mappingSource    String // heuristic | ai
+  proposedMapping  Json
+  confirmedMapping Json? // set only after human confirmation (same pattern as ImportBatch)
+  rowsData         Json // parsed rows awaiting confirmation
+  periodFrom       DateTime?
+  periodTo         DateTime?
+  rowCount         Int              @default(0) // data rows in the file
+  status           BankImportStatus @default(PENDING)
+  errorReport      Json? // { imported, skippedDuplicates: [{line, reason}], errors: [{line, reason}] }
+  importedByUserId String
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  office      Office      @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  bankAccount BankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  transactions BankTransaction[]
+
+  @@index([officeId])
+  @@index([bankAccountId, fileHash])
+}
+
+model BankTransaction {
+  id            String                @id @default(cuid())
+  officeId      String
+  bankAccountId String
+  importId      String
+  bookingDate   DateTime
+  valueDate     DateTime?
+  description   String
+  amountCents   Int // negative = debit, positive = credit (A1 — integer cents, never float)
+  balanceCents  Int?
+  externalRef   String?
+  // sha256(bankAccountId|bookingDate|amountCents|normalized description)
+  dedupHash     String
+  status        BankTransactionStatus @default(UNRECONCILED)
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  office      Office              @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  bankAccount BankAccount         @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  import      BankStatementImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  @@unique([officeId, dedupHash])
+  @@index([officeId, status])
+  @@index([bankAccountId, bookingDate])
 }
