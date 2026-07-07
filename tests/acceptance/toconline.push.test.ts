@@ -121,7 +121,7 @@ describe('🔴RED TOConline — push de compras [INV]', () => {
 
     // Lookup cached for future pushes
     const map = await prisma.toconlineEntityMap.findFirst({
-      where: { entityType: 'SUPPLIER', nif: SUPPLIER_NIF },
+      where: { entityType: 'SUPPLIER', externalKey: SUPPLIER_NIF },
     })
     expect(map?.toconlineId).toBe('7')
 

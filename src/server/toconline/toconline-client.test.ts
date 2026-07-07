@@ -29,6 +29,7 @@ function makeClient(
     timeoutMs: number
     minIntervalMs: number
     backoffBaseMs: number
+    readOnly: boolean
     onTokens: (t: { accessToken: string; refreshToken: string | null; expiresAt: Date }) => void
   }>,
 ) {
@@ -46,6 +47,7 @@ function makeClient(
     timeoutMs: extra?.timeoutMs,
     minIntervalMs: extra?.minIntervalMs ?? 0,
     backoffBaseMs: extra?.backoffBaseMs ?? 1,
+    readOnly: extra?.readOnly,
     onTokens: extra?.onTokens,
   })
 }
@@ -197,6 +199,25 @@ describe('ToconlineClient — retry, timeout e rate limit', () => {
 
     expect(timestamps).toHaveLength(2)
     expect(timestamps[1] - timestamps[0]).toBeGreaterThanOrEqual(100)
+  })
+
+  it('🔴RED readOnly (dry-run pull): GET passa, POST é bloqueado ANTES de tocar na rede', async () => {
+    const mock = makeToconlineMock({
+      suppliers: [{ id: '7', tax_registration_number: '509888771', business_name: 'F' }],
+    })
+    const client = makeClient(mock.fetchImpl, { readOnly: true })
+
+    // Reads are allowed (pull works in dry-run)
+    const supplier = await client.getSupplierByNif('509888771')
+    expect(supplier?.id).toBe('7')
+
+    // Writes are blocked client-side — no HTTP request may leave
+    const apiCallsBefore = mock.calls.filter((c) => c.url.startsWith(MOCK_API_URL)).length
+    await expect(
+      client.createSupplier({ nif: '509888771', businessName: 'X' }),
+    ).rejects.toBeInstanceOf(ToconlineApiError)
+    const apiCallsAfter = mock.calls.filter((c) => c.url.startsWith(MOCK_API_URL)).length
+    expect(apiCallsAfter).toBe(apiCallsBefore) // zero write requests reached the network
   })
 
   it('erros da API nunca expõem segredos nem tokens na mensagem', async () => {

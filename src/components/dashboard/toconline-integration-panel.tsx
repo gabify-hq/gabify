@@ -2,14 +2,17 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Loader2, Plug, Send, Eye, AlertTriangle, X } from 'lucide-react'
+import { Loader2, Plug, Send, Eye, AlertTriangle, X, RefreshCw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 /**
- * "Integração TOConline" section of the client page (integration v1).
- * The whole integration is doc-driven and was NEVER tested against the real
- * TOConline API — the UI says so, and connections are born in dry-run: pushes
- * only write previews until the OWNER explicitly goes live.
+ * "Ligações" section of the client page — a LIST of external-system
+ * connections where TOConline is the first entry (system, state, independent
+ * source/destination capability toggles: pull of issued invoices / push of
+ * purchases). The whole integration is doc-driven and was NEVER tested
+ * against the real TOConline API — the UI says so, and connections are born
+ * in dry-run: pushes only write previews until the OWNER explicitly goes
+ * live, and pulls only preview the documents they would create.
  */
 
 export interface ToconlineConnectionInfo {
@@ -19,6 +22,9 @@ export interface ToconlineConnectionInfo {
   apiUrl: string
   oauthClientId: string
   lastError: string | null
+  pullEnabled: boolean
+  pushEnabled: boolean
+  lastPullAt: string | null // DD/MM/YYYY HH:mm or null
 }
 
 export interface ToconlinePushableDocument {
@@ -35,6 +41,8 @@ interface ToconlineIntegrationPanelProps {
   clientId: string
   connection: ToconlineConnectionInfo | null
   documents: ToconlinePushableDocument[]
+  /** Documents imported from this system (source API_PULL) for this client. */
+  importedCount: number
   canManage: boolean
   canGoLive: boolean
 }
@@ -76,6 +84,7 @@ export function ToconlineIntegrationPanel({
   clientId,
   connection,
   documents,
+  importedCount,
   canManage,
   canGoLive,
 }: ToconlineIntegrationPanelProps) {
@@ -123,6 +132,49 @@ export function ToconlineIntegrationPanel({
       setShowForm(false)
       setForm({ oauthUrl: '', apiUrl: '', oauthClientId: '', oauthClientSecret: '' })
       setNotice('Ligação guardada. Verifique o estado — as credenciais foram validadas junto do TOConline.')
+    }
+  }
+
+  async function setCapability(field: 'pullEnabled' | 'pushEnabled', value: boolean): Promise<void> {
+    const ok = await call(
+      `/api/clients/${clientId}/toconline`,
+      { method: 'PATCH', body: JSON.stringify({ [field]: value }) },
+      `capability-${field}`,
+    )
+    if (ok) {
+      setNotice(
+        field === 'pullEnabled'
+          ? value
+            ? 'Importação de faturas emitidas ativada.'
+            : 'Importação de faturas emitidas desativada.'
+          : value
+            ? 'Envio de compras ativado nesta ligação.'
+            : 'Envio de compras desativado nesta ligação.',
+      )
+    }
+  }
+
+  async function syncNow(): Promise<void> {
+    setBusy('sync')
+    setError(null)
+    setNotice(null)
+    try {
+      const res = await fetch(`/api/clients/${clientId}/toconline/pull`, { method: 'POST' })
+      const body = await res.json().catch(() => null)
+      if (!res.ok) {
+        setError(body?.error ?? 'Não foi possível iniciar a sincronização')
+        return
+      }
+      setNotice(
+        body?.data?.dryRun
+          ? 'Sincronização em fila (modo de teste — só serão geradas pré-visualizações).'
+          : 'Sincronização em fila — os documentos novos aparecem em breve.',
+      )
+      router.refresh()
+    } catch {
+      setError('Sem ligação ao servidor')
+    } finally {
+      setBusy(null)
     }
   }
 
@@ -206,7 +258,10 @@ export function ToconlineIntegrationPanel({
     <div className="space-y-3 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
       <div className="flex items-center gap-2">
         <Plug className="h-4 w-4 stroke-[1.75] text-gray-400" />
-        <h2 className="text-[13px] font-semibold text-gray-800">Integração TOConline</h2>
+        <h2 className="text-[13px] font-semibold text-gray-800">Ligações</h2>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+        <span className="text-[12px] font-semibold text-gray-700">TOConline</span>
         {connection && (
           <span
             className={cn(
@@ -226,6 +281,57 @@ export function ToconlineIntegrationPanel({
           >
             {connection.dryRun ? 'Modo de teste (dry-run)' : 'Envios reais ativos'}
           </span>
+        )}
+
+        {/* Capability toggles — source (pull) and destination (push), independent */}
+        {connection && connection.status !== 'DISABLED' && (
+          <div className="flex w-full flex-wrap items-center gap-x-4 gap-y-1 pt-1">
+            <label className="flex items-center gap-1.5 text-[11px] text-gray-600">
+              <input
+                type="checkbox"
+                role="switch"
+                checked={connection.pullEnabled}
+                disabled={!canManage || busy === 'capability-pullEnabled'}
+                onChange={(e) => setCapability('pullEnabled', e.target.checked)}
+                aria-label="Fonte: importar faturas emitidas (pull)"
+                className="h-3.5 w-3.5 rounded border-gray-300"
+              />
+              Fonte — importar faturas emitidas
+            </label>
+            <label className="flex items-center gap-1.5 text-[11px] text-gray-600">
+              <input
+                type="checkbox"
+                role="switch"
+                checked={connection.pushEnabled}
+                disabled={!canManage || busy === 'capability-pushEnabled'}
+                onChange={(e) => setCapability('pushEnabled', e.target.checked)}
+                aria-label="Destino: enviar compras (push)"
+                className="h-3.5 w-3.5 rounded border-gray-300"
+              />
+              Destino — enviar compras
+            </label>
+            {connection.pullEnabled && (
+              <span className="text-[11px] text-gray-400">
+                Última sincronização: {connection.lastPullAt ?? 'nunca'} · {importedCount} importado
+                {importedCount === 1 ? '' : 's'}
+              </span>
+            )}
+            {connection.pullEnabled && canManage && (
+              <button
+                type="button"
+                onClick={syncNow}
+                disabled={busy === 'sync'}
+                className="pressable flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-1 text-[11px] font-semibold text-gray-600 transition-colors hover:border-gray-300 disabled:opacity-50"
+              >
+                {busy === 'sync' ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-3 w-3 stroke-[2]" />
+                )}
+                Sincronizar agora
+              </button>
+            )}
+          </div>
         )}
       </div>
 
@@ -401,8 +507,8 @@ export function ToconlineIntegrationPanel({
         </form>
       )}
 
-      {/* ── Documents to push ── */}
-      {connection && connection.status !== 'DISABLED' && (
+      {/* ── Documents to push (destination capability only) ── */}
+      {connection && connection.status !== 'DISABLED' && connection.pushEnabled && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">

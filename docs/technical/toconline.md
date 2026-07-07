@@ -9,11 +9,22 @@
 
 ## Scope
 
-Push VALIDATED (or EXPORTED) received invoices (`INVOICE_RECEIVED` /
-`INVOICE_RECEIPT`) of ONE client to that client's TOConline company as
-finalized purchase documents (`document_type: FC`). Out of scope: sales
-documents, chart-of-accounts sync, pulling data (except supplier lookups),
-other ERPs (the `ExportTarget` interface is ready for them).
+Two capabilities per client connection, independently togglable ("Ligações"
+panel):
+
+- **Push (destination)**: VALIDATED (or EXPORTED) received invoices
+  (`INVOICE_RECEIVED` / `INVOICE_RECEIPT`) of ONE client to that client's
+  TOConline company as finalized purchase documents (`document_type: FC`).
+  Destination-unique rule: at most one push-enabled connection per client
+  (partial unique index + 409).
+- **Pull (source)**: issued invoices (sales documents) imported as `Document`
+  rows — `source API_PULL`, `type INVOICE_ISSUED`, `status PRE_VALIDATED`,
+  `confidence 1.0`; the AI parsing pipeline NEVER runs on them; pulled
+  documents are never pushable (anti-echo).
+
+Out of scope: pull of purchases/receipts, webhooks, chart-of-accounts sync,
+other ERPs (the `ExportTarget` interface is ready for them), a generic
+SourceConnection abstraction (deferred to the Moloni integration).
 
 ## Data flow
 
@@ -38,6 +49,28 @@ toconline-push-service
   6. POST /api/v1/commercial_purchases_documents (header+lines, auto-finalized)
   7. document → SENT + toconlineDocumentId + pushedAt
   Failure at any step → document ERROR + sanitized context; retry resumes safely
+```
+
+## Pull data flow
+
+```
+Repeatable scan (queue toconline-pull, TOCONLINE_PULL_INTERVAL_MS, 30 min)
+  └─► 1 job per pull-enabled connection      ─┐
+"Sincronizar agora" (POST …/toconline/pull)  ─┴─► toconline-pull.processor (JobLog)
+      ▼
+toconline-pull-service
+  GET /api/commercial_sales_documents?filter[status]=1&page[size]=50&page[number]=N
+  (+ documented date filter documents.updated_at>'…'::date when lastPullAt, 24h overlap
+   — optimization only; correctness comes from dedup)
+  per item:
+    external_reference starts with GABIFY:? ─► skip (anti-echo [INV])
+    known in EntityMap(SALES_DOCUMENT)?     ─► skip (dedup [INV] — re-pull = no-op)
+    map header vat_incidence_*/vat_total_*/vat_percentage_* → vatBreakdown (cents at boundary)
+    GET /{id}/lines → documentLines (best effort)
+    dryRun? ─► ToconlinePushPreview (method 'PULL', documentId null) — client is readOnly,
+               writes are IMPOSSIBLE [INV]
+    live   ─► PDF via url_for_print → R2 (best effort) → $transaction(Document + EntityMap)
+  lastPullAt advances only on full success; AuditLog TOCONLINE_PULL_COMPLETED with counts
 ```
 
 ## Money (A1)
@@ -71,10 +104,10 @@ error instead of fiscal guessing). Non-EUR documents are refused.
 
 | Model | Purpose |
 |---|---|
-| `ToconlineConnection` | Per-CLIENT (unique `clientId`); 4 integrator values; secret+tokens AES-GCM; `status ACTIVE\|ERROR\|DISABLED`; `dryRun` (born true); `lastError` |
-| `ToconlineEntityMap` | `(connectionId, entityType, nif)` unique → TOConline id; suppliers only in v1 |
-| `ToconlinePushPreview` | Dry-run output: endpoint, method, redacted headers, exact body |
-| `Document.*` | `toconlinePushStatus PENDING\|SENT\|ERROR`, `toconlineDocumentId`, `toconlinePushedAt`, `toconlinePushError` |
+| `ToconlineConnection` | Per-CLIENT; 4 integrator values; secret+tokens AES-GCM; `status ACTIVE\|ERROR\|DISABLED`; `dryRun` (born true); `pullEnabled` (born false) / `pushEnabled` independent toggles; `lastPullAt`/`lastPullCursor`; `lastError`. `clientId` indexed (N sources allowed) + partial unique `ON (clientId) WHERE pushEnabled` (single destination) |
+| `ToconlineEntityMap` | `(connectionId, entityType, externalKey)` unique → TOConline id. `SUPPLIER`: externalKey = NIF; `SALES_DOCUMENT`: externalKey = TOConline id (pull dedup) |
+| `ToconlinePushPreview` | Dry-run output: endpoint, method, redacted headers, exact body. `documentId` nullable — PULL previews describe a Document that does not exist yet |
+| `Document.*` | Push: `toconlinePushStatus PENDING\|SENT\|ERROR`, `toconlineDocumentId`, `toconlinePushedAt`, `toconlinePushError`. Pull: `source API_PULL`, `buyerName`/`buyerNif` (final customer), `toconlineDocumentId` = sales id |
 
 ## API endpoints
 
@@ -84,8 +117,10 @@ error instead of fiscal guessing). Non-EUR documents are refused.
 | `PUT /api/clients/[clientId]/toconline` | `toconline:manage` | Upsert + OAuth validation on save; failure saved as ERROR+lastError |
 | `DELETE /api/clients/[clientId]/toconline` | `toconline:manage` | → DISABLED, tokens cleared, dryRun back to true |
 | `POST /api/clients/[clientId]/toconline/dry-run` | `toconline:manage` to enable / `toconline:goLive` (OWNER) to disable | Disable audited (`TOCONLINE_DRY_RUN_DISABLED`); action derived before resource (anti-enumeration) |
-| `POST /api/toconline/push` | `toconline:manage` | `{clientId, documentIds[≤50]}` → per-item report; eligible docs → PENDING + queued |
+| `POST /api/toconline/push` | `toconline:manage` | `{clientId, documentIds[≤50]}` → per-item report; eligible docs → PENDING + queued; refuses `pushEnabled=false` (422) and `API_PULL` documents |
 | `GET /api/documents/[documentId]/toconline` | `toconline:read` | Push state + previews (redacted) |
+| `PATCH /api/clients/[clientId]/toconline` | `toconline:manage` | Capability toggles `{pullEnabled?, pushEnabled?}`; second push destination → 409; audited |
+| `POST /api/clients/[clientId]/toconline/pull` | `toconline:manage` | "Sincronizar agora" — queues one pull job; requires `pullEnabled` (422) |
 
 All routes: cross-tenant → 404 (tested in the P1 denial loop too).
 
@@ -105,12 +140,31 @@ interface.
 
 ## UI
 
-Client page → "Integração TOConline" panel (`toconline-integration-panel.tsx`):
-credentials form with instructions to obtain the 4 integrator values, status +
-dry-run badges, permanent "NÃO testada contra o TOConline real" warning,
-OWNER-only go-live with the mandatory explicit warning, validated-invoices
-table with selection (ERROR rows retryable), per-document "o que seria
-enviado" preview dialog.
+Client page → "Ligações" panel (`toconline-integration-panel.tsx`) — a LIST of
+connections with TOConline as the first entry: system + status + dry-run
+badges, independent source/destination switches (VIEWER read-only), last sync
+timestamp + imported count + "Sincronizar agora", visible errors, permanent
+"NÃO testada contra o TOConline real" warning, credentials form with
+instructions, OWNER-only go-live with the mandatory explicit warning,
+validated-invoices push table (only when the destination toggle is on; ERROR
+rows retryable), per-document "o que seria enviado" preview dialog.
+
+## Tests (pull slice)
+
+- `tests/acceptance/toconline.pull.test.ts` (9) — anti-echo GABIFY: marker
+  never creates a Document; second pull of known ids = zero new (EntityMap
+  dedup); 23%+6% doc-fixture → cent-exact vatBreakdown/documentLines (numeric
+  assertions); AI never invoked for API_PULL (throwing anthropic proxy + zero
+  parse jobs); dry-run reads but creates nothing and writes are impossible
+  (read-only probe) + would-be Document previewed; expired token → refresh →
+  resume without duplicates; PDF attached via R2; pull-off/DISABLED refuse
+  with zero network; processor JobLog + lastPullAt.
+- `tests/acceptance/toconline.ligacoes.test.ts` (6) — second push-enabled
+  connection → 409 (route) + partial unique (DB); independent toggles persist;
+  cross-tenant 404 on the new routes; "Sincronizar agora" queues and requires
+  pullEnabled; issued/API_PULL documents never enter the push (route +
+  eligibility); pushEnabled=false → push 422.
+- `toconline-client.test.ts` — readOnly blocks writes BEFORE the network.
 
 ## Tests
 
@@ -138,4 +192,6 @@ enviado" preview dialog.
 | Exempt (0%) VAT bands | Requires mapping legal exemption reasons (M01–M99) to `tax_exemption_reason_id` — deliberate v1 refusal |
 | Non-EUR documents | Requires `currency_conversion_rate` which Gabify does not store |
 | `retention_type` | Omitted (API defaults to TD); confirm the right type per document category with an accountant |
-| Railway service | `worker-toconline-push` not added to `railway.toml` yet — deploy when going live |
+| Railway service | `worker-toconline-push` (now the combined `worker:toconline` entry: push + pull + repeatable scan) not added to `railway.toml` yet — deploy when going live |
+| Pull incremental filter | `documents.updated_at>'…'::date` acceptance by the real API unconfirmed (INTEGRATION_NOTES.md #13) — dedup keeps correctness either way |
+| Voided sales documents | A document voided in TOConline after import stays imported — reconciliation of voids is out of scope v1 |

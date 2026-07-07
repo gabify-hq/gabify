@@ -63,6 +63,12 @@ export interface ToconlineClientConfig {
   minIntervalMs?: number
   maxRetries?: number
   backoffBaseMs?: number
+  /**
+   * Dry-run enforcement [INV]: when true, any non-GET API request throws
+   * BEFORE touching the network (OAuth token POSTs are not API writes and
+   * stay allowed — the docs require them even for reads).
+   */
+  readOnly?: boolean
 }
 
 interface TokenEndpointResponse {
@@ -95,6 +101,7 @@ export class ToconlineClient {
   private readonly minIntervalMs: number
   private readonly maxRetries: number
   private readonly backoffBaseMs: number
+  private readonly readOnly: boolean
 
   private accessToken: string | null
   private refreshToken: string | null
@@ -115,6 +122,7 @@ export class ToconlineClient {
     this.minIntervalMs = config.minIntervalMs ?? DEFAULT_MIN_INTERVAL_MS
     this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES
     this.backoffBaseMs = config.backoffBaseMs ?? DEFAULT_BACKOFF_BASE_MS
+    this.readOnly = config.readOnly ?? false
     this.accessToken = config.tokens?.accessToken ?? null
     this.refreshToken = config.tokens?.refreshToken ?? null
     this.expiresAt = config.tokens?.expiresAt ?? null
@@ -283,6 +291,12 @@ export class ToconlineClient {
 
   // ── API request with auth, 401-refresh-retry, and 5xx/timeout backoff ───
   async request<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
+    if (this.readOnly && method !== 'GET') {
+      // Dry-run [INV]: no write may ever leave — blocked before any network
+      throw new ToconlineApiError(
+        `TOConline write blocked in dry-run: ${method} ${path.split('?')[0]}`,
+      )
+    }
     let attempt = 0
     let refreshed = false
     for (;;) {
@@ -397,6 +411,76 @@ export class ToconlineClient {
           ? item.attributes.external_reference
           : null,
     }))
+  }
+
+  // ── Sales pull operations (all documented reads) ────────────────────────
+
+  /**
+   * GET /api/commercial_sales_documents — finalized only (`filter[status]=1`,
+   * documented in the saved spec), JSONAPI pagination `page[size]`/`page[number]`
+   * (caracteristicas-dos-pedidos.md + jsonapi.org, referenced by the auth doc).
+   * `updatedSince` uses the generic attribute-date filter documented in
+   * caracteristicas-dos-pedidos.md (`filter=documents.updated_at>'…'::date`) —
+   * an optimization only: dedup NEVER depends on it (INTEGRATION_NOTES.md).
+   */
+  async listFinalizedSalesDocuments(params: {
+    pageNumber: number
+    pageSize: number
+    updatedSince?: string // 'YYYY-MM-DD'
+  }): Promise<Array<{ id: string; attributes: Record<string, unknown> }>> {
+    let path =
+      `/api/commercial_sales_documents?filter[status]=1` +
+      `&page[size]=${params.pageSize}&page[number]=${params.pageNumber}`
+    if (params.updatedSince) {
+      path += `&filter=${encodeURIComponent(`documents.updated_at>'${params.updatedSince}'::date`)}`
+    }
+    const result = await this.request<{ data?: JsonApiResource[] }>('GET', path)
+    return (result.data ?? []).map((item) => ({
+      id: item.id,
+      attributes: item.attributes ?? {},
+    }))
+  }
+
+  /** GET /api/commercial_sales_documents/{id}/lines (path in the saved spec). */
+  async getSalesDocumentLines(
+    salesDocumentId: string,
+  ): Promise<Array<Record<string, unknown>>> {
+    const result = await this.request<{ data?: JsonApiResource[] }>(
+      'GET',
+      `/api/commercial_sales_documents/${encodeURIComponent(salesDocumentId)}/lines`,
+    )
+    return (result.data ?? []).map((item) => item.attributes ?? {})
+  }
+
+  /**
+   * GET /api/url_for_print/{salesDocumentId}?filter[type]=Document — returns
+   * {scheme, host, path}; download link is scheme://host/path (PDF page +
+   * spec example). Only finalized documents can be printed (doc warning).
+   */
+  async getSalesDocumentPdfUrl(salesDocumentId: string): Promise<string | null> {
+    const result = await this.request<{
+      data?: { attributes?: { url?: { scheme?: string; host?: string; path?: string } } }
+    }>(
+      'GET',
+      `/api/url_for_print/${encodeURIComponent(salesDocumentId)}?filter[type]=Document&filter[copies]=1`,
+    )
+    const url = result.data?.attributes?.url
+    if (!url?.scheme || !url.host || !url.path) return null
+    return `${url.scheme}://${url.host}${url.path}`
+  }
+
+  /**
+   * Download of the public-file link — "transferência imediata" per the PDF
+   * doc page (public link, no Bearer). Still goes through timeout handling.
+   */
+  async downloadPublicFile(url: string): Promise<Buffer> {
+    const response = await this.rawFetch(url, { method: 'GET' })
+    if (!response.ok) {
+      throw new ToconlineApiError(`TOConline public file download failed (HTTP ${response.status})`, {
+        status: response.status,
+      })
+    }
+    return Buffer.from(await response.arrayBuffer())
   }
 
   /** POST /api/v1/commercial_purchases_documents — creates header+lines, auto-finalized. */

@@ -1,7 +1,7 @@
 # HANDOFF.md — Gabify v2
 
 Execução autónoma de SPEC_GABIFY_V2 + ADDENDUM em `feature/gabify-v2`.
-**Último estado estável: `npm run gate` verde — 478 testes (49 ficheiros), tsc 0 erros, eslint 0 erros, thresholds de cobertura enforced (queues ≥80, api ≥70, server ≥75).**
+**Último estado estável: `npm run gate` verde — 497 testes (51 ficheiros), tsc 0 erros, eslint 0 erros, thresholds de cobertura enforced (queues ≥80, api ≥70, server ≥75).**
 
 ## Integração TOConline v1 — push de compras (2026-07-07, branch `feature/toconline-integration`)
 
@@ -16,6 +16,14 @@ Execução autónoma de SPEC_GABIFY_V2 + ADDENDUM em `feature/gabify-v2`.
 - **Dry-run [INV]**: ligação nasce dryRun=true → zero rede (teste com fetch proibido), previews exatos sem segredos na UI; desligar = `toconline:goLive` OWNER-only com aviso explícito "nunca foi testada contra o TOConline real".
 - **Limites v1 conscientes**: linhas isentas 0% recusadas (motivo de isenção não derivável), só EUR, `retention_type` omitido — tudo com erro/preview claro e registado nas notas.
 - Gate no fecho: verde — 478 testes (49 ficheiros), thresholds mantidos.
+
+### Extensão: pull de faturas emitidas + Ligações (2026-07-07, branch `feature/toconline-pull`)
+
+- **Pull (fonte)**: job BullMQ `toconline-pull` (scan repeatable, `TOCONLINE_PULL_INTERVAL_MS` default 30 min + "Sincronizar agora") importa documentos de venda finalizados como `Document` — `API_PULL`/`INVOICE_ISSUED`/`PRE_VALIDATED`/confiança 1.0, vatBreakdown em cêntimos a partir dos campos por taxa do cabeçalho documentado, PDF via `url_for_print` (best effort), **IA nunca invocada** [INV]. Dedup por `ToconlineEntityMap` (SALES_DOCUMENT) — re-pull é no-op [INV]; anti-eco: `external_reference` GABIFY: nunca cria Document [INV]; incremental via filtro documentado `documents.updated_at>'…'::date` com sobreposição de 24h (só otimização — decisões #13–16 nas notas).
+- **Dry-run do pull [INV]**: GETs permitidos, escrita impossível (client `readOnly` bloqueia antes da rede); o que seria criado vai para `ToconlinePushPreview` (method PULL, documentId null).
+- **Ligações (esqueleto)**: painel renomeado, lista com TOConline como 1.ª entrada, toggles fonte/destino independentes (PATCH capabilities); **destino único por cliente** — índice UNIQUE parcial `ON (clientId) WHERE pushEnabled` + 409 claro; N fontes permitidas; abstração genérica de fontes ADIADA para o Moloni.
+- Schema: `EntityMap.nif`→`externalKey` (rename), `PushPreview.documentId` nullable, `Document.buyerName`, migrações `20260707000008/09`.
+- Gate no fecho da extensão: verde — 497 testes (51 ficheiros), thresholds mantidos.
 
 ## Fase P — Portal do cliente final v1 (2026-07-07, branch `feature/client-portal-v1`)
 

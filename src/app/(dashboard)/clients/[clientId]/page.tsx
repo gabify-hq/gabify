@@ -190,9 +190,11 @@ export default async function ClientPage({ params }: ClientPageProps) {
   const canGoLiveToconline = can(session?.user?.role, 'toconline:goLive')
   let toconlineConnection: ToconlineConnectionInfo | null = null
   let toconlineDocuments: ToconlinePushableDocument[] = []
+  let toconlineImportedCount = 0
   if (canReadToconline) {
     const connection = await prisma.toconlineConnection.findFirst({
       where: { officeId, clientId },
+      orderBy: { createdAt: 'asc' },
       select: {
         status: true,
         dryRun: true,
@@ -200,6 +202,9 @@ export default async function ClientPage({ params }: ClientPageProps) {
         apiUrl: true,
         oauthClientId: true,
         lastError: true,
+        pullEnabled: true,
+        pushEnabled: true,
+        lastPullAt: true,
       },
     })
     if (connection) {
@@ -210,7 +215,15 @@ export default async function ClientPage({ params }: ClientPageProps) {
         apiUrl: connection.apiUrl,
         oauthClientId: connection.oauthClientId,
         lastError: connection.lastError,
+        pullEnabled: connection.pullEnabled,
+        pushEnabled: connection.pushEnabled,
+        lastPullAt: connection.lastPullAt
+          ? connection.lastPullAt.toLocaleString('pt-PT', { timeZone: 'Europe/Lisbon' })
+          : null,
       }
+      toconlineImportedCount = await prisma.document.count({
+        where: { officeId, clientId, source: 'API_PULL', deletedAt: null },
+      })
       const pushable = await prisma.document.findMany({
         where: {
           officeId,
@@ -340,6 +353,7 @@ export default async function ClientPage({ params }: ClientPageProps) {
               clientId={client.id}
               connection={toconlineConnection}
               documents={toconlineDocuments}
+              importedCount={toconlineImportedCount}
               canManage={canManageToconline}
               canGoLive={canGoLiveToconline}
             />

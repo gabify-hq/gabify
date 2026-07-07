@@ -50,7 +50,8 @@ export async function POST(request: NextRequest) {
 
   const connection = await prisma.toconlineConnection.findFirst({
     where: { officeId: gate.user.officeId, clientId },
-    select: { id: true, status: true, dryRun: true },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true, status: true, dryRun: true, pushEnabled: true },
   })
   if (!connection) {
     return NextResponse.json(
@@ -61,6 +62,12 @@ export async function POST(request: NextRequest) {
   if (connection.status === 'DISABLED') {
     return NextResponse.json(
       { error: 'A ligação TOConline deste cliente está desligada' },
+      { status: 422 },
+    )
+  }
+  if (!connection.pushEnabled) {
+    return NextResponse.json(
+      { error: 'O envio (push) está desligado nesta ligação — ative-o primeiro' },
       { status: 422 },
     )
   }

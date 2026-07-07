@@ -121,3 +121,134 @@ export function purchasesListResponse(
 export function purchaseCreatedResponse(id: string) {
   return { data: { type: 'commercial_purchases_documents', id } }
 }
+
+// ── Sales documents (pull slice) ─────────────────────────────────────────────
+
+/**
+ * Attributes of a finalized sales document — subset of the full response
+ * example in docs/apis_versoes-anteriores_vendas_documentos-de-venda.md
+ * ("Exemplo de Response" of the finalize step, FT 2023/3). Every field name
+ * below appears verbatim in that saved example.
+ */
+export interface SalesDocumentAttributes {
+  document_no: string
+  document_type: string
+  status: number
+  date: string
+  due_date: string | null
+  gross_total: number
+  net_total: number
+  tax_payable: number
+  retention_value: number
+  customer_business_name: string
+  customer_tax_registration_number: string
+  customer_tax_country_region: string
+  currency_iso_code: string
+  external_reference: string | null
+  updated_at: string
+  vat_incidence_ise: number
+  vat_incidence_red: number
+  vat_incidence_int: number
+  vat_incidence_nor: number
+  vat_total_red: number
+  vat_total_int: number
+  vat_total_nor: number
+  vat_percentage_red: number | null
+  vat_percentage_int: number | null
+  vat_percentage_nor: number | null
+}
+
+/** Doc-example defaults (FT 2023/3) — override per test. */
+export function salesDocumentAttributes(
+  overrides: Partial<SalesDocumentAttributes> = {},
+): SalesDocumentAttributes {
+  return {
+    document_no: 'FT 2023/3',
+    document_type: 'FT',
+    status: 1,
+    date: '2023-01-01',
+    due_date: '2023-01-01',
+    gross_total: 11.38,
+    net_total: 9.25,
+    tax_payable: 2.13,
+    retention_value: 0,
+    customer_business_name: 'Ricardo Ribeiro',
+    customer_tax_registration_number: '229659179',
+    customer_tax_country_region: 'PT',
+    currency_iso_code: 'EUR',
+    external_reference: null,
+    updated_at: '2024-02-22 18:21:13.512872',
+    vat_incidence_ise: 0,
+    vat_incidence_red: 0,
+    vat_incidence_int: 0,
+    vat_incidence_nor: 9.25,
+    vat_total_red: 0,
+    vat_total_int: 0,
+    vat_total_nor: 2.13,
+    vat_percentage_red: null,
+    vat_percentage_int: null,
+    vat_percentage_nor: 23.0,
+    ...overrides,
+  }
+}
+
+/** JSONAPI list envelope (docs/autenticacao-detalhada.md §3). */
+export function salesDocumentsListResponse(
+  documents: Array<{ id: string; attributes: SalesDocumentAttributes }>,
+) {
+  return {
+    data: documents.map((d) => ({
+      type: 'commercial_sales_documents',
+      id: d.id,
+      attributes: d.attributes,
+    })),
+  }
+}
+
+/**
+ * Lines of a sales document — attribute names from the line attribute table
+ * in docs/apis_versoes-anteriores_vendas_documentos-de-venda.md ("Atualizar
+ * Linha…": description, quantity, unit_price, amount, tax_percentage,
+ * tax_country_region; "equivalente à que é obtida após criação ou obtenção").
+ */
+export function salesDocumentLinesResponse(
+  lines: Array<{
+    id: string
+    description: string
+    quantity: number
+    unit_price: number
+    amount: number
+    tax_percentage: number
+    tax_country_region: string
+  }>,
+) {
+  return {
+    data: lines.map((l) => ({
+      type: 'commercial_sales_document_lines',
+      id: l.id,
+      attributes: {
+        description: l.description,
+        quantity: l.quantity,
+        unit_price: l.unit_price,
+        amount: l.amount,
+        tax_percentage: l.tax_percentage,
+        tax_country_region: l.tax_country_region,
+      },
+    })),
+  }
+}
+
+/**
+ * GET /api/url_for_print/{salesDocumentId} — response copied from the saved
+ * spec example (operationId with url {scheme, host, port, path}); the download
+ * link is scheme://host/path per docs/apis_vendas_descarregar-pdf-….md.
+ */
+export function urlForPrintResponse(id: string, host: string, path: string) {
+  return {
+    data: {
+      attributes: { url: { host, path, port: 443, scheme: 'https' } },
+      id,
+      type: 'url_for_print',
+    },
+  }
+}

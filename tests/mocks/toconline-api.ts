@@ -10,6 +10,10 @@ import {
   supplierListResponse,
   purchasesListResponse,
   purchaseCreatedResponse,
+  salesDocumentsListResponse,
+  salesDocumentLinesResponse,
+  urlForPrintResponse,
+  type SalesDocumentAttributes,
 } from '../fixtures/toconline/responses'
 
 export interface RecordedCall {
@@ -41,8 +45,26 @@ interface FailRule {
 
 export const MOCK_OAUTH_URL = 'https://mock-oauth.toconline.test/oauth'
 export const MOCK_API_URL = 'https://mock-api.toconline.test'
+export const MOCK_FILES_HOST = 'mock-files.toconline.test'
 export const MOCK_CLIENT_ID = 'integrator-client-id'
 export const MOCK_CLIENT_SECRET = 'integrator-secret-abcdef'
+
+/** Deterministic fake PDF bytes served by the mock public-file host. */
+export const MOCK_PDF_BYTES = Buffer.from('%PDF-1.4\n% toconline mock pdf\n%%EOF\n')
+
+export interface MockSalesDocument {
+  id: string
+  attributes: SalesDocumentAttributes
+  lines?: Array<{
+    id: string
+    description: string
+    quantity: number
+    unit_price: number
+    amount: number
+    tax_percentage: number
+    tax_country_region: string
+  }>
+}
 
 export interface ToconlineMock {
   fetchImpl: typeof fetch
@@ -50,6 +72,7 @@ export interface ToconlineMock {
   state: {
     suppliers: MockSupplier[]
     purchases: MockPurchase[]
+    salesDocuments: MockSalesDocument[]
     validAccessTokens: Set<string>
     validRefreshTokens: Set<string>
     authCode: string
@@ -76,6 +99,7 @@ function jsonResponse(status: number, body: unknown): Response {
 export function makeToconlineMock(init?: {
   suppliers?: MockSupplier[]
   purchases?: Array<Omit<MockPurchase, 'payload'> & { payload?: Record<string, unknown> }>
+  salesDocuments?: MockSalesDocument[]
 }): ToconlineMock {
   const calls: RecordedCall[] = []
   const failRules: FailRule[] = []
@@ -84,6 +108,7 @@ export function makeToconlineMock(init?: {
   const state: ToconlineMock['state'] = {
     suppliers: [...(init?.suppliers ?? [])],
     purchases: (init?.purchases ?? []).map((p) => ({ payload: {}, ...p })),
+    salesDocuments: [...(init?.salesDocuments ?? [])],
     validAccessTokens: new Set<string>(),
     validRefreshTokens: new Set<string>(),
     authCode: 'mock-authorization-code',
@@ -130,6 +155,15 @@ export function makeToconlineMock(init?: {
     }
 
     const u = new URL(url)
+
+    // ── Public file host: PDF download link (docs/apis_vendas_descarregar-
+    // pdf-….md: "transferência imediata" via scheme://host/path — no Bearer) ──
+    if (u.host === MOCK_FILES_HOST && u.pathname.startsWith('/public-file/')) {
+      return new Response(new Uint8Array(MOCK_PDF_BYTES), {
+        status: 200,
+        headers: { 'Content-Type': 'application/pdf' },
+      })
+    }
 
     // ── OAuth: GET {OAUTH_URL}/auth → 302 with code in Location (doc §2.1) ──
     if (url.startsWith(MOCK_OAUTH_URL) && u.pathname.endsWith('/auth') && method === 'GET') {
@@ -219,6 +253,40 @@ export function makeToconlineMock(init?: {
         return jsonResponse(200, { data: response.data[0] })
       }
 
+      // ── Sales documents (pull slice) ──
+      if (u.pathname === '/api/commercial_sales_documents' && method === 'GET') {
+        let matches = state.salesDocuments
+        const status = u.searchParams.get('filter[status]')
+        if (status !== null) matches = matches.filter((d) => String(d.attributes.status) === status)
+        // Generic date filter (caracteristicas-dos-pedidos.md) is recorded in
+        // calls but not applied — dedup must not depend on it
+        const size = Number(u.searchParams.get('page[size]') ?? matches.length)
+        const page = Number(u.searchParams.get('page[number]') ?? 1)
+        const slice = matches.slice((page - 1) * size, page * size)
+        return jsonResponse(
+          200,
+          salesDocumentsListResponse(slice.map((d) => ({ id: d.id, attributes: d.attributes }))),
+        )
+      }
+
+      const linesMatch = u.pathname.match(/^\/api\/commercial_sales_documents\/([^/]+)\/lines$/)
+      if (linesMatch && method === 'GET') {
+        const doc = state.salesDocuments.find((d) => d.id === linesMatch[1])
+        if (!doc) return jsonResponse(404, { error: 'not found' })
+        return jsonResponse(200, salesDocumentLinesResponse(doc.lines ?? []))
+      }
+
+      const printMatch = u.pathname.match(/^\/api\/url_for_print\/([^/]+)$/)
+      if (printMatch && method === 'GET') {
+        const doc = state.salesDocuments.find((d) => d.id === printMatch[1])
+        if (!doc) return jsonResponse(404, { error: 'not found' })
+        if (doc.attributes.status !== 1) return jsonResponse(422, { error: 'not finalized' })
+        return jsonResponse(
+          200,
+          urlForPrintResponse(printMatch[1], MOCK_FILES_HOST, `/public-file/${printMatch[1]}`),
+        )
+      }
+
       if (u.pathname === '/api/commercial_purchases_documents' && method === 'GET') {
         let matches = state.purchases
         const status = u.searchParams.get('filter[status]')
@@ -274,6 +342,33 @@ export function makeToconlineMock(init?: {
     failNext: (match, status, times = 1) => failRules.push({ match, status, times }),
     apiCalls: () => calls.filter((c) => c.url.startsWith(MOCK_API_URL)),
   }
+}
+
+/**
+ * Read-only probe for the dry-run PULL [INV]: GETs pass through to `inner`,
+ * any write verb (POST/PATCH/PUT/DELETE) other than the documented OAuth token
+ * request throws — proving no write can leave while dry-run is on.
+ */
+export function makeReadOnlyProbeFetch(inner: typeof fetch): {
+  fetchImpl: typeof fetch
+  writeAttempts: RecordedCall[]
+  reads: RecordedCall[]
+} {
+  const writeAttempts: RecordedCall[] = []
+  const reads: RecordedCall[] = []
+  const fetchImpl: typeof fetch = async (input, initArg) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+    const method = (initArg?.method ?? 'GET').toUpperCase()
+    const record: RecordedCall = { method, url, headers: {}, body: null }
+    const isOauthToken = url.startsWith(MOCK_OAUTH_URL) && url.endsWith('/token')
+    if (method !== 'GET' && !isOauthToken) {
+      writeAttempts.push(record)
+      throw new Error(`write attempted in dry-run pull: ${method} ${url}`)
+    }
+    reads.push(record)
+    return inner(input, initArg)
+  }
+  return { fetchImpl, writeAttempts, reads }
 }
 
 /** A fetch that must never run — used by the dry-run "zero network" [INV] test. */

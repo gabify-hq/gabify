@@ -120,7 +120,7 @@ describe('🔴RED TOConline — rotas API (ligação, dry-run, push, previews)',
     expect(body.data.status).toBe('ACTIVE') // OAuth ran against the mock
     expect(body.data.dryRun).toBe(true) // dry-run is the birth state [INV]
 
-    const row = await prisma.toconlineConnection.findUniqueOrThrow({
+    const row = await prisma.toconlineConnection.findFirstOrThrow({
       where: { clientId: client.id },
     })
     expect(row.oauthClientSecret).not.toBe(MOCK_CLIENT_SECRET) // encrypted at rest
@@ -238,7 +238,7 @@ describe('🔴RED TOConline — rotas API (ligação, dry-run, push, previews)',
       clientParams(client.id),
     )
     expect(denied.status).toBe(404)
-    let row = await prisma.toconlineConnection.findUniqueOrThrow({ where: { clientId: client.id } })
+    let row = await prisma.toconlineConnection.findFirstOrThrow({ where: { clientId: client.id } })
     expect(row.dryRun).toBe(true)
 
     // OWNER can — audited
@@ -248,7 +248,7 @@ describe('🔴RED TOConline — rotas API (ligação, dry-run, push, previews)',
       clientParams(client.id),
     )
     expect(allowed.status).toBe(200)
-    row = await prisma.toconlineConnection.findUniqueOrThrow({ where: { clientId: client.id } })
+    row = await prisma.toconlineConnection.findFirstOrThrow({ where: { clientId: client.id } })
     expect(row.dryRun).toBe(false)
     const audit = await prisma.auditLog.findFirst({
       where: { officeId: officeA.id, action: 'TOCONLINE_DRY_RUN_DISABLED', userId: ownerA.id },

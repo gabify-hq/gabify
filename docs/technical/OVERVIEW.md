@@ -78,9 +78,11 @@ BankTransaction ──< ReconciliationSuggestion >── Document
                 ──1 ReconciliationEntry ──< Document (reconciledEntryId)
 Office ──< BankRule   (applied before matching; IGNORE / SUGGEST_CLIENT)
 
-Client ──1 ToconlineConnection ──< ToconlineEntityMap    (NIF → TOConline supplier id cache)
-                                ──< ToconlinePushPreview (dry-run: exact request that would be sent)
+Client ──< ToconlineConnection ──< ToconlineEntityMap    (SUPPLIER: NIF→id; SALES_DOCUMENT: pull dedup)
+                                ──< ToconlinePushPreview (dry-run: exact push request / would-be pulled Document)
+       (N source connections; partial unique: at most ONE with pushEnabled)
 Document: toconlinePushStatus / toconlineDocumentId / toconlinePushedAt / toconlinePushError
+          source API_PULL + buyerName/buyerNif (issued invoices pulled from TOConline)
 ```
 
 Bank reconciliation module detail: [bank-reconciliation.md](bank-reconciliation.md).
@@ -175,6 +177,7 @@ npm run gate            # tsc + eslint + tests + coverage
 | Bootstrap | `BOOTSTRAP_OWNER_EMAIL`, `BOOTSTRAP_OFFICE_NAME`, `BOOTSTRAP_OWNER_NAME` |
 | Rate limits | `RATE_LIMIT_API_PER_HOUR`, `RATE_LIMIT_MAGIC_LINK_PER_HOUR`, `RATE_LIMIT_WEBHOOK_PER_MIN`, `RATE_LIMIT_UPLOAD_USER_PER_HOUR`, `RATE_LIMIT_UPLOAD_OFFICE_PER_HOUR`, `RATE_LIMIT_INGEST_PER_HOUR`, `RATE_LIMIT_CLIENT_API_PER_MIN`, `RATE_LIMIT_CLIENT_UPLOAD_PER_MIN`, `RATE_LIMIT_ASSISTANT_PER_MIN` |
 | Assistant | `ASSISTANT_MODEL` (economical model for the read-only Q&A loop — see `docs/technical/assistant.md`) |
+| TOConline | `TOCONLINE_PULL_INTERVAL_MS` (repeatable sales-pull scan; default 30 min) |
 
 Full descriptions and example values in `.env.example`.
 
@@ -189,7 +192,7 @@ Three services in `railway.toml`:
 | `web` | `npm run start` | Next.js HTTP server |
 | `worker-email-sync` | `npm run worker:email` | BullMQ email sync worker |
 | `worker-document-parse` | `npm run worker:documents` | BullMQ document parse worker |
-| `worker-toconline-push` | `npm run worker:toconline` | BullMQ TOConline push worker (new — deploy only when the integration goes live) |
+| `worker-toconline` | `npm run worker:toconline` | BullMQ TOConline workers: push + sales pull + repeatable pull scan (new — deploy only when the integration goes live) |
 
 Health check: `GET /api/health` (⏳ TODO: implement endpoint)
 
