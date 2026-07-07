@@ -17,6 +17,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "seed:bootstrap": "tsx --env-file=.env.local scripts/seed-office.ts",
+    "seed:demo": "tsx --env-file=.env.local scripts/seed-demo.ts",
     "gate": "node scripts/gate.mjs",
     "toconline:types": "openapi-typescript integrations/toconline/openapi.json -o integrations/toconline/types.ts",
     "worker:toconline": "tsx --env-file=.env.local src/queues/toconline.worker.ts",
