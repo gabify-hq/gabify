@@ -67,6 +67,17 @@ Formato: slice · estado · RED confirmado · gate.
 
 **Fim da Fase 3: `npm run gate` verde — 288 testes (124 acceptance).**
 
+## Slice UI final (pós-handoff, frontend-only)
+
+| Bloco | Estado | Gate |
+|---|---|---|
+| 1. Correção campo-a-campo em `/review/[documentId]` (preview lado a lado via signed URL, colapsável em mobile; coerência Σbases+ΣIVA−retenção=total no cliente como aviso; optimistic locking com recuperação de 409 sem perder input; 4 testes de componente jsdom+testing-library) | DONE | ✅ |
+| 2. UI do import `/documents/import` (wizard 3 passos: ficheiro → mapeamento confirmável com amostra → relatório linha-a-linha descarregável em CSV) | DONE | ✅ |
+| 3. Gestão de convites `/settings/invitations` (estados pendente/aceite/expirado/revogado, criar/revogar/reenviar; página bloqueada a não-OWNER via `can()`; link só visível a OWNER) | DONE | ✅ |
+| 4. Dashboard de contadores (a rever / pré-validados / duplicados / por exportar, agregado + por cliente, links para `/review` filtrada por status/cliente/flag) + filtros por query param na fila | DONE | ✅ |
+
+**Gate no fecho do slice: verde — 292 testes (inclui 4 de componente).**
+
 ## Fase 4 — NÃO EXECUTADA
 
 Por regra 13 da spec (fases por ordem de valor; melhor 0–3 impecáveis do que 0–5 a meio) e capacidade de contexto, a Fase 4 (dashboard operacional, chasing v1, página de convites, settings de office) ficou por executar. As APIs subjacentes existem (convites, supplier rules, exports); falta a camada de UI de gestão. Ver HANDOFF.md.

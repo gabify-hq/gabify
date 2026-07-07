@@ -28,14 +28,23 @@ Execução autónoma de SPEC_GABIFY_V2 + ADDENDUM em `feature/gabify-v2`.
 - Export ZIP (`Cliente/Ano/Mês/{Recebidas|Emitidas|Outros}`) + `lancamentos.csv` pt-PT (BOM, `;`, vírgula, linha por taxa) + `resumo_iva.csv` + `.xlsx` numérico; `ExportBatch`/`ExportDocument` N:M; re-export `includeExported`.
 - SNC v1 (A13): seed de taxonomia via service, sugestão HISTORY→IA validada, contas sensíveis exigem revisão humana na 1.ª ocorrência, `accountOverrides` por cliente no export.
 
+## Slice UI final (pós-handoff, frontend-only) — ENTREGUE
+
+Correção campo-a-campo (`/review/[documentId]`), wizard de import (`/documents/import`), gestão de convites (`/settings/invitations`, OWNER only) e dashboard de contadores com fila filtrável (`/review?status=...&clientId=...&flag=...`). 4 testes de componente (submissão com correções, VIEWER sem escrita, erro de API preserva input, aviso de coerência não-bloqueante). Nenhuma rota/serviço/schema alterado.
+
+### Insuficiências de API encontradas (contornadas na UI — NÃO alteradas, por instrução)
+
+- **`POST /api/documents/[id]/review`**: o schema de `corrections` não aceita `vatBreakdown` por taxa, `withholdingCents`, `currency` nem `dueDate` — apenas tipo, fornecedor, NIF, nº doc, data, totalCents, conta, tratamento de IVA e cliente. A UI mostra o IVA por taxa e a retenção em leitura (alimentam o aviso de coerência) e documenta o limite ao utilizador. Alargar o zod da rota + `ReviewCorrections` do serviço quando este slice de backend reabrir.
+- **`POST /api/documents/import`**: a resposta traz `proposedMapping` + `sample` mas não a lista de cabeçalhos; a UI deriva os cabeçalhos das chaves da primeira linha da amostra — falha se a folha tiver 0 linhas de dados (caso em que não há nada para importar de qualquer forma).
+- **Fila `/review`**: filtros por estado/cliente/flag são aplicados no server component via query params; não existe endpoint de listagem de documentos com filtros (a página consulta o Prisma diretamente, padrão das restantes páginas do repo).
+
 ## O que NÃO foi feito (dívidas conscientes)
 
-1. **Fase 4 inteira** (regra 13 da spec): dashboard operacional de fecho (AC-6.4), chasing v1, página de convites (API existe: `/api/invitations*`), settings de office/regras (APIs existem: `/api/supplier-rules`, `/api/clients/[id]/ingest-alias`). É essencialmente UI sobre APIs prontas e testadas.
-2. **UI de correção campo-a-campo** na fila de revisão: a API `POST /api/documents/[id]/review` com `corrections` está completa e testada; a UI atual só expõe validar/rejeitar/bulk/preview.
-3. **UI do import** (passo de confirmação do mapeamento): API completa (`/api/documents/import` + `/confirm`), sem ecrã.
-4. **Resend Inbound real**: entregue com interface + adaptador de teste (A5 permite); ativação documentada em RELEASE_NOTES_V2.md.
-5. **Sugestão SNC por IA não corre automaticamente no parse** (decisão de custo): HISTORY/regra aplicam-se no parse; a sugestão IA é on-demand via `suggestSncForDocument` (falta expor endpoint/botão na UI de revisão).
-6. Re-encriptação GCM é lazy (no próximo refresh de token) — tokens antigos continuam CBC até lá, por desenho (A12).
+1. **Fase 4 parcial** (regra 13 da spec): chasing v1 (S4.2) e settings de office/regras (S4.4 — APIs existem: `/api/supplier-rules`, `/api/clients/[id]/ingest-alias`). Convites (S4.3) e dashboard de contadores (S4.1) ficaram cobertos pelo slice de UI final; falta o "fechar período" do AC-6.4.
+2. **Resend Inbound real**: entregue com interface + adaptador de teste (A5 permite); ativação documentada em RELEASE_NOTES_V2.md.
+3. **Sugestão SNC por IA não corre automaticamente no parse** (decisão de custo): HISTORY/regra aplicam-se no parse; a sugestão IA é on-demand via `suggestSncForDocument` (falta expor endpoint/botão na UI de revisão).
+4. Re-encriptação GCM é lazy (no próximo refresh de token) — tokens antigos continuam CBC até lá, por desenho (A12).
+5. Correções de `vatBreakdown`/retenção/moeda na review — bloqueadas pela API (ver acima).
 
 ## Arranque num ambiente novo
 
