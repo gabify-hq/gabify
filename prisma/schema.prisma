@@ -92,6 +92,40 @@ enum JobStatus {
   RETRYING
 }
 
+// ── Bank reconciliation v1 (fase C1) ──
+// Spec names these in PT (POR_CONCILIAR/SUGERIDA/CONCILIADA/IGNORADA) — code
+// is English by house rule, same precedent as DocumentStatus (A_REVER → NEEDS_REVIEW).
+
+enum BankImportStatus {
+  PENDING   // uploaded, mapping proposed, awaiting human confirmation
+  PROCESSED
+  FAILED
+}
+
+enum BankTransactionStatus {
+  UNRECONCILED // POR_CONCILIAR
+  SUGGESTED    // SUGERIDA — at least one autoMatch suggestion
+  RECONCILED   // CONCILIADA
+  IGNORED      // IGNORADA
+}
+
+enum SuggestionStatus {
+  PENDING  // PENDENTE
+  ACCEPTED // ACEITE
+  REJECTED // REJEITADA
+}
+
+enum BankRuleMatchType {
+  CONTAINS     // CONTEM
+  EQUALS       // IGUAL
+  SIMPLE_REGEX // REGEX_SIMPLES
+}
+
+enum BankRuleAction {
+  IGNORE         // IGNORAR
+  SUGGEST_CLIENT // SUGERIR_CLIENTE
+}
+
 // ─────────────────────────────────────────
 // OFFICE (gabinete de contabilidade)
 // ─────────────────────────────────────────
@@ -103,6 +137,8 @@ model Office {
   email       String?
   phone       String?
   address     String?
+  // Bank matching (C2): amount tolerance in integer cents — A1, never float
+  reconciliationToleranceCents Int @default(2)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   deletedAt   DateTime?
@@ -121,6 +157,12 @@ model Office {
   suppliers     Supplier[]
   supplierRules SupplierRule[]
   exportBatches ExportBatch[]
+  bankAccounts     BankAccount[]
+  bankImports      BankStatementImport[]
+  bankTransactions BankTransaction[]
+  reconciliationSuggestions ReconciliationSuggestion[]
+  reconciliationEntries     ReconciliationEntry[]
+  bankRules                 BankRule[]
 
   @@index([deletedAt])
 }
@@ -255,6 +297,8 @@ model Client {
   inboundEmails InboundEmail[]
   documents    Document[]
   ingestAliases ClientIngestAlias[]
+  bankAccounts BankAccount[]
+  bankRuleTargets BankRule[] @relation("BankRuleTargetClient")
 
   @@index([officeId])
   @@index([deletedAt])
@@ -509,6 +553,13 @@ model Document {
   // ── Export linkage (S3.3/A9) ──
   exportBatchId String?
 
+  // ── Bank reconciliation (C2/C3) ──
+  // Set when the document is reconciled against bank transactions; a reconciled
+  // document never re-enters candidate matching. Never touches the document
+  // state machine.
+  reconciledEntryId String?
+  reconciledEntry   ReconciliationEntry? @relation(fields: [reconciledEntryId], references: [id])
+
   office       Office          @relation(fields: [officeId], references: [id], onDelete: Restrict)
   attachment   EmailAttachment? @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
   client       Client?         @relation(fields: [clientId], references: [id])
@@ -516,6 +567,7 @@ model Document {
   parent       Document?       @relation("DocumentSplit", fields: [parentDocumentId], references: [id])
   children     Document[]      @relation("DocumentSplit")
   exportLinks  ExportDocument[]
+  reconciliationSuggestions ReconciliationSuggestion[]
 
   @@index([officeId, status])
   @@index([officeId, supplierNif, documentNumber])
@@ -747,4 +799,159 @@ model JobLog {
   @@index([officeId])
   @@index([queue, status])
   @@index([jobId])
+}
+
+// ─────────────────────────────────────────
+// BANK RECONCILIATION v1 (fase C1 — statement import, no PSD2)
+// ─────────────────────────────────────────
+
+model BankAccount {
+  id        String   @id @default(cuid())
+  officeId  String
+  clientId  String
+  name      String
+  iban      String?
+  currency  String   @default("EUR") // field exists, non-EUR logic out of scope (v1)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  office Office @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  client Client @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  imports      BankStatementImport[]
+  transactions BankTransaction[]
+  rules        BankRule[]
+
+  // NULL ibans are distinct in Postgres — uniqueness only applies when iban is present
+  @@unique([officeId, clientId, iban])
+  @@index([officeId])
+  @@index([clientId])
+}
+
+model BankStatementImport {
+  id               String           @id @default(cuid())
+  officeId         String
+  bankAccountId    String
+  filename         String
+  fileHash         String // sha256 of the raw uploaded file
+  mappingSource    String // heuristic | ai
+  proposedMapping  Json
+  confirmedMapping Json? // set only after human confirmation (same pattern as ImportBatch)
+  rowsData         Json // parsed rows awaiting confirmation
+  periodFrom       DateTime?
+  periodTo         DateTime?
+  rowCount         Int              @default(0) // data rows in the file
+  status           BankImportStatus @default(PENDING)
+  errorReport      Json? // { imported, skippedDuplicates: [{line, reason}], errors: [{line, reason}] }
+  importedByUserId String
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  office      Office      @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  bankAccount BankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  transactions BankTransaction[]
+
+  @@index([officeId])
+  @@index([bankAccountId, fileHash])
+}
+
+model BankTransaction {
+  id            String                @id @default(cuid())
+  officeId      String
+  bankAccountId String
+  importId      String
+  bookingDate   DateTime
+  valueDate     DateTime?
+  description   String
+  amountCents   Int // negative = debit, positive = credit (A1 — integer cents, never float)
+  balanceCents  Int?
+  externalRef   String?
+  // sha256(bankAccountId|bookingDate|amountCents|normalized description)
+  dedupHash     String
+  status        BankTransactionStatus @default(UNRECONCILED)
+  version       Int                   @default(1) // optimistic locking (A7)
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  office      Office              @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  bankAccount BankAccount         @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  import      BankStatementImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+  suggestions ReconciliationSuggestion[]
+  entry       ReconciliationEntry?
+
+  @@unique([officeId, dedupHash])
+  @@index([officeId, status])
+  @@index([bankAccountId, bookingDate])
+}
+
+// C2 — deterministic matching suggestions. autoMatch=true only pre-selects in
+// the UI; reconciliation itself ALWAYS requires a human action in v1.
+model ReconciliationSuggestion {
+  id                String           @id @default(cuid())
+  officeId          String
+  bankTransactionId String
+  documentId        String
+  scoreTotal        Int
+  scoreBreakdown    Json // { amount, date, entity, reference }
+  autoMatch         Boolean          @default(false)
+  status            SuggestionStatus @default(PENDING)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  office          Office          @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  bankTransaction BankTransaction @relation(fields: [bankTransactionId], references: [id], onDelete: Cascade)
+  document        Document        @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([bankTransactionId, documentId])
+  @@index([officeId, status])
+  @@index([documentId])
+}
+
+// C3 — the human (or rule) act of reconciling/ignoring one transaction.
+// One active entry per transaction; undo deletes the entry (AuditLog keeps
+// the immutable trail on both sides).
+model ReconciliationEntry {
+  id                 String   @id @default(cuid())
+  officeId           String
+  bankTransactionId  String   @unique
+  documentIds        String[] // immutable snapshot; live linkage via Document.reconciledEntryId
+  ignored            Boolean  @default(false)
+  ignoreReason       String?
+  ruleId             String? // set when an IGNORE rule applied this entry
+  reconciledByUserId String? // null when applied by a rule (system)
+  createdAt          DateTime @default(now())
+
+  office          Office          @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  bankTransaction BankTransaction @relation(fields: [bankTransactionId], references: [id], onDelete: Cascade)
+  rule            BankRule?       @relation(fields: [ruleId], references: [id])
+  documents       Document[]
+
+  @@index([officeId])
+}
+
+// C3 — bank rules (Kabilio parity): applied BEFORE scoring, first match by
+// ascending priority wins. IGNORE marks the transaction IGNORED with a
+// reference to the rule; SUGGEST_CLIENT redirects candidate matching to the
+// target client.
+model BankRule {
+  id             String            @id @default(cuid())
+  officeId       String
+  bankAccountId  String? // null = every account of the office
+  matchType      BankRuleMatchType
+  pattern        String // matched against the transaction description
+  amountMinCents Int?
+  amountMaxCents Int?
+  action         BankRuleAction
+  targetClientId String? // required for SUGGEST_CLIENT
+  priority       Int               @default(100) // lower runs first
+  active         Boolean           @default(true)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  office       Office       @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  bankAccount  BankAccount? @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  targetClient Client?      @relation("BankRuleTargetClient", fields: [targetClientId], references: [id])
+  entries      ReconciliationEntry[]
+
+  @@index([officeId, active, priority])
 }

@@ -129,3 +129,65 @@ Por regra 13 da spec (fases por ordem de valor; melhor 0–3 impecáveis do que 
 
 **Gate no fecho do slice S5: verde — 302 testes (32 ficheiros), zero regressões, thresholds mantidos.**
 Nota: a tabela por cliente do dashboard continua server-side (`groupBy`) — o endpoint de listagem não agrega; documentado em HANDOFF.md.
+
+## Fase C — Conciliação bancária v1 (import de extratos, sem PSD2)
+
+### RED C1 (2026-07-07)
+
+`tests/acceptance/faseC1.bank-import.test.ts` (9 testes) + `src/lib/bank-amount.test.ts` (11 testes) — **RED import-level confirmado** antes de qualquer implementação (2/2 ficheiros falham: módulos `@/app/api/bank/*` e `src/lib/bank-amount` inexistentes).
+
+| Slice | Estado | RED | Gate |
+|---|---|---|---|
+| C1 Modelos (BankAccount, BankStatementImport, BankTransaction) + migração `20260707000001_c1_bank_reconciliation_import` | DONE | ✅ | ✅ |
+| C1 Parser dedicado de montantes PT (`centsFromBankAmount`: "1.234,56"→123456, regras de separador determinísticas, nunca parseFloat) | DONE | ✅ 11/11 | ✅ |
+| C1 Import wizard 2 passos: POST /api/bank/imports (multipart, magic bytes A4, 10MB, fileHash 409+force) → deteção heurística de colunas PT (zero IA) com fallback IA → POST /api/bank/imports/[id]/confirm (confirmação humana obrigatória) | DONE | ✅ | ✅ |
+| C1 dedupHash (officeId unique): linha repetida no ficheiro/re-import → skip + aviso no relatório, nunca 500; débito/crédito separados OU coluna única com sinal → mesmo amountCents | DONE | ✅ | ✅ |
+| C1 GET /api/bank/accounts + GET /api/bank/transactions (filtros AND, cursor 50/200, cross-tenant 404) + ações RBAC novas (bank:read incl. VIEWER; bank:manage/import/reconcile/bankRule:manage OWNER+ACCOUNTANT) | DONE | ✅ | ✅ |
+
+**Fim do C1: `npm run gate` verde — 322 testes (34 ficheiros), thresholds mantidos.**
+
+### RED C2 (2026-07-07)
+
+`tests/acceptance/faseC2.bank-matching.test.ts` (10 testes) — **RED import-level confirmado** (`@/server/services/bank-matching` inexistente) antes de implementar.
+
+| Slice | Estado | RED | Gate |
+|---|---|---|---|
+| C2 Modelos (ReconciliationSuggestion unique (tx,doc), Office.reconciliationToleranceCents default 2, Document.reconciledEntryId) + migração `20260707000002_c2_reconciliation_suggestions` | DONE | ✅ | ✅ |
+| C2 Scorer puro (`scoreCandidate`): montante 50/45 eliminatório, data 25/15/5 (dueDate→issueDate), NIF 20 com fronteira de dígitos / nome normalizado ≥4 chars word-boundary 12, referência +15 space-insensitive — fixture 95 EXATO [INV] | DONE | ✅ | ✅ |
+| C2 `generateSuggestionsForTransaction`: candidatos só do MESMO cliente da conta, VALIDATED/EXPORTED, não conciliados, pré-filtro SQL por janela de tolerância; ≥75 autoMatch + tx→SUGGESTED (transição condicional), 45–74 revisão, máx 5 ordenadas, idempotente (skipDuplicates) | DONE | ✅ | ✅ |
+| C2 `validateReconciliationTotals` (multi-doc: Σtotais = |amountCents| ± tolerância — 422 no ato de conciliar em C3) + wiring: confirm do import corre matching automaticamente (zero IA) | DONE | ✅ | ✅ |
+
+**Fim do C2: `npm run gate` verde — 341 testes (36 ficheiros), thresholds mantidos.**
+
+### RED C3 (2026-07-07)
+
+`tests/acceptance/faseC3.reconcile.test.ts` (8 testes) — **RED import-level confirmado** (rotas reconcile/unreconcile/rules inexistentes) antes de implementar.
+
+| Slice | Estado | RED | Gate |
+|---|---|---|---|
+| C3 Modelos (ReconciliationEntry 1:1 tx c/ documentIds snapshot, BankRule, BankTransaction.version A7, FK Document.reconciledEntryId) + migração `20260707000003_c3_reconciliation_entries_bank_rules` | DONE | ✅ | ✅ |
+| C3 POST reconcile (documentIds[] OU ignore+motivo, expectedVersion): claim condicional + entry + links + sugestões ACCEPTED/REJECTED + AuditLog num único $transaction atómico; multi-doc Σ±tolerância → 422; 2ª conciliação/versão errada → 409 | DONE | ✅ | ✅ |
+| C3 POST unreconcile: reverte tx→UNRECONCILED, documentos desligados, sugestões→PENDING, entry apagada, AuditLog do undo | DONE | ✅ | ✅ |
+| C3 BankRule engine (prioridade asc, first-match; CONTAINS/EQUALS accent-insensitive, SIMPLE_REGEX seguro) aplicado ANTES do scoring: IGNORE→entry+audit+IGNORED sem sugestões; SUGGEST_CLIENT redireciona candidatos + CRUD /api/bank/rules (bankRule:manage) | DONE | ✅ | ✅ |
+| C3 UI mobile-first pt-PT: /bank (contas por cliente + fila com score/breakdown visível, aceitar 1 toque em autoMatch, multi-doc por checkbox, ignorar com motivo, reverter), /bank/import (wizard 3 passos + força reimport), /settings/bank-rules, item "Banco" na sidebar, contadores por conciliar/sugeridas no dashboard | DONE | — (UI) | ✅ |
+
+**Fim do C3: `npm run gate` verde — 349 testes (37 ficheiros), thresholds mantidos. Fase C completa.**
+
+### Decisões C (latitude da spec)
+
+- 45–74 gera sugestão com autoMatch=false mas NÃO muda o estado da transação (a spec só manda SUGERIDA para ≥75); a fila da UI mostra ambas.
+- Débito casa com INVOICE_RECEIVED/INVOICE_RECEIPT/RECEIPT; crédito com INVOICE_ISSUED (o repo tem os dois lados — testados os dois).
+- `Document.reconciledEntryId` entra em C2 como coluna simples (candidatura exclui conciliados desde já); a FK para ReconciliationEntry chega com o modelo em C3.
+- Matching corre sincronamente no fim do confirm do import (determinístico, zero IA, sem custo) — sem job novo.
+- Conciliação manual multi-documento aceita documentos de qualquer cliente do office (o contabilista decide); a restrição ao cliente da conta aplica-se só aos CANDIDATOS do scoring. Regras SUGGEST_CLIENT legitimam o cross-client.
+- AuditLog da conciliação vive dentro do $transaction atómico (existe sse a ação aconteceu) — sem ação externa não há ordering "antes" observável; padrão igual ao interno da review.
+- Undo apaga a ReconciliationEntry (o rasto imutável fica nos DOIS AuditLogs: reconcile e unreconcile com o payload da entry).
+- DELETE de BankRule é hard delete (registo de configuração, não de negócio); entries antigas mantêm ruleId a null via SetNull.
+- amountMin/amountMax das regras comparam contra amountCents COM sinal (débitos são negativos) — documentado na UI pelo placeholder.
+
+- Enums em inglês por regra da casa (precedente DocumentStatus): POR_CONCILIAR→UNRECONCILED, SUGERIDA→SUGGESTED, CONCILIADA→RECONCILED, IGNORADA→IGNORED; PENDENTE/ACEITE/REJEITADA→PENDING/ACCEPTED/REJECTED.
+- Confirmação humana do mapeamento é obrigatória nos DOIS caminhos (heurística e IA) — a heurística só evita a chamada à IA; consistente com o wizard de import de documentos (AC-2.5.c).
+- 409 de fileHash aplica-se a imports PENDING e PROCESSED da mesma conta; `force=true` cria na mesma e o dedupHash das linhas garante zero transações duplicadas.
+- `rowCount` = linhas de dados do ficheiro; relatório detalha imported/skippedDuplicates/errors por linha.
+- Ações bancárias RBAC fora do guarda-chuva `settings:manage` (OWNER-only): a spec C3 exige regras bancárias para OWNER **e** ACCOUNTANT.
+- Execução em worktree `.claude/worktrees/bank-c1` (o diretório principal mudou de branch a meio — outra sessão ativa); BD de teste isolada `gabify_test_bankc1` via `TEST_DATABASE_URL` para evitar contenção com outras suites concorrentes.

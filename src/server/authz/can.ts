@@ -26,8 +26,13 @@ export type AuthzAction =
   | 'export:run'
   | 'settings:manage'
   | 'emailAccount:connect'
+  | 'bank:read'
+  | 'bank:manage'
+  | 'bank:import'
+  | 'bank:reconcile'
+  | 'bankRule:manage'
 
-const READ_ACTIONS: AuthzAction[] = ['client:read', 'email:read', 'document:read']
+const READ_ACTIONS: AuthzAction[] = ['client:read', 'email:read', 'document:read', 'bank:read']
 
 const ALL_ACTIONS: AuthzAction[] = [
   ...READ_ACTIONS,
@@ -43,6 +48,12 @@ const ALL_ACTIONS: AuthzAction[] = [
   'export:run',
   'settings:manage',
   'emailAccount:connect',
+  // Bank reconciliation (fase C3 spec): rules are OWNER/ACCOUNTANT — deliberately
+  // NOT under the OWNER-only settings:manage umbrella
+  'bank:manage',
+  'bank:import',
+  'bank:reconcile',
+  'bankRule:manage',
 ]
 
 const OWNER_ONLY: AuthzAction[] = ['invitation:manage', 'user:manage', 'settings:manage']

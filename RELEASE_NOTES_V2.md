@@ -1,7 +1,7 @@
 # RELEASE_NOTES_V2.md — Gabify v2
 
 Execução autónoma da SPEC_GABIFY_V2 (+ ADDENDUM) na branch `feature/gabify-v2`.
-Estado final: **Fases 0–3 completas + slice de UI + slice S5 (insuficiências de API fechadas), gate verde (302 testes, thresholds de cobertura enforced)**. Fase 4 não executada (regra 13 — ver HANDOFF.md).
+Estado final: **Fases 0–3 completas + slice de UI + slice S5 + Fase C (conciliação bancária v1), gate verde (349 testes, thresholds de cobertura enforced)**. Fase 4 não executada (regra 13 — ver HANDOFF.md).
 
 ## Dependências adicionadas (bibliotecas, não infraestrutura — A6)
 
@@ -46,5 +46,39 @@ Estado final: **Fases 0–3 completas + slice de UI + slice S5 (insuficiências 
 | S5.1.a–d (review completo: vatBreakdown/retenção/moeda/dueDate, coerência no servidor, VALIDATED imutável sem reopen) | PASS | slice pós-entrega S5 |
 | S5.2.a–c (GET /api/documents: filtros AND, cross-tenant nunca, cursor) | PASS | slice pós-entrega S5 |
 | S5.3.a (headers na resposta do import) | PASS | slice pós-entrega S5 |
+
+### Fase C — Conciliação bancária v1 (spec adicional, 2026-07-07)
+
+| AC | Resultado | Notas |
+|---|---|---|
+| C1.a [INV] ("1.234,56" → 123456 cêntimos; datas/saldo; período do import) | PASS | parser dedicado `centsFromBankAmount`, nunca parseFloat (A1) |
+| C1.b [INV] (coluna única "-45,00" ≡ Débito=45,00 → mesmo amountCents) | PASS | |
+| C1.c [INV] (linha repetida no ficheiro → 1 transação + aviso, nunca 500) | PASS | dedupHash unique (officeId) |
+| C1.d [INV] (mesmo ficheiro 2× → 409; force → 0 duplicados) | PASS | |
+| C1.e [INV] (extrato do office A invisível no office B; cross-tenant 404) | PASS | |
+| C1.f [INV] (VIEWER não importa nem cria contas; lê via bank:read) | PASS | |
+| C1.g [INV] (confirmação humana obrigatória; 2ª confirm → 409; heurística PT zero IA) | PASS | |
+| C1.h (cabeçalhos crípticos → fallback IA + confirmação) | PASS | |
+| C1.i (magic bytes 422; >10MB 413) | PASS | |
+| C2.a [INV] (montante exato + NIF + 2 dias → score 95 EXATO; breakdown persistido; autoMatch; SUGGESTED; nunca conciliada sozinha) | PASS | asserção numérica ao ponto |
+| C2.b [INV] (montante fora de tolerância → zero sugestões — eliminatório) | PASS | |
+| C2.c (tolerância por office: 45 pontos dentro; 0 cêntimos elimina) | PASS | `Office.reconciliationToleranceCents` |
+| C2.d [INV] (documento de outro cliente do mesmo office nunca é candidato) | PASS | |
+| C2.e [INV] (conciliado / não-VALIDADO nunca é candidato) | PASS | |
+| C2.f (débito↔recebidas, crédito↔emitidas — os dois lados testados) | PASS | |
+| C2.g (nome 12, referência +15, buckets de data 15/5; 45–74 autoMatch=false) | PASS | |
+| C2.h (máx 5 sugestões ordenadas; re-corrida idempotente) | PASS | |
+| C2.i [INV] (multi-doc: somas que não fecham → 422 no ato de conciliar) | PASS | |
+| C2.j (confirm do import corre o matching automaticamente) | PASS | |
+| C3.a [INV] (aceitar sugestão persiste entry + audit + estados nos dois lados) | PASS | |
+| C3.b [INV] (unreconcile reverte tudo, auditado) | PASS | |
+| C3.c [INV] (2ª conciliação → 409; expectedVersion errada → 409 — A7) | PASS | |
+| C3.d [INV] (multi-doc a fechar → 200 com N documentos; sem fechar → 422) | PASS | |
+| C3.e [INV] (regra IGNORAR: IGNORED com referência à regra, zero sugestões; ignorar manual exige motivo) | PASS | |
+| C3.f [INV] (transação conciliada nunca reaparece como candidata; documento idem) | PASS | |
+| C3.g [INV] (VIEWER só lê; cross-tenant 404 em todas as ações) | PASS | |
+| C3.h (regra SUGERIR_CLIENTE redireciona candidatos) | PASS | |
+
+Fora de âmbito respeitado: sem PSD2/agregadores, sem matching IA, sem extratos PDF, sem lógica multi-moeda (campo existe), sem export contável dos movimentos.
 
 Nenhum teste `[INV]` foi apagado, skipado ou enfraquecido.
