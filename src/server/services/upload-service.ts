@@ -3,6 +3,7 @@ import AdmZip from 'adm-zip'
 import { fileTypeFromBuffer } from 'file-type'
 import { prisma } from '@/lib/prisma'
 import { uploadToR2 } from '@/lib/r2'
+import { getDocumentParseQueue, DEFAULT_JOB_OPTIONS } from '@/lib/redis'
 import type { Document } from '@prisma/client'
 
 /**
@@ -116,7 +117,8 @@ export function sha256(buffer: Buffer): string {
 }
 
 /**
- * Creates a MANUAL_UPLOAD document: R2 upload + Document row.
+ * Creates an uploaded document (MANUAL_UPLOAD by default, PORTAL_UPLOAD for the
+ * end-client portal — fase P2): R2 upload + Document row.
  * The parse pipeline picks it up via a { documentId } job.
  */
 export async function createManualDocument(params: {
@@ -128,11 +130,12 @@ export async function createManualDocument(params: {
   clientId: string | null
   flags?: string[]
   status?: 'PENDING_CLASSIFICATION' | 'NEEDS_REVIEW'
+  source?: 'MANUAL_UPLOAD' | 'PORTAL_UPLOAD'
 }): Promise<Document> {
   const document = await prisma.document.create({
     data: {
       officeId: params.officeId,
-      source: 'MANUAL_UPLOAD',
+      source: params.source ?? 'MANUAL_UPLOAD',
       status: params.status ?? 'PENDING_CLASSIFICATION',
       clientId: params.clientId,
       uploadedByUserId: params.uploadedByUserId,
@@ -152,4 +155,78 @@ export async function createManualDocument(params: {
     where: { id: document.id },
     data: { r2Key },
   })
+}
+
+export interface IntakeResult {
+  created: Array<{ documentId: string; filename: string }>
+  errors: Array<{ filename: string; error: string; httpStatus: number }>
+}
+
+/**
+ * Shared intake loop for uploaded files (internal upload S2.1 and portal
+ * upload P2): magic-byte validation, ZIP expansion with zip-bomb protection,
+ * Document + R2 write, parse job enqueue. Per-file error reporting — one bad
+ * file never fails the batch.
+ */
+export async function intakeUploadedFiles(params: {
+  officeId: string
+  uploadedByUserId: string | null
+  clientId: string | null
+  files: Array<{ name: string; buffer: Buffer }>
+  source?: 'MANUAL_UPLOAD' | 'PORTAL_UPLOAD'
+}): Promise<IntakeResult> {
+  const created: IntakeResult['created'] = []
+  const errors: IntakeResult['errors'] = []
+  const queue = getDocumentParseQueue()
+
+  const intakeOne = async (name: string, buffer: Buffer, mimeType: string): Promise<void> => {
+    const doc = await createManualDocument({
+      officeId: params.officeId,
+      uploadedByUserId: params.uploadedByUserId,
+      filename: name,
+      mimeType,
+      buffer,
+      clientId: params.clientId,
+      source: params.source ?? 'MANUAL_UPLOAD',
+    })
+    await queue.add(
+      'parse-document',
+      { documentId: doc.id, officeId: params.officeId },
+      DEFAULT_JOB_OPTIONS,
+    )
+    created.push({ documentId: doc.id, filename: name })
+  }
+
+  for (const file of params.files) {
+    const validation = await validateUploadedFile(file.buffer, file.name)
+    if (!validation.ok) {
+      errors.push({ filename: file.name, error: validation.error, httpStatus: validation.httpStatus })
+      continue
+    }
+
+    if (validation.kind === 'zip') {
+      const zip = inspectZip(file.buffer)
+      if (!zip.ok) {
+        errors.push({ filename: file.name, error: zip.error ?? 'ZIP rejeitado', httpStatus: 422 })
+        continue
+      }
+      for (const entry of zip.entries) {
+        const entryValidation = await validateUploadedFile(entry.data, entry.name)
+        if (!entryValidation.ok) {
+          errors.push({
+            filename: `${file.name}/${entry.name}`,
+            error: entryValidation.error,
+            httpStatus: entryValidation.httpStatus,
+          })
+          continue
+        }
+        await intakeOne(entry.name, entry.data, entryValidation.mimeType)
+      }
+      continue
+    }
+
+    await intakeOne(file.name, file.buffer, validation.mimeType)
+  }
+
+  return { created, errors }
 }

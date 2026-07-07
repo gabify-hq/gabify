@@ -19,13 +19,24 @@ export async function createUserInOffice(params: {
   email: string
   role: UserRole
   name?: string | null
+  /** Required when role=CLIENT, forbidden otherwise (fase P1). */
+  clientId?: string | null
 }): Promise<User> {
+  const clientId = params.clientId ?? null
+  // Application-level mirror of the DB CHECK constraints (fail fast, clear message)
+  if (params.role === 'CLIENT' && !clientId) {
+    throw new Error('A CLIENT user requires a clientId')
+  }
+  if (params.role !== 'CLIENT' && clientId) {
+    throw new Error('Only CLIENT users may have a clientId')
+  }
   return prisma.user.create({
     data: {
       officeId: params.officeId,
       email: params.email.toLowerCase(),
       name: params.name ?? null,
       role: params.role,
+      clientId,
     },
   })
 }

@@ -6,6 +6,8 @@ export interface TestSessionUser {
   name?: string | null
   officeId: string | null
   role: UserRole
+  /** Only set for portal users (role CLIENT) — mirrors User.clientId. */
+  clientId?: string | null
 }
 
 export interface TestSession {

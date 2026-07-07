@@ -191,3 +191,58 @@ Nota: a tabela por cliente do dashboard continua server-side (`groupBy`) — o e
 - `rowCount` = linhas de dados do ficheiro; relatório detalha imported/skippedDuplicates/errors por linha.
 - Ações bancárias RBAC fora do guarda-chuva `settings:manage` (OWNER-only): a spec C3 exige regras bancárias para OWNER **e** ACCOUNTANT.
 - Execução em worktree `.claude/worktrees/bank-c1` (o diretório principal mudou de branch a meio — outra sessão ativa); BD de teste isolada `gabify_test_bankc1` via `TEST_DATABASE_URL` para evitar contenção com outras suites concorrentes.
+
+## Fase P — Portal do cliente final v1 (branch `feature/client-portal-v1`, 2026-07-07)
+
+Módulo de maior sensibilidade de segurança: utilizadores externos dentro do sistema. Regra da spec aplicada em todas as decisões: **em dúvida entre conveniência e isolamento, ganha o isolamento.**
+
+### RED P1 (2026-07-07)
+
+`tests/acceptance/faseP1.client-role.test.ts` (35 testes) — **8 falhas confirmadas** antes de implementar (convite CLIENT 422/404, aceitação role+clientId, constraints BD, PATCH de role de CLIENT, limite 30/min). Os 27 testes do loop de negação sobre 25 rotas internas nasceram verdes por DENY-precedence (role desconhecido = negado) — precedente fase1 (workers).
+
+| Slice | Estado | RED | Gate |
+|---|---|---|---|
+| P1 Schema (UserRole.CLIENT, User.clientId, Invitation.clientId, CHECKs `role='CLIENT' ⇔ clientId`) — migrações `20260707000004` (ALTER TYPE isolado) + `20260707000005` | DONE | ✅ | ✅ |
+| P1 Matriz can(): CLIENT só `portal:document:read/upload`; `clientInvitation:manage` nova (OWNER+ACCOUNTANT); portal:* exclusivo de CLIENT | DONE | ✅ | ✅ |
+| P1 Convites CLIENT (clientId obrigatório do próprio office 422/404; aceitação copia role+clientId SÓ do convite; revoke/resend de convites CLIENT via clientInvitation:manage) | DONE | ✅ | ✅ |
+| P1 Anti-escalada em users: PATCH nunca muda role de/para CLIENT (409/422) | DONE | ✅ | ✅ |
+| P1 Rate limiting CLIENT: API 30/min no guard(), upload 10/min (fn pronta, aplicada em P2) | DONE | ✅ | ✅ |
+
+**Fim do P1: `npm run gate` verde — 384 testes (38 ficheiros), thresholds mantidos.**
+
+### RED P2 (2026-07-07)
+
+`tests/acceptance/faseP2.portal-api.test.ts` (9 testes) — **RED import-level confirmado** (rotas `/api/portal/*` inexistentes) antes de implementar.
+
+| Slice | Estado | RED | Gate |
+|---|---|---|---|
+| P2 DocumentSource.PORTAL_UPLOAD + migração `20260707000006` | DONE | ✅ | ✅ |
+| P2 portal-service: DTO próprio campo-a-campo {id, filename, submittedAt, origin, status} + shape test estrito anti-spread [INV]; mapa público deny-by-default (internos→PROCESSING, VALIDATED/EXPORTED→PROCESSED, rejeitado→RETURNED); SPLIT parents excluídos | DONE | ✅ | ✅ |
+| P2 GET /api/portal/documents (cursor 50/200, pesquisa por nome, clientId SÓ da sessão) | DONE | ✅ | ✅ |
+| P2 POST /api/portal/documents/upload (pipeline A4 partilhado `intakeUploadedFiles`, clientId do body IGNORADO, AuditLog PORTAL_DOCUMENT_UPLOADED com o user CLIENT, rate limit 10/min) | DONE | ✅ | ✅ |
+| P2 GET /api/portal/documents/[id]/download (signed URL TTL 300s; outro cliente → 404) | DONE | ✅ | ✅ |
+
+**Fim do P2: `npm run gate` verde — 393 testes (39 ficheiros), thresholds mantidos.**
+
+### RED P3 (2026-07-07)
+
+3 ficheiros — **RED confirmado** antes de implementar (módulos inexistentes): `tests/acceptance/faseP3.portal-access.test.ts` (5), `src/lib/area-redirect.test.ts`, `src/components/portal/portal-document-table.test.tsx`.
+
+| Slice | Estado | RED | Gate |
+|---|---|---|---|
+| P3 Dupla barreira por role: `resolveAreaRedirect` consumido pelos DOIS layouts (dashboard redireciona CLIENT→/portal; portal redireciona internos→/inbox); raiz `/` aterra por role | DONE | ✅ | ✅ |
+| P3 UI /portal (layout próprio, nav mínima Documentos/Carregar/Sair, mobile-first bottom-bar, pt-PT): lista com estados públicos + pesquisa + paginação; /portal/upload reutiliza UploadDocuments (props endpoint/showClientSelector) com drag&drop + câmara | DONE | ✅ | ✅ |
+| P3 "Acessos do portal" na ficha do cliente (OWNER+ACCOUNTANT): convidar, estados, revogar convite, revogar acesso — GET/DELETE /api/clients/[id]/portal-access[/userId] (revogação apaga Sessions + audit PORTAL_ACCESS_REVOKED) | DONE | ✅ | ✅ |
+
+**Fim do P3 / fase P completa: `npm run gate` verde — 407 testes (42 ficheiros), thresholds mantidos.**
+
+### Decisões P (latitude da spec)
+
+- **Ações portal dedicadas** em vez de conceder `document:read/upload` internos a CLIENT: a concessão literal abriria `/api/documents`, `/api/documents/import` e `/api/attachments` (DTOs internos) — contradiz o próprio P2. `portal:document:read/upload` entregam a mesma semântica ("APENAS do seu clientId") com DENY-precedence limpa; internos não têm ações portal (isolamento simétrico).
+- Estados públicos com códigos em inglês na API (`PROCESSING/PROCESSED/RETURNED`) e labels pt-PT na UI — regra da casa (precedente enums fase C); o mapa é deny-by-default: qualquer estado interno futuro cai em "Em processamento".
+- "REJEITADO → Devolvido" implementado sobre o soft-delete da review (reject=soft-delete, S3.1): a lista do portal INCLUI documentos apagados pela review, mascarados como RETURNED — o cliente sabe que deve reenviar.
+- SPLIT parents fora da lista do portal (artefacto interno; as faturas-filhas aparecem individualmente).
+- Barreira "middleware + layout" da spec: com sessões database o proxy edge só vê o cookie (§1.2) — a dupla barreira real são os DOIS layouts (dashboard e portal), ambos sobre `resolveAreaRedirect` (fonte única). Proxy continua a exigir cookie para /portal.
+- Convite CLIENT via POST /api/invitations com ação derivada do role ANTES da validação (401/403 precedem detalhe de validação — anti-enumeração); página de convites da equipa exclui convites de portal (vivem na ficha do cliente).
+- Revogação de acesso = soft-delete do User CLIENT + deleteMany das Sessions num $transaction (revogação imediata com strategy database) + AuditLog; users internos e CLIENTs de outro cliente são 404 nessa rota.
+- Loop de negação P1 sobre o route map interno nasceu verde (DENY-por-omissão da matriz) — mantido como teste de regressão [INV]; os 8 RED reais eram a funcionalidade nova.

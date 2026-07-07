@@ -4,21 +4,47 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { createInvitation, InvitationError } from '@/server/services/invitation-service'
 
-const createInvitationSchema = z.object({
-  email: z.string().email('Email inválido'),
-  role: z.enum(['OWNER', 'ACCOUNTANT', 'VIEWER']),
-})
+const createInvitationSchema = z
+  .object({
+    email: z.string().email('Email inválido'),
+    role: z.enum(['OWNER', 'ACCOUNTANT', 'VIEWER', 'CLIENT']),
+    clientId: z.string().min(1).optional(),
+  })
+  .superRefine((data, ctx) => {
+    // Fase P1: a CLIENT invitation is bound to one end-client; internal
+    // invitations must never carry a clientId
+    if (data.role === 'CLIENT' && !data.clientId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['clientId'],
+        message: 'Convite de portal exige o cliente associado',
+      })
+    }
+    if (data.role !== 'CLIENT' && data.clientId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['clientId'],
+        message: 'Só convites de portal têm cliente associado',
+      })
+    }
+  })
 
 export async function POST(request: NextRequest) {
-  const gate = await guard('invitation:manage', { denyStatus: 403 })
-  if (!gate.ok) return gate.response
-
   let body: unknown
   try {
     body = await request.json()
   } catch {
     return NextResponse.json({ error: 'Pedido inválido' }, { status: 400 })
   }
+
+  // Portal invitations (role CLIENT) are manageable by OWNER and ACCOUNTANT
+  // (clientInvitation:manage); internal invitations remain OWNER-only. The
+  // action is derived from the requested role BEFORE validation so permission
+  // errors (401/403) always precede validation detail (anti-enumeration).
+  const requestedRole = (body as { role?: unknown } | null)?.role
+  const action = requestedRole === 'CLIENT' ? 'clientInvitation:manage' : 'invitation:manage'
+  const gate = await guard(action, { denyStatus: 403 })
+  if (!gate.ok) return gate.response
 
   const parsed = createInvitationSchema.safeParse(body)
   if (!parsed.success) {
@@ -33,6 +59,7 @@ export async function POST(request: NextRequest) {
       officeId: gate.user.officeId,
       email: parsed.data.email,
       role: parsed.data.role,
+      clientId: parsed.data.clientId ?? null,
       invitedByUserId: gate.user.id,
     })
     return NextResponse.json(
@@ -42,6 +69,7 @@ export async function POST(request: NextRequest) {
           id: invitation.id,
           email: invitation.email,
           role: invitation.role,
+          clientId: invitation.clientId,
           expiresAt: invitation.expiresAt,
           createdAt: invitation.createdAt,
         },
@@ -57,6 +85,16 @@ export async function POST(request: NextRequest) {
     }
     if (error instanceof InvitationError && error.code === 'ROLE_ESCALATION') {
       return NextResponse.json({ error: error.message, code: 'ROLE_ESCALATION' }, { status: 403 })
+    }
+    if (error instanceof InvitationError && error.code === 'CLIENT_NOT_FOUND') {
+      // Cross-tenant clientId: 404, never reveal existence (regra 10)
+      return NextResponse.json({ error: 'Cliente não encontrado' }, { status: 404 })
+    }
+    if (
+      error instanceof InvitationError &&
+      (error.code === 'CLIENT_ID_REQUIRED' || error.code === 'CLIENT_ID_FORBIDDEN')
+    ) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: 422 })
     }
     throw error
   }

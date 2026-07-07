@@ -1,10 +1,18 @@
 import type { ReactNode } from 'react'
+import { redirect } from 'next/navigation'
 import { Sidebar } from '@/components/dashboard/sidebar'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { resolveAreaRedirect } from '@/lib/area-redirect'
 
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
   const session = await auth()
+
+  // Fase P3 — role barrier: a portal user (CLIENT) never renders the office
+  // dashboard (the portal layout is the mirror barrier)
+  const target = resolveAreaRedirect(session?.user?.role ?? null, 'dashboard')
+  if (target) redirect(target)
+
   const officeId = session?.user?.officeId ?? ''
 
   const [unreadCount, pendingCount] = await Promise.all([

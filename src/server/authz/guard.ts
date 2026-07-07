@@ -2,13 +2,15 @@ import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import type { UserRole } from '@prisma/client'
 import { can, type AuthzAction } from './can'
-import { checkApiRateLimit } from '@/server/rate-limit'
+import { checkApiRateLimit, checkClientApiRateLimit } from '@/server/rate-limit'
 
 export interface GuardedSessionUser {
   id: string
   email: string
   officeId: string
   role: UserRole
+  /** Set only for portal users (role CLIENT) — the end-client they belong to. */
+  clientId: string | null
 }
 
 export type GuardResult =
@@ -38,7 +40,11 @@ export async function guard(action: AuthzAction, options: GuardOptions = {}): Pr
   }
 
   if (!options.skipRateLimit) {
-    const rate = checkApiRateLimit(session.user.id)
+    // Portal users (fase P1) get a tighter per-minute window than internal staff
+    const rate =
+      session.user.role === 'CLIENT'
+        ? checkClientApiRateLimit(session.user.id)
+        : checkApiRateLimit(session.user.id)
     if (!rate.allowed) {
       return {
         ok: false,
@@ -66,6 +72,7 @@ export async function guard(action: AuthzAction, options: GuardOptions = {}): Pr
       email: session.user.email,
       officeId: session.user.officeId,
       role: session.user.role,
+      clientId: session.user.clientId ?? null,
     },
   }
 }
