@@ -127,7 +127,7 @@ Client portal module detail: [client-portal.md](client-portal.md).
 **Framework:** Vitest, two projects:
 
 - **unit** — co-located with source (`foo.ts` → `foo.test.ts`); no real DB, network, or Redis.
-- **acceptance** — `tests/acceptance/fase*.test.ts`; runs against a dedicated PostgreSQL database (`gabify_test`, auto-created and migrated by the global setup). Providers/AI/Resend always mocked. Files run sequentially (shared DB).
+- **acceptance** — `tests/acceptance/fase*.test.ts`; runs against a dedicated PostgreSQL database (`gabify_test`, auto-created and migrated by the global setup) and an isolated Redis logical database (`redis://localhost:6379/15` by default, flushed by the global setup — override with `TEST_REDIS_URL`, must be db > 0). Providers/AI/Resend always mocked. Files run sequentially (shared DB): the acceptance project runs in its own sequential group after unit (`sequence.groupOrder`) with a single worker, so `vitest run` with both projects is stable.
 
 **Rules:** test through public interfaces. `npm run gate` = tsc + eslint + vitest + coverage, and must pass at the end of every slice.
 

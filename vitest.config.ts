@@ -42,6 +42,8 @@ export default defineConfig({
           name: 'unit',
           include: ['src/**/*.test.{ts,tsx}'],
           exclude: ['node_modules/**'],
+          // groupOrder 0 runs first, alone — see acceptance project below
+          sequence: { groupOrder: 0 },
         },
       },
       {
@@ -52,8 +54,14 @@ export default defineConfig({
           exclude: ['node_modules/**'],
           globalSetup: ['tests/setup/global-setup.ts'],
           setupFiles: ['tests/setup/acceptance-env.ts'],
-          // Acceptance tests share one real PostgreSQL database — never run files in parallel
+          // Acceptance tests share one real PostgreSQL database (truncateAll
+          // between files) — files must NEVER run concurrently. When both
+          // projects run in one `vitest run`, fileParallelism alone is not
+          // honoured across the combined scheduler, so we also force this
+          // project into its own sequential group and a single worker.
+          sequence: { groupOrder: 1 },
           fileParallelism: false,
+          maxWorkers: 1,
           testTimeout: 30_000,
           hookTimeout: 60_000,
         },
