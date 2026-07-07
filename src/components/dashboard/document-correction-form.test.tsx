@@ -75,7 +75,7 @@ describe('DocumentCorrectionForm', () => {
     await user.click(screen.getByRole('button', { name: /Guardar correções e validar/ }))
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
     expect(url).toBe('/api/documents/doc-1/review')
     const body = JSON.parse(init.body as string)
     expect(body.decision).toBe('correct')

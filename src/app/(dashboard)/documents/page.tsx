@@ -1,4 +1,5 @@
-import { FileText } from 'lucide-react'
+import Link from 'next/link'
+import { FileText, FileSpreadsheet } from 'lucide-react'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { DocumentTable } from '@/components/dashboard/document-table'
@@ -105,14 +106,23 @@ export default async function DocumentsPage() {
             {documents.length}
           </span>
         </div>
-        {needsReview > 0 && (
-          <div className="flex items-center gap-1.5">
-            <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-            <span className="text-[11px] font-medium text-amber-400">
-              {needsReview} para rever
-            </span>
-          </div>
-        )}
+        <div className="flex items-center gap-3">
+          {needsReview > 0 && (
+            <div className="flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+              <span className="text-[11px] font-medium text-amber-400">
+                {needsReview} para rever
+              </span>
+            </div>
+          )}
+          <Link
+            href="/documents/import"
+            className="pressable flex items-center gap-1.5 rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-semibold text-gray-600 transition-colors hover:border-gray-300"
+          >
+            <FileSpreadsheet className="h-3.5 w-3.5 stroke-[1.75]" />
+            Importar folha
+          </Link>
+        </div>
       </div>
 
       <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
