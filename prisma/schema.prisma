@@ -128,6 +128,22 @@ enum BankRuleAction {
   SUGGEST_CLIENT // SUGERIR_CLIENTE
 }
 
+// ── TOConline integration v1 (push de compras) ──
+// Spec names these in PT (ATIVA|ERRO|DESLIGADA / PENDENTE|ENVIADO|ERRO) — code
+// is English by house rule, same precedent as DocumentStatus/BankTransactionStatus.
+
+enum ToconlineConnectionStatus {
+  ACTIVE   // ATIVA
+  ERROR    // ERRO
+  DISABLED // DESLIGADA
+}
+
+enum ToconlinePushStatus {
+  PENDING // PENDENTE
+  SENT    // ENVIADO
+  ERROR   // ERRO
+}
+
 // ─────────────────────────────────────────
 // OFFICE (gabinete de contabilidade)
 // ─────────────────────────────────────────
@@ -165,6 +181,7 @@ model Office {
   reconciliationSuggestions ReconciliationSuggestion[]
   reconciliationEntries     ReconciliationEntry[]
   bankRules                 BankRule[]
+  toconlineConnections      ToconlineConnection[]
 
   @@index([deletedAt])
 }
@@ -313,6 +330,7 @@ model Client {
   bankRuleTargets BankRule[] @relation("BankRuleTargetClient")
   portalUsers       User[]       @relation("ClientPortalUsers")
   portalInvitations Invitation[] @relation("ClientPortalInvitations")
+  toconlineConnection ToconlineConnection?
 
   @@index([officeId])
   @@index([deletedAt])
@@ -567,6 +585,14 @@ model Document {
   // ── Export linkage (S3.3/A9) ──
   exportBatchId String?
 
+  // ── TOConline push (integration v1 — see INTEGRATION_NOTES.md) ──
+  // Status of the LAST push attempt; SENT documents are never re-pushed
+  // (idempotency [INV]). Never touches the document state machine.
+  toconlinePushStatus ToconlinePushStatus?
+  toconlineDocumentId String? // id returned by the TOConline purchases API
+  toconlinePushedAt   DateTime?
+  toconlinePushError  String?   @db.Text // context for ERROR status
+
   // ── Bank reconciliation (C2/C3) ──
   // Set when the document is reconciled against bank transactions; a reconciled
   // document never re-enters candidate matching. Never touches the document
@@ -582,6 +608,7 @@ model Document {
   children     Document[]      @relation("DocumentSplit")
   exportLinks  ExportDocument[]
   reconciliationSuggestions ReconciliationSuggestion[]
+  toconlinePreviews ToconlinePushPreview[]
 
   @@index([officeId, status])
   @@index([officeId, supplierNif, documentNumber])
@@ -590,6 +617,7 @@ model Document {
   @@index([status])
   @@index([parentDocumentId])
   @@index([contentSha256])
+  @@index([officeId, toconlinePushStatus])
 }
 
 // ─────────────────────────────────────────
@@ -968,4 +996,82 @@ model BankRule {
   entries      ReconciliationEntry[]
 
   @@index([officeId, active, priority])
+}
+
+// ─────────────────────────────────────────
+// TOCONLINE INTEGRATION v1 (push de compras — doc-driven, NOT tested against
+// the real API; see INTEGRATION_NOTES.md)
+// ─────────────────────────────────────────
+
+// One connection per END-CLIENT (the TOConline account belongs to the client
+// company, not to the office). The four integrator values come from
+// TOConline > Empresa > Configurações > Dados API. Secrets are AES-256-GCM
+// encrypted at the service layer (same crypto.ts as OAuth email tokens).
+model ToconlineConnection {
+  id       String @id @default(cuid())
+  officeId String
+  clientId String @unique // one TOConline company per Gabify client
+
+  oauthUrl String // OAUTH_URL from the integrator credentials
+  apiUrl   String // API_URL from the integrator credentials
+
+  oauthClientId     String // integrator client_id (not secret, stored plain)
+  oauthClientSecret String // ENCRYPTED (AES-256-GCM via crypto.ts)
+
+  accessToken    String? // ENCRYPTED — valid 4h (doc: expires_in 14400)
+  refreshToken   String? // ENCRYPTED — valid 8h per the docs
+  tokenExpiresAt DateTime?
+
+  status    ToconlineConnectionStatus @default(ACTIVE)
+  lastError String?                   @db.Text
+
+  // Dry-run is the BIRTH state: the push job runs the whole flow but writes
+  // the exact request to ToconlinePushPreview instead of calling the API.
+  // Only OWNER can disable it (toconline:goLive), with explicit confirmation.
+  dryRun Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  office Office @relation(fields: [officeId], references: [id], onDelete: Restrict)
+  client Client @relation(fields: [clientId], references: [id], onDelete: Restrict)
+
+  entityMaps ToconlineEntityMap[]
+  previews   ToconlinePushPreview[]
+
+  @@index([officeId])
+}
+
+// Cache of Gabify → TOConline entity ids (suppliers by NIF for now) so retries
+// and subsequent pushes never repeat lookups or re-create entities.
+model ToconlineEntityMap {
+  id           String   @id @default(cuid())
+  connectionId String
+  entityType   String // 'SUPPLIER' (only type in v1)
+  nif          String
+  toconlineId  String // TOConline internal id (JSONAPI ids are strings)
+  createdAt    DateTime @default(now())
+
+  connection ToconlineConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, entityType, nif])
+}
+
+// Dry-run output: the EXACT request the push job would send (endpoint, method,
+// headers WITHOUT secrets, body), visible in the UI ("o que seria enviado").
+model ToconlinePushPreview {
+  id           String   @id @default(cuid())
+  connectionId String
+  documentId   String
+  endpoint     String // path relative to apiUrl, e.g. /api/v1/commercial_purchases_documents
+  method       String
+  headers      Json // secret-free: Authorization is redacted
+  body         Json
+  createdAt    DateTime @default(now())
+
+  connection ToconlineConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  document   Document            @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([connectionId, createdAt])
+  @@index([documentId])
 }

@@ -51,6 +51,10 @@ export type DocumentStatus =
 
 export type JobStatus = 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'RETRYING'
 
+// TOConline integration v1 (spec PT: ATIVA|ERRO|DESLIGADA / PENDENTE|ENVIADO|ERRO)
+export type ToconlineConnectionStatus = 'ACTIVE' | 'ERROR' | 'DISABLED'
+export type ToconlinePushStatus = 'PENDING' | 'SENT' | 'ERROR'
+
 // ─────────────────────────────────────────
 // Email Provider Domain Types
 // ─────────────────────────────────────────

@@ -35,8 +35,19 @@ export type AuthzAction =
   | 'portal:document:read'
   | 'portal:document:upload'
   | 'assistant:query'
+  | 'toconline:read'
+  | 'toconline:manage'
+  | 'toconline:goLive'
 
-const READ_ACTIONS: AuthzAction[] = ['client:read', 'email:read', 'document:read', 'bank:read']
+const READ_ACTIONS: AuthzAction[] = [
+  'client:read',
+  'email:read',
+  'document:read',
+  'bank:read',
+  // TOConline integration v1: connection status + dry-run previews are readable
+  // by every internal role; changing anything requires toconline:manage
+  'toconline:read',
+]
 
 const INTERNAL_ACTIONS: AuthzAction[] = [
   ...READ_ACTIONS,
@@ -61,9 +72,19 @@ const INTERNAL_ACTIONS: AuthzAction[] = [
   'bank:import',
   'bank:reconcile',
   'bankRule:manage',
+  // TOConline integration v1: connect/edit/push are OWNER+ACCOUNTANT;
+  // disabling dry-run (toconline:goLive) is OWNER-only — the integration was
+  // never tested against the real API, so going live is an owner decision.
+  'toconline:manage',
+  'toconline:goLive',
 ]
 
-const OWNER_ONLY: AuthzAction[] = ['invitation:manage', 'user:manage', 'settings:manage']
+const OWNER_ONLY: AuthzAction[] = [
+  'invitation:manage',
+  'user:manage',
+  'settings:manage',
+  'toconline:goLive',
+]
 
 // Portal do cliente final (fase P1): CLIENT sees ONLY the portal surface, scoped
 // to their own clientId at the route/service layer. Internal roles never use the
