@@ -56,6 +56,8 @@ declare module 'next-auth' {
       image?: string | null
       officeId: string | null
       role: UserRole
+      /** Set only for portal users (role CLIENT) — fase P1. */
+      clientId: string | null
     }
   }
 }

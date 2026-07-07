@@ -5,6 +5,7 @@ interface DbUserLike {
   id: string
   officeId: string
   role: UserRole
+  clientId?: string | null
   email: string
   name?: string | null
   image?: string | null
@@ -28,6 +29,7 @@ export function enrichSession(
     image: user.image ?? null,
     officeId: user.officeId,
     role: user.role,
+    clientId: user.clientId ?? null,
   }
   return enriched
 }

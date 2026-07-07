@@ -35,8 +35,10 @@ export default async function InvitationsPage() {
     )
   }
 
+  // Team invitations only — portal (CLIENT) invitations are managed on the
+  // client page ("Acessos do portal", fase P3)
   const invitations = await prisma.invitation.findMany({
-    where: { officeId },
+    where: { officeId, role: { not: 'CLIENT' } },
     orderBy: { createdAt: 'desc' },
     take: 100,
     select: {
@@ -53,7 +55,8 @@ export default async function InvitationsPage() {
   const items: InvitationDTO[] = invitations.map((inv) => ({
     id: inv.id,
     email: inv.email,
-    role: inv.role,
+    // CLIENT is excluded by the query above — the narrowing cast is safe
+    role: inv.role as InvitationDTO['role'],
     createdAt: inv.createdAt.toLocaleDateString('pt-PT'),
     expiresAt: inv.expiresAt.toLocaleDateString('pt-PT'),
     state: invitationState(inv),

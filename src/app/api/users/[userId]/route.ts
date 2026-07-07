@@ -92,6 +92,15 @@ export async function PATCH(
     return NextResponse.json({ error: 'Utilizador não encontrado' }, { status: 404 })
   }
 
+  // Fase P1 (anti-escalada): o role de um acesso de portal nunca muda — um
+  // CLIENT nunca se torna user interno; revogar/reconvidar é o único caminho
+  if (target.role === 'CLIENT') {
+    return NextResponse.json(
+      { error: 'Não é possível alterar o perfil de um acesso de portal' },
+      { status: 409 },
+    )
+  }
+
   const isDemotion = target.role === 'OWNER' && parsed.data.role !== 'OWNER'
   if (isDemotion && (await isLastOwner(userId, gate.user.officeId))) {
     return NextResponse.json(

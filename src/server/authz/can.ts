@@ -22,6 +22,7 @@ export type AuthzAction =
   | 'document:review'
   | 'document:upload'
   | 'invitation:manage'
+  | 'clientInvitation:manage'
   | 'user:manage'
   | 'export:run'
   | 'settings:manage'
@@ -31,10 +32,12 @@ export type AuthzAction =
   | 'bank:import'
   | 'bank:reconcile'
   | 'bankRule:manage'
+  | 'portal:document:read'
+  | 'portal:document:upload'
 
 const READ_ACTIONS: AuthzAction[] = ['client:read', 'email:read', 'document:read', 'bank:read']
 
-const ALL_ACTIONS: AuthzAction[] = [
+const INTERNAL_ACTIONS: AuthzAction[] = [
   ...READ_ACTIONS,
   'client:create',
   'client:update',
@@ -44,6 +47,9 @@ const ALL_ACTIONS: AuthzAction[] = [
   'document:review',
   'document:upload',
   'invitation:manage',
+  // Portal access invitations (fase P1): OWNER and ACCOUNTANT may invite CLIENT
+  // users — deliberately NOT under the OWNER-only invitation:manage umbrella
+  'clientInvitation:manage',
   'user:manage',
   'export:run',
   'settings:manage',
@@ -58,10 +64,18 @@ const ALL_ACTIONS: AuthzAction[] = [
 
 const OWNER_ONLY: AuthzAction[] = ['invitation:manage', 'user:manage', 'settings:manage']
 
+// Portal do cliente final (fase P1): CLIENT sees ONLY the portal surface, scoped
+// to their own clientId at the route/service layer. Internal roles never use the
+// portal API — symmetric isolation. Granting internal document:read/upload to
+// CLIENT would open /api/documents, /api/documents/import and /api/attachments
+// (internal DTOs), so the portal capabilities are dedicated actions.
+const PORTAL_ACTIONS: AuthzAction[] = ['portal:document:read', 'portal:document:upload']
+
 const MATRIX: Record<UserRole, ReadonlySet<AuthzAction>> = {
-  OWNER: new Set(ALL_ACTIONS),
-  ACCOUNTANT: new Set(ALL_ACTIONS.filter((a) => !OWNER_ONLY.includes(a))),
+  OWNER: new Set(INTERNAL_ACTIONS),
+  ACCOUNTANT: new Set(INTERNAL_ACTIONS.filter((a) => !OWNER_ONLY.includes(a))),
   VIEWER: new Set(READ_ACTIONS),
+  CLIENT: new Set(PORTAL_ACTIONS),
 }
 
 export function can(role: UserRole | null | undefined, action: AuthzAction): boolean {

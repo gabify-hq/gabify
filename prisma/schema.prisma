@@ -17,6 +17,7 @@ enum UserRole {
   OWNER       // gabinete owner, full access
   ACCOUNTANT  // standard accountant
   VIEWER      // read-only
+  CLIENT      // portal user of one end-client — zero internal access (fase P1)
 }
 
 enum EmailProvider {
@@ -177,6 +178,9 @@ model User {
   email         String    @unique
   name          String?
   role          UserRole  @default(ACCOUNTANT)
+  // Portal do cliente final (fase P1): required when role=CLIENT, forbidden
+  // otherwise — CHECK constraint "User_client_role_check" (raw SQL migration)
+  clientId      String?
   image         String?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -186,6 +190,7 @@ model User {
   emailVerified DateTime?
 
   office        Office        @relation(fields: [officeId], references: [id], onDelete: Restrict)
+  client        Client?       @relation("ClientPortalUsers", fields: [clientId], references: [id], onDelete: Restrict)
   accounts      Account[]
   sessions      Session[]
   emailReviews     EmailReview[]
@@ -197,6 +202,7 @@ model User {
   @@index([officeId])
   @@index([email])
   @@index([deletedAt])
+  @@index([clientId])
 }
 
 // ─────────────────────────────────────────
@@ -243,6 +249,9 @@ model Invitation {
   officeId        String
   email           String    // stored lowercase
   role            UserRole
+  // Portal invitations (fase P1): required when role=CLIENT, forbidden
+  // otherwise — CHECK constraint "Invitation_client_role_check"
+  clientId        String?
   tokenHash       String    @unique // SHA-256 of the raw token (raw token only in the email)
   expiresAt       DateTime  // 72h from creation/resend
   acceptedAt      DateTime?
@@ -251,10 +260,12 @@ model Invitation {
   createdAt       DateTime  @default(now())
 
   office    Office @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  client    Client? @relation("ClientPortalInvitations", fields: [clientId], references: [id], onDelete: Cascade)
   invitedBy User   @relation("InvitationInviter", fields: [invitedByUserId], references: [id])
 
   @@index([officeId, email])
   @@index([email])
+  @@index([clientId])
 }
 
 model VerificationToken {
@@ -299,6 +310,8 @@ model Client {
   ingestAliases ClientIngestAlias[]
   bankAccounts BankAccount[]
   bankRuleTargets BankRule[] @relation("BankRuleTargetClient")
+  portalUsers       User[]       @relation("ClientPortalUsers")
+  portalInvitations Invitation[] @relation("ClientPortalInvitations")
 
   @@index([officeId])
   @@index([deletedAt])

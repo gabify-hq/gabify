@@ -80,6 +80,26 @@ export function checkUploadRateLimit(userId: string, officeId: string): RateLimi
   )
 }
 
+/**
+ * Portal users (role CLIENT, fase P1): tighter per-minute limits — external
+ * users inside the system. General API 30/min; uploads 10/min.
+ */
+export function checkClientApiRateLimit(userId: string): RateLimitResult {
+  return checkRateLimit(
+    `client-api:${userId}`,
+    envLimit('RATE_LIMIT_CLIENT_API_PER_MIN', 30),
+    MINUTE_MS,
+  )
+}
+
+export function checkClientUploadRateLimit(userId: string): RateLimitResult {
+  return checkRateLimit(
+    `client-upload:${userId}`,
+    envLimit('RATE_LIMIT_CLIENT_UPLOAD_PER_MIN', 10),
+    MINUTE_MS,
+  )
+}
+
 /** Dedicated ingest address: per address, 100/hour (A5 + A11). */
 export function checkIngestRateLimit(ingestAddress: string): RateLimitResult {
   return checkRateLimit(

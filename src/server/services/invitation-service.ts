@@ -10,10 +10,18 @@ const ROLE_RANK: Record<UserRole, number> = {
   OWNER: 3,
   ACCOUNTANT: 2,
   VIEWER: 1,
+  CLIENT: 0,
 }
 
 export class InvitationError extends Error {
-  readonly code: 'EMAIL_ALREADY_REGISTERED' | 'ROLE_ESCALATION' | 'NOT_FOUND' | 'NOT_PENDING'
+  readonly code:
+    | 'EMAIL_ALREADY_REGISTERED'
+    | 'ROLE_ESCALATION'
+    | 'NOT_FOUND'
+    | 'NOT_PENDING'
+    | 'CLIENT_ID_REQUIRED'
+    | 'CLIENT_ID_FORBIDDEN'
+    | 'CLIENT_NOT_FOUND'
 
   constructor(code: InvitationError['code'], message: string) {
     super(message)
@@ -69,8 +77,28 @@ export async function createInvitation(params: {
   email: string
   role: UserRole
   invitedByUserId: string
+  /** Required when role=CLIENT (portal — fase P1), forbidden otherwise. */
+  clientId?: string | null
 }): Promise<{ invitation: Invitation; token: string }> {
   const email = params.email.toLowerCase()
+  const clientId = params.clientId ?? null
+
+  // Fase P1: a CLIENT invitation is bound to exactly one end-client of THIS
+  // office; any other role must not carry a clientId (mirrors the DB CHECKs)
+  if (params.role === 'CLIENT') {
+    if (!clientId) {
+      throw new InvitationError('CLIENT_ID_REQUIRED', 'Convite de portal exige o cliente associado')
+    }
+    const client = await prisma.client.findFirst({
+      where: { id: clientId, officeId: params.officeId, deletedAt: null },
+      select: { id: true },
+    })
+    if (!client) {
+      throw new InvitationError('CLIENT_NOT_FOUND', 'Cliente não encontrado')
+    }
+  } else if (clientId) {
+    throw new InvitationError('CLIENT_ID_FORBIDDEN', 'Só convites de portal têm cliente associado')
+  }
 
   const existingUser = await prisma.user.findFirst({
     where: { email, deletedAt: null },
@@ -100,6 +128,7 @@ export async function createInvitation(params: {
       officeId: params.officeId,
       email,
       role: params.role,
+      clientId,
       tokenHash,
       expiresAt: new Date(Date.now() + INVITATION_TTL_MS),
       invitedByUserId: params.invitedByUserId,
@@ -230,6 +259,8 @@ export async function acceptInvitationForEmail(params: {
   }
 
   return prisma.$transaction(async (tx) => {
+    // Anti-escalation (P1, defence in depth over A2): role and clientId come
+    // EXCLUSIVELY from the invitation row — acceptance can never change them
     const user = await tx.user.create({
       data: {
         email,
@@ -238,6 +269,7 @@ export async function acceptInvitationForEmail(params: {
         emailVerified: params.emailVerified ?? null,
         officeId: invitation.officeId,
         role: invitation.role,
+        clientId: invitation.clientId,
       },
     })
 

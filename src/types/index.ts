@@ -1,7 +1,7 @@
 // Gabify — Global TypeScript Types
 // Mirror of Prisma enums + domain types
 
-export type UserRole = 'OWNER' | 'ACCOUNTANT' | 'VIEWER'
+export type UserRole = 'OWNER' | 'ACCOUNTANT' | 'VIEWER' | 'CLIENT'
 
 export type EmailProvider = 'OUTLOOK' | 'GMAIL' | 'IMAP'
 
