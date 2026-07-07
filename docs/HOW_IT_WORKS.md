@@ -168,6 +168,17 @@ what would be sent, to check line by line. Only the firm's owner can switch a
 client to real sending, and Gabify asks for explicit confirmation before doing
 so. Every send is logged.
 
+**Importing issued invoices (early access too):** the same connection can also
+work the other way — Gabify periodically imports the invoices the client
+issues in TOConline, so their sales paperwork appears in your review queue
+automatically, already exact to the cent (the numbers come straight from
+TOConline, no AI guessing involved). Each invoice is imported exactly once,
+with its PDF attached, and anything Gabify itself sent to TOConline is never
+re-imported. You control the two directions independently on the client's
+"Ligações" panel — import on, sending off, or any combination — and a
+"Sincronizar agora" button fetches new invoices on demand. In test mode,
+imports show you a preview of what would be created instead of creating it.
+
 ## Coming soon
 
 ### Deadline Tracker

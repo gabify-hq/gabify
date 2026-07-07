@@ -30,6 +30,16 @@ markdown divergem, prevalece a mais completa e a leitura mais conservadora
 | `POST {API_URL}/api/v1/commercial_purchases_documents` (payload plano: `document_type`, `date`, `supplier_id`, `due_date`, `retention_total`, `external_reference`, `lines[]`) — cria cabeçalho+linhas e **finaliza automaticamente** | `docs/apis_compras_documentos-de-compra.md` (payload completo); spec `criarCabeAlhoDeDocumentosDeCompra` |
 | `GET {API_URL}/api/commercial_purchases_documents?filter[status]=1&filter[supplier_tax_registration_number]=<NIF>` (verificação de idempotência) | `docs/apis_versoes-anteriores_compras_documentos-de-compra.md` §2 ("Em alternativa pode realizado um filtro… usando o estado do documento e número de registro fiscal do fornecedor"); spec documenta os 3 filtros (`document_no`, `status`, `supplier_tax_registration_number`) |
 
+### Endpoints de LEITURA (slice de pull de faturas emitidas)
+
+| Pedido | Fonte |
+|---|---|
+| `GET {API_URL}/api/commercial_sales_documents?filter[status]=1&page[size]=50&page[number]=N` | rota + `filter[status]` no spec guardado; paginação `page[size]` em `docs/caracteristicas-dos-pedidos.md` (+ padrão JSONAPI, referenciado pela doc de autenticação §3 → jsonapi.org) |
+| filtro incremental `filter=documents.updated_at>'YYYY-MM-DD'::date` | mecanismo genérico documentado em `docs/caracteristicas-dos-pedidos.md` (exemplo com `document_lines.created_at>'2022-01-01'::date` e mapa de prefixos `commercial_sales_documents → documents`); `updated_at` existe na resposta documentada |
+| Atributos da resposta (document_no, date, due_date, gross_total, vat_incidence_{ise,red,int,nor}, vat_total_*, vat_percentage_*, retention_value, customer_business_name, customer_tax_registration_number, external_reference, …) | exemplo completo de resposta em `docs/apis_versoes-anteriores_vendas_documentos-de-venda.md` (FT 2023/3) |
+| `GET {API_URL}/api/commercial_sales_documents/{id}/lines` | rota no spec; atributos das linhas na tabela "Atualizar Linha…" da página v0 ("equivalente à que é obtida após criação ou obtenção") |
+| `GET {API_URL}/api/url_for_print/{salesDocumentId}?filter[type]=Document&filter[copies]=1` → `{scheme, host, path}` → download em `scheme://host/path` | `docs/apis_vendas_descarregar-pdf-de-documentos-de-venda.md` + exemplo de resposta no spec; só documentos finalizados (status=1) |
+
 Headers obrigatórios em todos os pedidos à API (não ao OAuth):
 `Content-Type: application/vnd.api+json`, `Accept: application/json`,
 `Authorization: Bearer <access_token>` — `docs/caracteristicas-dos-pedidos.md`.
@@ -90,6 +100,27 @@ Estados de documento de compra (doc v0): `0` = não finalizado, `1` = finalizado
     assume TD por omissão. Escolher TI automaticamente seria interpretação
     fiscal — fica visível no preview para o contabilista confirmar. A rever com
     contabilista na validação humana.
+13. **Ordenação/incremental no pull** — a doc NÃO garante ordenação da lista de
+    documentos de venda nem um filtro de data dedicado. Decisão: cada pull
+    pagina a lista finalizada completa (`page[size]=50`, cap de 200 páginas) e
+    a correção vem SEMPRE do dedup por id (ToconlineEntityMap SALES_DOCUMENT);
+    quando há `lastPullAt`, aplica-se o filtro genérico documentado
+    (`filter=documents.updated_at>'…'::date`, granularidade de dia) com
+    sobreposição de 24h — apenas como otimização de custo. `lastPullAt` só
+    avança quando o pull termina sem erro (falha → re-scan completo barato).
+14. **Bandas de IVA do pull** — construídas a partir dos campos por taxa do
+    cabeçalho documentado (`vat_incidence_{ise,red,int,nor}` +
+    `vat_total_*` + `vat_percentage_*`); banda `ise` entra com taxa 0. As
+    linhas (`/lines`) são um extra best-effort para `documentLines` — falha na
+    leitura de linhas nunca falha a importação.
+15. **PDF do pull** — documentado (`url_for_print` + link público
+    "transferência imediata", sem Bearer). Falha no PDF → documento importado
+    SEM ficheiro (best effort, sem retry dedicado); registado no documento
+    apenas quando o upload ao R2 sucede.
+16. **Anti-eco** — vendas com `external_reference` a começar por `GABIFY:` são
+    pushes nossos e nunca criam Document. Nota: o push cria COMPRAS e o pull lê
+    VENDAS, portanto o eco direto nem devia ocorrer — a guarda existe como
+    defesa em profundidade (e o seletor de push também recusa `API_PULL`).
 
 ## Arquitetura (resumo)
 
@@ -138,3 +169,27 @@ de cliente) com licença GC ativa.
    confirmar o erro claro (não suportado v1).
 10. **Rever ambiguidades 1, 3, 4 e 6 acima** contra o comportamento real e corrigir
     este ficheiro + testes/mocks com as respostas reais observadas.
+
+### Extensão do checklist — pull de faturas emitidas
+
+11. **Preparar** — na MESMA empresa de teste, emitir 2–3 faturas de venda (FT)
+    finalizadas com taxas diferentes (23% e 6%).
+12. **Ativar pull em dry-run** — na ficha do cliente → Ligações → ligar o toggle
+    "Fonte — importar faturas emitidas" (dry-run ainda ativo) → "Sincronizar
+    agora" → conferir as pré-visualizações (números, datas, cliente final, NIF,
+    bandas de IVA ao cêntimo) SEM documentos criados.
+13. **Pull real** — desligar o dry-run (OWNER) → "Sincronizar agora" → verificar
+    que entram exatamente as 2–3 faturas, uma vez cada, com estado
+    Pré-validado, origem API_PULL, PDF anexado, e que a fila de revisão as
+    mostra sem passar pela IA.
+14. **Importação única** — "Sincronizar agora" outra vez → confirmar ZERO novos
+    (contagem importada inalterada).
+15. **Ciclo automático** — emitir UMA fatura nova no TOConline → esperar o ciclo
+    do scan (default 30 min, `TOCONLINE_PULL_INTERVAL_MS`) → confirmar que entra
+    uma e UMA só.
+16. **Anti-eco real** — fazer 1 push de compra (checklist principal) e correr um
+    pull a seguir → confirmar que o documento enviado NÃO reaparece como
+    importado.
+17. **Rever ambiguidades 13–15** contra o comportamento real (aceitação do
+    filtro `documents.updated_at`, paginação, PDF) e corrigir este ficheiro +
+    mocks.

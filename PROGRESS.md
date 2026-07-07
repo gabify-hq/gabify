@@ -283,3 +283,28 @@ por módulos inexistentes + 1 por função inexistente): `tests/acceptance/tocon
 - Execução no diretório principal (staging estava limpo — sem worktree; precedente de contenção verificado antes).
 
 **Fim da integração TOConline v1: `npm run gate` verde — 478 testes (49 ficheiros), tsc 0 erros, eslint 0 erros, thresholds mantidos. Estado: IMPLEMENTADO / NÃO TESTADO CONTRA API REAL.**
+
+## Extensão TOConline — pull de faturas emitidas + Ligações (branch `feature/toconline-pull`, 2026-07-07)
+
+Doc de vendas guardada verbatim ANTES de código (`apis_vendas_*`, `apis_versoes-anteriores_vendas_*` — exemplo completo de resposta FT 2023/3 com os campos por taxa `vat_incidence_*`/`vat_total_*`/`vat_percentage_*`; PDF documentado em `url_for_print`).
+
+### RED pull (2026-07-07)
+
+3 ficheiros — **RED confirmado antes de implementar** (2 import-level + opção readOnly inexistente): `toconline.pull.test.ts` (9), `toconline.ligacoes.test.ts` (6), readOnly no `toconline-client.test.ts`. Loop de negação CLIENT +2 rotas.
+
+| Slice | Estado | RED | Gate |
+|---|---|---|---|
+| S1 Schema (DocumentSource.API_PULL em migração isolada, Document.buyerName, pullEnabled/pushEnabled/lastPullAt/lastPullCursor, clientId sem unique global + UNIQUE PARCIAL de destino único, EntityMap nif→externalKey RENAME, PushPreview.documentId nullable) — migrações `20260707000008`/`…09` | DONE | ✅ | ✅ |
+| S2 RED [INV] (anti-eco, dedup, cêntimos 23%+6%, IA nunca, dry-run lê-mas-não-escreve dos dois lados, cross-tenant, token expirado, 409 destino único, toggles independentes, EMITIDA/API_PULL fora do push) | DONE | ✅ 3/3 | — |
+| S3 Pull service (paginação documentada + filtro updated_at::date com 24h de sobreposição como otimização, dedup EntityMap, mapeamento puro em cêntimos, PDF best-effort→R2, dry-run→previews PULL, lastPullAt só em sucesso) + client readOnly + queue toconline-pull repeatable (env 30 min) + PATCH capabilities (409) + POST pull + UI Ligações (toggles switches, última sync, contagem, Sincronizar agora) | DONE | ✅ | ✅ |
+
+### Decisões pull (latitude / ambiguidades — detalhe em INTEGRATION_NOTES.md #13–16)
+
+- Ordenação não documentada → scan paginado completo com correção por dedup; filtro de data documentado só como otimização; lastPullAt não avança em falha.
+- vatBreakdown do cabeçalho documentado (banda ise = taxa 0); linhas best-effort para documentLines.
+- Faturas emitidas importadas: buyerName/buyerNif = cliente final (semântica QR: supplier = emitente, que aqui é a própria empresa → null).
+- Anti-eco como defesa em profundidade (push cria COMPRAS, pull lê VENDAS) + `API_PULL` recusado na elegibilidade de push.
+- Destino único: índice parcial `ON (clientId) WHERE pushEnabled` + 409 com mensagem clara na rota; N fontes permitidas; abstração genérica de fontes ADIADA para o Moloni (só UI + constraint, como pedido).
+- Scan repeatable enfileira 1 job por ligação ativa; runs agendados auditam com userId null (sistema).
+
+**Fim da extensão de pull: `npm run gate` verde — 497 testes (51 ficheiros), tsc 0 erros, eslint 0 erros, thresholds mantidos. Estado: IMPLEMENTADO / NÃO TESTADO CONTRA API REAL.**

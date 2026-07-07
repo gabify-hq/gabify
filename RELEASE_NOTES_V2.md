@@ -146,3 +146,30 @@ Nenhum teste `[INV]` foi apagado, skipado ou enfraquecido.
 **Fora de âmbito respeitado:** vendas/emissão, plano de contas, pull de dados (exceto lookups de fornecedor), outros ERPs (interface `ExportTarget` pronta: `FileExportTarget` + `ToconlineExportTarget`).
 
 Nenhum teste `[INV]` foi apagado, skipado ou enfraquecido.
+
+### Extensão TOConline — pull de faturas emitidas + Ligações (2026-07-07, branch `feature/toconline-pull`)
+
+> Mesmo estado do módulo base: **IMPLEMENTADO / NÃO TESTADO CONTRA API REAL** (doc-driven; checklist humano estendido em `INTEGRATION_NOTES.md`).
+
+| AC | Resultado | Notas |
+|---|---|---|
+| TP.a [INV anti-eco] (external_reference GABIFY: nunca cria Document) | PASS (contra mock da doc) | + defesa em profundidade: API_PULL recusado no push |
+| TP.b [INV dedup] (2.º pull → zero novos; EntityMap SALES_DOCUMENT unique) | PASS (contra mock da doc) | |
+| TP.c [INV cêntimos] (23%+6% da fixture da doc → vatBreakdown/documentLines exatos ao cêntimo, EMITIDA/API_PULL/PRE_VALIDATED/confiança 1.0) | PASS (contra mock da doc) | campos por taxa do cabeçalho documentado |
+| TP.d [INV] (IA nunca invocada para API_PULL — proxy que rebenta + zero jobs de parse) | PASS | |
+| TP.e [INV dry-run] (GET permitido, nada criado, escrita IMPOSSÍVEL — probe read-only + client readOnly; preview do que seria criado) | PASS | |
+| TP.f [INV] (token expirado → refresh → retoma sem duplicar) | PASS (contra mock da doc) | |
+| TP.g (PDF via url_for_print anexado ao R2; falha → importa sem PDF) | PASS (contra mock da doc) | |
+| TP.h/i (pull desligado/DISABLED recusam sem rede; JobLog + lastPullAt só em sucesso) | PASS | |
+| TL.a [INV] (2.ª ligação com push ativo → 409 claro + UNIQUE PARCIAL na BD) | PASS | destino único por cliente; fontes N |
+| TL.b (toggles pull/push independentes persistem) | PASS | |
+| TL.c [INV] (cross-tenant 404 nas rotas novas; loop de negação CLIENT +2) | PASS | |
+| TL.d (Sincronizar agora enfileira; exige pullEnabled → 422) | PASS | |
+| TL.e/f [INV] (EMITIDA/API_PULL nunca no seletor de push; pushEnabled=false → 422) | PASS | |
+| readOnly (escrita bloqueada ANTES da rede em dry-run) | PASS | |
+
+**Env nova:** `TOCONLINE_PULL_INTERVAL_MS` (default 1800000 — scan repeatable de 30 min). **Deploy:** `npm run worker:toconline` passou a entry combinado (push + pull + scan) — continua FORA do railway.toml até validação humana.
+
+**Fora de âmbito respeitado:** pull de compras/recibos, webhooks, outros ERPs, abstração de fontes genérica (adiada para o Moloni).
+
+Nenhum teste `[INV]` foi apagado, skipado ou enfraquecido.
