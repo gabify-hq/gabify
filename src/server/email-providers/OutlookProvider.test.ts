@@ -1,12 +1,13 @@
-import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
+﻿import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
 import type { EmailAccount } from '@prisma/client'
 
-// ── Mocks (must be before any import that resolves them) ────────────────────
+// â”€â”€ Mocks (must be before any import that resolves them) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-vi.mock('@/lib/prisma', () => ({
-  prisma: {
+vi.mock('@/lib/prisma', () => {
+  const prisma = {
     emailAccount: {
       update: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
     },
     inboundEmail: {
       findUnique: vi.fn(),
@@ -17,21 +18,25 @@ vi.mock('@/lib/prisma', () => ({
       findFirst: vi.fn(),
       create: vi.fn(),
     },
-  },
-}))
+    // token-refresh (F2.6): interactive tx + advisory lock â€” passthrough in unit tests
+    $transaction: vi.fn(),
+    $queryRaw: vi.fn(),
+  }
+  return { prisma }
+})
 
 vi.mock('@/lib/crypto', () => ({
   encryptToken: vi.fn((s: string) => `enc:${s}`),
   decryptToken: vi.fn((s: string) => s.replace('enc:', '')),
 }))
 
-// ── Imports (after mocks) ───────────────────────────────────────────────────
+// â”€â”€ Imports (after mocks) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 import { OutlookProvider } from './OutlookProvider'
 import { prisma } from '@/lib/prisma'
 import { encryptToken, decryptToken } from '@/lib/crypto'
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
+// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function makeAccount(overrides: Partial<EmailAccount> = {}): EmailAccount {
   return {
@@ -86,7 +91,7 @@ function makeFetchResponse(body: unknown, status = 200): Response {
   } as unknown as Response
 }
 
-// ── Tests ────────────────────────────────────────────────────────────────────
+// â”€â”€ Tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('OutlookProvider', () => {
   let fetchMock: ReturnType<typeof vi.fn>
@@ -112,6 +117,15 @@ describe('OutlookProvider', () => {
     vi.mocked(prisma.emailThread.create).mockResolvedValue({ id: 'thread-db-1' } as never)
     vi.mocked(prisma.emailAccount.update).mockResolvedValue({} as never)
     vi.mocked(prisma.inboundEmail.updateMany).mockResolvedValue({ count: 1 })
+
+    // token-refresh (F2.6) reads the account from the DB and locks inside a tx
+    vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockImplementation(
+      (async () => makeAccount()) as never,
+    )
+    vi.mocked(prisma.$transaction).mockImplementation(
+      (async (fn: (tx: unknown) => unknown) => fn(prisma)) as never,
+    )
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([] as never)
   })
 
   afterEach(() => {
@@ -123,7 +137,7 @@ describe('OutlookProvider', () => {
     delete process.env.TOKEN_ENCRYPTION_KEY
   })
 
-  // ── refreshTokenIfNeeded (via syncInbox) ──────────────────────────────────
+  // â”€â”€ refreshTokenIfNeeded (via syncInbox) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   describe('token refresh', () => {
     it('uses existing access token when not expiring soon', async () => {
@@ -131,6 +145,7 @@ describe('OutlookProvider', () => {
         outlookTokenExpiry: new Date(Date.now() + 60 * 60 * 1000),
       })
       const provider = new OutlookProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock.mockResolvedValueOnce(
         makeFetchResponse({
@@ -152,6 +167,7 @@ describe('OutlookProvider', () => {
         outlookTokenExpiry: new Date(Date.now() + 4 * 60 * 1000), // 4 min left
       })
       const provider = new OutlookProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       // First call = token refresh, second = delta query
       fetchMock
@@ -189,6 +205,7 @@ describe('OutlookProvider', () => {
     it('refreshes token when outlookTokenExpiry is null', async () => {
       const account = makeAccount({ outlookTokenExpiry: null })
       const provider = new OutlookProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock
         .mockResolvedValueOnce(
@@ -217,6 +234,7 @@ describe('OutlookProvider', () => {
         outlookTokenExpiry: new Date(Date.now() - 1000),
       })
       const provider = new OutlookProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       await expect(provider.syncInbox()).rejects.toThrow('no refresh token available')
     })
@@ -227,6 +245,7 @@ describe('OutlookProvider', () => {
         outlookTokenExpiry: new Date(Date.now() - 1000),
       })
       const provider = new OutlookProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       await expect(provider.syncInbox()).rejects.toThrow(
         'MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET environment variables are required'
@@ -238,6 +257,7 @@ describe('OutlookProvider', () => {
         outlookTokenExpiry: new Date(Date.now() - 1000),
       })
       const provider = new OutlookProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock.mockResolvedValueOnce(makeFetchResponse({}, 401))
 
@@ -250,6 +270,7 @@ describe('OutlookProvider', () => {
         outlookRefreshToken: 'enc:old-refresh-token',
       })
       const provider = new OutlookProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock
         .mockResolvedValueOnce(
@@ -274,12 +295,13 @@ describe('OutlookProvider', () => {
     })
   })
 
-  // ── syncInbox ─────────────────────────────────────────────────────────────
+  // â”€â”€ syncInbox â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   describe('syncInbox', () => {
     it('performs initial delta sync when no deltaLink is stored', async () => {
       const account = makeAccount({ deltaLink: null })
       const provider = new OutlookProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock.mockResolvedValueOnce(
         makeFetchResponse({
@@ -301,6 +323,7 @@ describe('OutlookProvider', () => {
     it('uses stored deltaLink for incremental sync', async () => {
       const account = makeAccount({ deltaLink: 'existing-token' })
       const provider = new OutlookProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock.mockResolvedValueOnce(
         makeFetchResponse({
@@ -318,6 +341,7 @@ describe('OutlookProvider', () => {
     it('paginates through @odata.nextLink until deltaLink appears', async () => {
       const account = makeAccount()
       const provider = new OutlookProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock
         .mockResolvedValueOnce(
@@ -343,6 +367,7 @@ describe('OutlookProvider', () => {
     it('counts existing messages as updated', async () => {
       const account = makeAccount()
       const provider = new OutlookProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       vi.mocked(prisma.inboundEmail.findUnique).mockResolvedValue({ id: 'existing' } as never)
 
@@ -362,6 +387,7 @@ describe('OutlookProvider', () => {
     it('stores updated deltaLink in the database', async () => {
       const account = makeAccount()
       const provider = new OutlookProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock.mockResolvedValueOnce(
         makeFetchResponse({
@@ -381,6 +407,7 @@ describe('OutlookProvider', () => {
     it('creates EmailThread for messages with a new conversationId', async () => {
       const account = makeAccount()
       const provider = new OutlookProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       vi.mocked(prisma.emailThread.findFirst).mockResolvedValue(null)
 
@@ -403,6 +430,7 @@ describe('OutlookProvider', () => {
     it('reuses existing EmailThread for a known conversationId', async () => {
       const account = makeAccount()
       const provider = new OutlookProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       vi.mocked(prisma.emailThread.findFirst).mockResolvedValue({ id: 'existing-thread' } as never)
 
@@ -421,6 +449,7 @@ describe('OutlookProvider', () => {
     it('handles messages without optional fields gracefully', async () => {
       const account = makeAccount()
       const provider = new OutlookProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock.mockResolvedValueOnce(
         makeFetchResponse({
@@ -435,6 +464,7 @@ describe('OutlookProvider', () => {
     it('throws when Graph delta request fails', async () => {
       const account = makeAccount()
       const provider = new OutlookProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock.mockResolvedValueOnce(makeFetchResponse({}, 500))
 
@@ -444,6 +474,7 @@ describe('OutlookProvider', () => {
     it('returns zero counts and no deltaLink when response is empty', async () => {
       const account = makeAccount()
       const provider = new OutlookProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock.mockResolvedValueOnce(
         makeFetchResponse({
@@ -459,12 +490,13 @@ describe('OutlookProvider', () => {
     })
   })
 
-  // ── getAttachment ─────────────────────────────────────────────────────────
+  // â”€â”€ getAttachment â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   describe('getAttachment', () => {
     it('returns a Buffer from the Graph attachment endpoint', async () => {
       const account = makeAccount()
       const provider = new OutlookProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       const fakeBuffer = new ArrayBuffer(16)
       fetchMock.mockResolvedValueOnce({
@@ -483,6 +515,7 @@ describe('OutlookProvider', () => {
     it('calls the correct Graph endpoint', async () => {
       const account = makeAccount()
       const provider = new OutlookProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock.mockResolvedValueOnce({
         ok: true,
@@ -501,6 +534,7 @@ describe('OutlookProvider', () => {
     it('throws when the Graph request fails', async () => {
       const account = makeAccount()
       const provider = new OutlookProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock.mockResolvedValueOnce(makeFetchResponse({}, 403))
 
@@ -510,12 +544,13 @@ describe('OutlookProvider', () => {
     })
   })
 
-  // ── sendReply ─────────────────────────────────────────────────────────────
+  // â”€â”€ sendReply â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   describe('sendReply', () => {
     it('posts reply to Graph and updates InboundEmail status to PROCESSED', async () => {
       const account = makeAccount()
       const provider = new OutlookProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock.mockResolvedValueOnce(makeFetchResponse(null, 202))
 
@@ -538,6 +573,7 @@ describe('OutlookProvider', () => {
     it('throws when Graph reply request fails', async () => {
       const account = makeAccount()
       const provider = new OutlookProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock.mockResolvedValueOnce(makeFetchResponse({}, 400))
 
@@ -549,6 +585,7 @@ describe('OutlookProvider', () => {
     it('does not update DB status when Graph call fails', async () => {
       const account = makeAccount()
       const provider = new OutlookProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock.mockResolvedValueOnce(makeFetchResponse({}, 500))
 
@@ -557,12 +594,13 @@ describe('OutlookProvider', () => {
     })
   })
 
-  // ── watchChanges ──────────────────────────────────────────────────────────
+  // â”€â”€ watchChanges â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   describe('watchChanges', () => {
     it('creates a Graph subscription and returns WatchResult', async () => {
       const account = makeAccount()
       const provider = new OutlookProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       const expiresAt = new Date(Date.now() + 4230 * 60 * 1000).toISOString()
       fetchMock.mockResolvedValueOnce(
@@ -579,6 +617,7 @@ describe('OutlookProvider', () => {
     it('sends correct subscription payload', async () => {
       const account = makeAccount()
       const provider = new OutlookProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock.mockResolvedValueOnce(
         makeFetchResponse({
@@ -602,6 +641,7 @@ describe('OutlookProvider', () => {
       delete process.env.GRAPH_WEBHOOK_SECRET
       const account = makeAccount()
       const provider = new OutlookProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       await expect(provider.watchChanges('https://example.com')).rejects.toThrow(
         'GRAPH_WEBHOOK_SECRET environment variable is not set'
@@ -611,6 +651,7 @@ describe('OutlookProvider', () => {
     it('throws when Graph subscription request fails', async () => {
       const account = makeAccount()
       const provider = new OutlookProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock.mockResolvedValueOnce(makeFetchResponse({}, 400))
 
@@ -620,7 +661,7 @@ describe('OutlookProvider', () => {
     })
   })
 
-  // ── encryptToken / decryptToken integration ───────────────────────────────
+  // â”€â”€ encryptToken / decryptToken integration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   describe('token encryption integration', () => {
     it('encrypts tokens before storing in the database on refresh', async () => {
@@ -628,6 +669,7 @@ describe('OutlookProvider', () => {
         outlookTokenExpiry: new Date(Date.now() - 1000),
       })
       const provider = new OutlookProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock
         .mockResolvedValueOnce(
@@ -660,6 +702,7 @@ describe('OutlookProvider', () => {
         outlookTokenExpiry: new Date(Date.now() + 60 * 60 * 1000),
       })
       const provider = new OutlookProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock.mockResolvedValueOnce(
         makeFetchResponse({

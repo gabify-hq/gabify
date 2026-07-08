@@ -40,6 +40,10 @@ export function ReviewQueue({ items }: { items: ReviewItemDTO[] }) {
   const [busyId, setBusyId] = useState<string | null>(null)
   const [bulkBusy, setBulkBusy] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  // Reject needs explicit confirmation (audit F3.9) — and stays undoable after
+  const [confirmRejectId, setConfirmRejectId] = useState<string | null>(null)
+  const [undoDocId, setUndoDocId] = useState<string | null>(null)
+  const [undoBusy, setUndoBusy] = useState(false)
 
   async function decide(item: ReviewItemDTO, decision: 'validate' | 'reject'): Promise<void> {
     setBusyId(item.id)
@@ -57,12 +61,34 @@ export function ReviewQueue({ items }: { items: ReviewItemDTO[] }) {
             ? 'Documento atualizado por outro utilizador — a lista foi recarregada.'
             : data?.error ?? 'Ocorreu um erro.'
         )
+      } else if (decision === 'reject') {
+        setUndoDocId(item.id)
       }
+      setConfirmRejectId(null)
       router.refresh()
     } catch {
       setErrorMessage('Sem ligação ao servidor. Tente novamente.')
     } finally {
       setBusyId(null)
+    }
+  }
+
+  async function undoReject(documentId: string): Promise<void> {
+    setUndoBusy(true)
+    setErrorMessage(null)
+    try {
+      const res = await fetch(`/api/documents/${documentId}/restore`, { method: 'POST' })
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        setErrorMessage(data?.error ?? 'Não foi possível anular a rejeição.')
+      } else {
+        setUndoDocId(null)
+      }
+      router.refresh()
+    } catch {
+      setErrorMessage('Sem ligação ao servidor. Tente novamente.')
+    } finally {
+      setUndoBusy(false)
     }
   }
 
@@ -121,6 +147,22 @@ export function ReviewQueue({ items }: { items: ReviewItemDTO[] }) {
         <p className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-[12px] text-red-600" role="alert">
           {errorMessage}
         </p>
+      )}
+
+      {undoDocId && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+          <span className="text-[12px] text-gray-600">
+            Documento rejeitado — saiu de todas as listas.
+          </span>
+          <button
+            onClick={() => undoReject(undoDocId)}
+            disabled={undoBusy}
+            className="pressable flex items-center gap-1 rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-[11px] font-bold text-gray-700 hover:border-gray-400 disabled:opacity-50"
+          >
+            {undoBusy && <Loader2 className="h-3 w-3 animate-spin" />}
+            Anular
+          </button>
+        </div>
       )}
 
       {preValidatedCount > 1 && (
@@ -182,31 +224,56 @@ export function ReviewQueue({ items }: { items: ReviewItemDTO[] }) {
               </p>
             </div>
 
-            <div className="flex shrink-0 items-center gap-1.5">
-              <button
-                onClick={() => preview(item.id)}
-                className="pressable rounded-lg p-2 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
-                title="Pré-visualizar"
-                aria-label={`Pré-visualizar ${item.filename}`}
-              >
-                <Eye className="h-4 w-4 stroke-[1.75]" />
-              </button>
-              <button
-                onClick={() => decide(item, 'validate')}
-                disabled={busyId !== null}
-                className="pressable flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-2 text-[12px] font-bold text-white shadow-sm transition-colors hover:bg-green-700 disabled:opacity-50"
-              >
-                {busyId === item.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5 stroke-[2.5]" />}
-                Validar
-              </button>
-              <button
-                onClick={() => decide(item, 'reject')}
-                disabled={busyId !== null}
-                className="pressable flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-semibold text-red-600 transition-colors hover:bg-red-100 disabled:opacity-50"
-              >
-                <X className="h-3.5 w-3.5 stroke-[2.5]" />
-                Rejeitar
-              </button>
+            <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+              {confirmRejectId === item.id ? (
+                <>
+                  <span className="text-[12px] font-semibold text-red-600">
+                    Rejeitar este documento?
+                  </span>
+                  <button
+                    onClick={() => decide(item, 'reject')}
+                    disabled={busyId !== null}
+                    className="pressable flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-2 text-[12px] font-bold text-white transition-colors hover:bg-red-700 disabled:opacity-50"
+                  >
+                    {busyId === item.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5 stroke-[2.5]" />}
+                    Confirmar
+                  </button>
+                  <button
+                    onClick={() => setConfirmRejectId(null)}
+                    disabled={busyId !== null}
+                    className="pressable rounded-lg border border-gray-200 px-3 py-2 text-[12px] font-semibold text-gray-500 transition-colors hover:border-gray-300 disabled:opacity-50"
+                  >
+                    Cancelar
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={() => preview(item.id)}
+                    className="pressable rounded-lg p-2 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
+                    title="Pré-visualizar"
+                    aria-label={`Pré-visualizar ${item.filename}`}
+                  >
+                    <Eye className="h-4 w-4 stroke-[1.75]" />
+                  </button>
+                  <button
+                    onClick={() => decide(item, 'validate')}
+                    disabled={busyId !== null}
+                    className="pressable flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-2 text-[12px] font-bold text-white shadow-sm transition-colors hover:bg-green-700 disabled:opacity-50"
+                  >
+                    {busyId === item.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5 stroke-[2.5]" />}
+                    Validar
+                  </button>
+                  <button
+                    onClick={() => setConfirmRejectId(item.id)}
+                    disabled={busyId !== null}
+                    className="pressable flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-semibold text-red-600 transition-colors hover:bg-red-100 disabled:opacity-50"
+                  >
+                    <X className="h-3.5 w-3.5 stroke-[2.5]" />
+                    Rejeitar
+                  </button>
+                </>
+              )}
             </div>
           </li>
         ))}

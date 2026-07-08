@@ -2,11 +2,10 @@ import Link from 'next/link'
 import { FileText, FileSpreadsheet } from 'lucide-react'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { listOfficeDocuments } from '@/server/services/document-service'
 import { DocumentTable } from '@/components/dashboard/document-table'
 import { UploadDocuments } from '@/components/dashboard/upload-documents'
-import { DOCUMENT_TYPE_LABELS } from '@/lib/document-types'
 import type { DocumentDTO } from '@/server/dto'
-import type { DocumentType } from '@/types'
 
 export default async function DocumentsPage() {
   const session = await auth()
@@ -20,76 +19,30 @@ export default async function DocumentsPage() {
       })
     : []
 
-  const dbDocuments = officeId
-    ? await prisma.document.findMany({
-        where: {
-          attachment: {
-            inboundEmail: {
-              emailAccount: { officeId },
-            },
-          },
-        },
-        orderBy: { createdAt: 'desc' },
-        take: 200,
-        select: {
-          id: true,
-          type: true,
-          status: true,
-          confidence: true,
-          r2Key: true,
-          extractedDate: true,
-          extractedAmount: true,
-          extractedVATNumber: true,
-          classificationSource: true,
-          createdAt: true,
-          clientId: true,
-          client: { select: { name: true } },
-          attachment: {
-            select: {
-              filename: true,
-            },
-          },
-        },
-      })
-    : []
+  // Every intake source (EMAIL, MANUAL_UPLOAD, IMPORT, PORTAL_UPLOAD, API_PULL)
+  // — office-scoped directly, never via the email-attachment chain (audit F1.2)
+  const rows = officeId ? await listOfficeDocuments(officeId) : []
 
-  // Map DB records to the shape DocumentTable expects
-  const documents: DocumentDTO[] = dbDocuments.map((doc) => {
-    const type = (doc.type ?? 'OTHER') as DocumentType
-    const confidence = doc.confidence ?? 0
-
-    // Derive period from extractedDate or createdAt
+  const documents: DocumentDTO[] = rows.map((doc) => {
     const dateRef = doc.extractedDate ?? doc.createdAt
-    const period = dateRef
-      ? `${String(dateRef.getMonth() + 1).padStart(2, '0')}/${dateRef.getFullYear()}`
-      : '-'
-
-    // Map DB status to the 3 display states the table knows
-    const status: DocumentDTO['status'] =
-      doc.status === 'CLASSIFIED'
-        ? 'CLASSIFIED'
-        : doc.status === 'NEEDS_REVIEW' || doc.status === 'PENDING_CLASSIFICATION'
-          ? 'NEEDS_REVIEW'
-          : 'REVIEWED'
-
     return {
       id: doc.id,
       clientId: doc.clientId ?? '',
-      clientName: doc.client?.name ?? 'Sem cliente',
-      filename: doc.attachment?.filename ?? doc.id,
-      type,
-      typeLabel: DOCUMENT_TYPE_LABELS[type] ?? type,
-      confidence,
-      status,
-      extractedDate: doc.extractedDate
-        ? doc.extractedDate.toLocaleDateString('pt-PT')
-        : null,
-      extractedAmount: doc.extractedAmount ?? null,
-      extractedVATNumber: doc.extractedVATNumber ?? null,
+      clientName: doc.clientName ?? 'Sem cliente',
+      filename: doc.filename,
+      type: doc.type,
+      typeLabel: doc.typeLabel,
+      confidence: doc.confidence,
+      status: doc.status,
+      source: doc.source,
+      sourceLabel: doc.sourceLabel,
+      extractedDate: doc.extractedDate ? doc.extractedDate.toLocaleDateString('pt-PT') : null,
+      extractedAmount: doc.extractedAmount,
+      extractedVATNumber: doc.extractedVATNumber,
       r2Key: doc.r2Key ?? '',
       createdAt: doc.createdAt,
-      period,
-      classificationSource: doc.classificationSource ?? null,
+      period: `${String(dateRef.getMonth() + 1).padStart(2, '0')}/${dateRef.getFullYear()}`,
+      classificationSource: doc.classificationSource,
     }
   })
 

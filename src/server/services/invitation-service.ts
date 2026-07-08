@@ -156,6 +156,38 @@ export async function createInvitation(params: {
   return { invitation, token }
 }
 
+/**
+ * Exact state of an invitation token — powers the /accept-invite page (audit F1.1).
+ * `validateInvitationToken` stays as the strict pending-only check; this variant
+ * distinguishes WHY a token is not usable so the UI can say it in pt-PT.
+ */
+export type InvitationTokenInspection =
+  | { state: 'valid'; invitation: Invitation; officeName: string }
+  | { state: 'expired'; invitation: Invitation; officeName: string }
+  | { state: 'revoked'; invitation: Invitation; officeName: string }
+  | { state: 'accepted'; invitation: Invitation }
+  | { state: 'invalid' }
+
+export async function inspectInvitationToken(token: string): Promise<InvitationTokenInspection> {
+  if (!token) return { state: 'invalid' }
+  const invitation = await prisma.invitation.findUnique({
+    where: { tokenHash: hashToken(token) },
+  })
+  if (!invitation) return { state: 'invalid' }
+
+  if (invitation.acceptedAt) return { state: 'accepted', invitation }
+
+  const office = await prisma.office.findUniqueOrThrow({
+    where: { id: invitation.officeId },
+    select: { name: true },
+  })
+  if (invitation.revokedAt) return { state: 'revoked', invitation, officeName: office.name }
+  if (invitation.expiresAt <= new Date()) {
+    return { state: 'expired', invitation, officeName: office.name }
+  }
+  return { state: 'valid', invitation, officeName: office.name }
+}
+
 /** Returns the invitation for a raw token if (and only if) it is still pending. */
 export async function validateInvitationToken(token: string): Promise<Invitation | null> {
   const invitation = await prisma.invitation.findUnique({

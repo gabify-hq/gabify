@@ -9,17 +9,20 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
-import { DOCUMENT_TYPE_LABELS } from '@/lib/document-types'
-import type { DocumentType } from '@/types'
+import { DOCUMENT_TYPE_LABELS, DOCUMENT_STATUS_LABELS } from '@/lib/document-types'
+import type { DocumentType, DocumentStatus } from '@/types'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface TimelineDocument {
   id: string
   type: string
-  status: 'CLASSIFIED' | 'NEEDS_REVIEW' | 'REVIEWED'
+  /** REAL lifecycle state (audit F1.2) — never collapsed into 3 buckets. */
+  status: DocumentStatus
   confidence: number
   filename: string
+  /** Intake source label (pt-PT): Email, Carregado, Portal do cliente… */
+  sourceLabel: string
   extractedDate: string | null
   extractedAmount: number | null
   extractedVATNumber: string | null
@@ -136,6 +139,11 @@ function PeriodSection({ period, defaultOpen }: { period: TimelinePeriod; defaul
                 {doc.filename}
               </span>
 
+              {/* Intake source */}
+              <span className="hidden shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-400 sm:inline">
+                {doc.sourceLabel}
+              </span>
+
               {/* Amount */}
               {doc.extractedAmount != null && (
                 <span className="data shrink-0 text-[12px] font-semibold text-gray-700">
@@ -148,11 +156,21 @@ function PeriodSection({ period, defaultOpen }: { period: TimelinePeriod; defaul
                 {Math.round(doc.confidence * 100)}%
               </span>
 
-              {/* Status dot */}
-              <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', {
-                'bg-green-400': doc.status === 'CLASSIFIED' || doc.status === 'REVIEWED',
-                'bg-amber-400': doc.status === 'NEEDS_REVIEW',
-              })} />
+              {/* Status dot — real lifecycle state */}
+              <span
+                title={DOCUMENT_STATUS_LABELS[doc.status] ?? doc.status}
+                className={cn('h-1.5 w-1.5 shrink-0 rounded-full', {
+                  'bg-amber-400':
+                    doc.status === 'NEEDS_REVIEW' || doc.status === 'PRE_VALIDATED',
+                  'bg-green-400':
+                    doc.status === 'VALIDATED' ||
+                    doc.status === 'EXPORTED' ||
+                    doc.status === 'CLASSIFIED' ||
+                    doc.status === 'REVIEWED',
+                  'bg-blue-400': doc.status === 'PENDING_CLASSIFICATION',
+                  'bg-gray-300': doc.status === 'SPLIT',
+                })}
+              />
 
               {/* Actions */}
               <div className="flex shrink-0 items-center gap-0.5">
@@ -196,13 +214,18 @@ function PeriodSection({ period, defaultOpen }: { period: TimelinePeriod; defaul
                 <dd className="font-semibold text-gray-800">{typeLabel(preview.type)}</dd>
                 <dt className="text-gray-400">Estado</dt>
                 <dd className={cn('font-semibold', {
-                  'text-green-600': preview.status !== 'NEEDS_REVIEW',
-                  'text-amber-600': preview.status === 'NEEDS_REVIEW',
+                  'text-amber-600':
+                    preview.status === 'NEEDS_REVIEW' || preview.status === 'PRE_VALIDATED',
+                  'text-blue-600': preview.status === 'PENDING_CLASSIFICATION',
+                  'text-green-600':
+                    preview.status !== 'NEEDS_REVIEW' &&
+                    preview.status !== 'PRE_VALIDATED' &&
+                    preview.status !== 'PENDING_CLASSIFICATION',
                 })}>
-                  {preview.status === 'CLASSIFIED' ? 'Classificado'
-                    : preview.status === 'REVIEWED' ? 'Confirmado'
-                    : 'Para rever'}
+                  {DOCUMENT_STATUS_LABELS[preview.status] ?? preview.status}
                 </dd>
+                <dt className="text-gray-400">Origem</dt>
+                <dd className="font-semibold text-gray-800">{preview.sourceLabel}</dd>
                 {preview.extractedDate && (
                   <>
                     <dt className="text-gray-400">Data doc.</dt>

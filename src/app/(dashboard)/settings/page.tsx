@@ -1,4 +1,4 @@
-import Link from 'next/link'
+﻿import Link from 'next/link'
 import { Settings, Mail, Unlink, Plus, CheckCircle2, AlertCircle } from 'lucide-react'
 import { StatusBadge } from '@/components/dashboard/status-badge'
 import { Button } from '@/components/ui/button'
@@ -74,7 +74,7 @@ const providerCards: ProviderCardDef[] = [
   {
     provider: 'OUTLOOK',
     name: 'Microsoft Outlook',
-    description: 'Sincronização via Microsoft Graph API. Recomendado para gabinetes portugueses.',
+    description: 'SincronizaÃ§Ã£o via Microsoft Graph API. Recomendado para gabinetes portugueses.',
     initial: 'O',
     initialBg: 'bg-blue-50 text-blue-600',
     connectHref: '/api/auth/outlook/initiate',
@@ -82,7 +82,7 @@ const providerCards: ProviderCardDef[] = [
   {
     provider: 'GMAIL',
     name: 'Gmail',
-    description: 'Sincronização via Gmail API com Pub/Sub push notifications.',
+    description: 'SincronizaÃ§Ã£o via Gmail API com Pub/Sub push notifications.',
     initial: 'G',
     initialBg: 'bg-red-50 text-red-600',
     connectHref: '/api/auth/google/initiate',
@@ -90,7 +90,7 @@ const providerCards: ProviderCardDef[] = [
   {
     provider: 'IMAP',
     name: 'IMAP',
-    description: 'Compatível com qualquer servidor de email. Polling a cada 5 minutos.',
+    description: 'CompatÃ­vel com qualquer servidor de email. Polling a cada 5 minutos.',
     initial: 'I',
     initialBg: 'bg-gray-100 text-gray-500',
     connectHref: null,
@@ -107,12 +107,12 @@ const successMessages: Record<string, string> = {
 }
 
 const errorMessages: Record<string, string> = {
-  gmail_auth_failed:         'Não foi possível ligar a conta Gmail. Tente novamente.',
-  gmail_auth_invalid_state:  'Pedido de autenticação inválido. Tente novamente.',
-  outlook_auth_failed:       'Não foi possível ligar a conta Outlook. Tente novamente.',
-  outlook_auth_denied:       'Autorização recusada. Tente novamente.',
-  outlook_auth_invalid_state:'Pedido de autenticação inválido. Tente novamente.',
-  outlook_not_configured:    'Outlook não configurado. Adicione MICROSOFT_CLIENT_ID ao servidor.',
+  gmail_auth_failed:         'NÃ£o foi possÃ­vel ligar a conta Gmail. Tente novamente.',
+  gmail_auth_invalid_state:  'Pedido de autenticaÃ§Ã£o invÃ¡lido. Tente novamente.',
+  outlook_auth_failed:       'NÃ£o foi possÃ­vel ligar a conta Outlook. Tente novamente.',
+  outlook_auth_denied:       'AutorizaÃ§Ã£o recusada. Tente novamente.',
+  outlook_auth_invalid_state:'Pedido de autenticaÃ§Ã£o invÃ¡lido. Tente novamente.',
+  outlook_not_configured:    'Outlook nÃ£o configurado. Adicione MICROSOFT_CLIENT_ID ao servidor.',
 }
 
 // ---------------------------------------------------------------------------
@@ -151,7 +151,7 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
       <div className="flex items-center justify-between border-b border-gray-200 bg-white px-5 py-3.5">
         <div className="flex items-center gap-2.5">
           <Settings className="h-4 w-4 stroke-[1.75] text-gray-400" />
-          <h1 className="text-[14px] font-bold text-gray-900">Definições</h1>
+          <h1 className="text-[14px] font-bold text-gray-900">DefiniÃ§Ãµes</h1>
         </div>
         <div className="flex items-center gap-2">
           {(session?.user?.role === 'OWNER' || session?.user?.role === 'ACCOUNTANT') && (
@@ -159,7 +159,7 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
               href="/settings/bank-rules"
               className="pressable rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-semibold text-gray-600 transition-colors hover:border-gray-300"
             >
-              Regras bancárias
+              Regras bancÃ¡rias
             </Link>
           )}
           {session?.user?.role === 'OWNER' && (
@@ -168,6 +168,14 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
               className="pressable rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-semibold text-gray-600 transition-colors hover:border-gray-300"
             >
               Convites da equipa
+            </Link>
+          )}
+          {session?.user?.role === 'OWNER' && (
+            <Link
+              href="/admin/jobs"
+              className="pressable rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-semibold text-gray-600 transition-colors hover:border-gray-300"
+            >
+              Execuções de tarefas
             </Link>
           )}
         </div>
@@ -206,7 +214,7 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-gray-100 bg-gray-50">
-                      {['Email', 'Fornecedor', 'Estado', 'Última actualização', 'Ações'].map((h) => (
+                      {['Email', 'Fornecedor', 'Estado', 'Ãšltima actualizaÃ§Ã£o', 'AÃ§Ãµes'].map((h) => (
                         <th
                           key={h}
                           className="px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider text-gray-400"
@@ -242,7 +250,7 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
                         <td className="px-4 py-3">
                           <span className="data text-[12px] text-gray-500">
                             {formatDate(account.updatedAt)}{' '}
-                            <span className="text-gray-400">às</span>{' '}
+                            <span className="text-gray-400">Ã s</span>{' '}
                             {formatTime(account.updatedAt)}
                           </span>
                         </td>
@@ -266,7 +274,7 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
                 <Mail className="mb-3 h-8 w-8 stroke-[1] text-gray-300" />
                 <p className="text-[13px] font-semibold text-gray-500">Nenhuma conta ligada</p>
                 <p className="mt-1 text-[12px] text-gray-400">
-                  Liga uma conta de email para começar a sincronizar mensagens.
+                  Liga uma conta de email para comeÃ§ar a sincronizar mensagens.
                 </p>
               </div>
             )}

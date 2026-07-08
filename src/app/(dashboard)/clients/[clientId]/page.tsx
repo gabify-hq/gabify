@@ -4,7 +4,7 @@ import { ChevronLeft, Mail, Phone, Building2, Hash, Pencil } from 'lucide-react'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { can } from '@/server/authz/can'
-import { DOCUMENT_TYPE_LABELS } from '@/lib/document-types'
+import { listClientDocuments } from '@/server/services/document-service'
 import { EditClientDialog } from '@/components/dashboard/edit-client-dialog'
 import { ClientDocumentTimeline } from '@/components/dashboard/client-document-timeline'
 import type { TimelineDocument, TimelinePeriod } from '@/components/dashboard/client-document-timeline'
@@ -77,59 +77,33 @@ export default async function ClientPage({ params }: ClientPageProps) {
   })
   if (!client) notFound()
 
-  // Fetch documents for this client (scoped via emailAccount → officeId)
-  const dbDocs = await prisma.document.findMany({
-    where: {
-      clientId,
-      attachment: { inboundEmail: { emailAccount: { officeId } } },
-    },
-    orderBy: { createdAt: 'desc' },
-    take: 500,
-    select: {
-      id: true,
-      type: true,
-      status: true,
-      confidence: true,
-      r2Key: true,
-      extractedDate: true,
-      extractedAmount: true,
-      extractedVATNumber: true,
-      classificationSource: true,
-      createdAt: true,
-      attachment: { select: { filename: true } },
-    },
-  })
+  // Every intake source, scoped by Document.officeId directly (audit F1.2) —
+  // the legacy attachment→inboundEmail filter hid uploads/imports/pulls
+  const rows = await listClientDocuments(officeId, clientId)
 
-  // Map to timeline docs
-  const docs: TimelineDocument[] = dbDocs.map((doc) => {
-    const type = (doc.type ?? 'OTHER') as DocumentType
-    const status: TimelineDocument['status'] =
-      doc.status === 'CLASSIFIED' ? 'CLASSIFIED'
-      : doc.status === 'REVIEWED'  ? 'REVIEWED'
-      : 'NEEDS_REVIEW'
-
-    return {
-      id: doc.id,
-      type,
-      status,
-      confidence: doc.confidence ?? 0,
-      filename: doc.attachment?.filename ?? doc.id,
-      extractedDate: doc.extractedDate
-        ? doc.extractedDate.toLocaleDateString('pt-PT')
-        : null,
-      extractedAmount: doc.extractedAmount ?? null,
-      extractedVATNumber: doc.extractedVATNumber ?? null,
-      r2Key: doc.r2Key ?? null,
-      classificationSource: doc.classificationSource ?? null,
-    }
-  })
+  // Map to timeline docs — REAL lifecycle state, never collapsed
+  const docs: TimelineDocument[] = rows.map((doc) => ({
+    id: doc.id,
+    type: (doc.type ?? 'OTHER') as DocumentType,
+    status: doc.status,
+    confidence: doc.confidence,
+    filename: doc.filename,
+    sourceLabel: doc.sourceLabel,
+    extractedDate: doc.extractedDate
+      ? doc.extractedDate.toLocaleDateString('pt-PT')
+      : null,
+    extractedAmount: doc.extractedAmount,
+    extractedVATNumber: doc.extractedVATNumber,
+    r2Key: doc.r2Key,
+    classificationSource: doc.classificationSource,
+  }))
 
   // Group by period, sort periods newest-first
+  const rowById = new Map(rows.map((r) => [r.id, r]))
   const periodMap = new Map<string, TimelineDocument[]>()
   for (const doc of docs) {
-    const key = getPeriodKey(
-      dbDocs.find((d) => d.id === doc.id)!
-    )
+    const row = rowById.get(doc.id)!
+    const key = getPeriodKey({ extractedDate: row.extractedDate, createdAt: row.createdAt })
     if (!periodMap.has(key)) periodMap.set(key, [])
     periodMap.get(key)!.push(doc)
   }

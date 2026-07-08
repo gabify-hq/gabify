@@ -14,8 +14,17 @@ import type { Document, Prisma } from '@prisma/client'
  * traceability so re-exports are auditable.
  */
 
-const CSV_HEADER =
-  'data;tipo_documento;numero;fornecedor;nif_fornecedor;cliente;conta_sugerida;descricao;base_isenta;base_6;iva_6;base_13;iva_13;base_23;iva_23;retencao;total;moeda;ficheiro'
+const CSV_BASE_COLUMNS = [
+  'data', 'tipo_documento', 'numero', 'fornecedor', 'nif_fornecedor', 'cliente',
+  'conta_sugerida', 'descricao',
+] as const
+const CSV_PT_BAND_COLUMNS = [
+  'base_isenta', 'base_6', 'iva_6', 'base_13', 'iva_13', 'base_23', 'iva_23',
+] as const
+const CSV_TAIL_COLUMNS = ['retencao', 'total', 'moeda', 'ficheiro'] as const
+
+/** Continental rates with fixed columns; every other (region, rate) pair gets dynamic columns. */
+const PT_FIXED_RATES = new Set([0, 6, 13, 23])
 
 interface VatBand {
   region?: string
@@ -28,6 +37,24 @@ function ptMoney(cents: number): string {
   const euros = Math.trunc(Math.abs(cents) / 100)
   const rest = String(Math.abs(cents) % 100).padStart(2, '0')
   return `${cents < 0 ? '-' : ''}${euros},${rest}`
+}
+
+/** RFC 4180 escaping (audit F3.11 — A-1): `;`, `"` or newlines force quoting. */
+function csvField(value: string): string {
+  if (/[;"\n\r]/.test(value)) {
+    return `"${value.replace(/"/g, '""')}"`
+  }
+  return value
+}
+
+/** Column suffix for a non-continental band: PT-AC 16 → "ac_16". */
+function bandColumnKey(band: VatBand): string {
+  const region = (band.region ?? 'PT').toLowerCase().replace(/^pt-?/, '') || 'pt'
+  return `${region}_${band.rate}`
+}
+
+function isFixedPtBand(band: VatBand): boolean {
+  return (band.region ?? 'PT') === 'PT' && PT_FIXED_RATES.has(band.rate)
 }
 
 function centsOfDecimal(value: Prisma.Decimal | null): number {
@@ -99,12 +126,29 @@ export async function runExport(params: {
   })
 
   const zip = new AdmZip()
+
+  // Dynamic columns for regional bands (Açores/Madeira — audit F3.11/A-2):
+  // money NEVER silently drops out of lancamentos.csv
+  const dynamicKeys = new Set<string>()
+  for (const doc of documents) {
+    for (const band of ((doc.vatBreakdown as unknown as VatBand[] | null) ?? [])) {
+      if (!isFixedPtBand(band)) dynamicKeys.add(bandColumnKey(band))
+    }
+  }
+  const dynamicColumns = [...dynamicKeys].sort().flatMap((key) => [`base_${key}`, `iva_${key}`])
+
+  const csvHeader = [
+    ...CSV_BASE_COLUMNS,
+    ...CSV_PT_BAND_COLUMNS,
+    ...dynamicColumns,
+    ...CSV_TAIL_COLUMNS,
+  ].join(';')
   const csvLines: string[] = [
     '# formato: pt-PT; separador ;; decimal ,',
-    CSV_HEADER,
+    csvHeader,
   ]
   const xlsxRows: Array<Record<string, string | number>> = []
-  const vatTotals = new Map<number, { baseCents: number; vatCents: number }>()
+  const vatTotals = new Map<string, { region: string; rate: number; baseCents: number; vatCents: number }>()
 
   for (const doc of documents) {
     const clientName = doc.client?.name ?? 'Sem cliente'
@@ -132,35 +176,45 @@ export async function runExport(params: {
     const dataStr = doc.issueDate ? formatDatePt(doc.issueDate) : ''
 
     const emit = (band: VatBand | null, isLast: boolean) => {
-      const cols = {
-        base_isenta: band && band.rate === 0 ? band.baseCents : 0,
-        base_6: band && band.rate === 6 ? band.baseCents : 0,
-        iva_6: band && band.rate === 6 ? band.vatCents : 0,
-        base_13: band && band.rate === 13 ? band.baseCents : 0,
-        iva_13: band && band.rate === 13 ? band.vatCents : 0,
-        base_23: band && band.rate === 23 ? band.baseCents : 0,
-        iva_23: band && band.rate === 23 ? band.vatCents : 0,
+      const isFixed = band !== null && isFixedPtBand(band)
+      const fixedCols = {
+        base_isenta: isFixed && band!.rate === 0 ? band!.baseCents : 0,
+        base_6: isFixed && band!.rate === 6 ? band!.baseCents : 0,
+        iva_6: isFixed && band!.rate === 6 ? band!.vatCents : 0,
+        base_13: isFixed && band!.rate === 13 ? band!.baseCents : 0,
+        iva_13: isFixed && band!.rate === 13 ? band!.vatCents : 0,
+        base_23: isFixed && band!.rate === 23 ? band!.baseCents : 0,
+        iva_23: isFixed && band!.rate === 23 ? band!.vatCents : 0,
       }
+      // Regional bands land in their own columns — never silently zeroed (A-2)
+      const dynamicCols = new Map<string, number>()
+      if (band !== null && !isFixed) {
+        const key = bandColumnKey(band)
+        dynamicCols.set(`base_${key}`, band.baseCents)
+        dynamicCols.set(`iva_${key}`, band.vatCents)
+      }
+
       const line = [
-        dataStr,
-        doc.type,
-        doc.documentNumber ?? '',
-        doc.supplierName ?? '',
-        doc.supplierNif ?? '',
-        clientName,
-        account,
-        doc.reasoning ?? '',
-        ptMoney(cols.base_isenta),
-        ptMoney(cols.base_6),
-        ptMoney(cols.iva_6),
-        ptMoney(cols.base_13),
-        ptMoney(cols.iva_13),
-        ptMoney(cols.base_23),
-        ptMoney(cols.iva_23),
+        csvField(dataStr),
+        csvField(doc.type),
+        csvField(doc.documentNumber ?? ''),
+        csvField(doc.supplierName ?? ''),
+        csvField(doc.supplierNif ?? ''),
+        csvField(clientName),
+        csvField(account),
+        csvField(doc.reasoning ?? ''),
+        ptMoney(fixedCols.base_isenta),
+        ptMoney(fixedCols.base_6),
+        ptMoney(fixedCols.iva_6),
+        ptMoney(fixedCols.base_13),
+        ptMoney(fixedCols.iva_13),
+        ptMoney(fixedCols.base_23),
+        ptMoney(fixedCols.iva_23),
+        ...dynamicColumns.map((col) => ptMoney(dynamicCols.get(col) ?? 0)),
         ptMoney(isLast ? withholdingCents : 0),
         ptMoney(isLast ? totalCents : 0),
-        doc.currency,
-        zipPath,
+        csvField(doc.currency),
+        csvField(zipPath),
       ].join(';')
       csvLines.push(line)
       xlsxRows.push({
@@ -171,13 +225,16 @@ export async function runExport(params: {
         nif_fornecedor: doc.supplierNif ?? '',
         cliente: clientName,
         conta_sugerida: account,
-        base_isenta: cols.base_isenta / 100,
-        base_6: cols.base_6 / 100,
-        iva_6: cols.iva_6 / 100,
-        base_13: cols.base_13 / 100,
-        iva_13: cols.iva_13 / 100,
-        base_23: cols.base_23 / 100,
-        iva_23: cols.iva_23 / 100,
+        base_isenta: fixedCols.base_isenta / 100,
+        base_6: fixedCols.base_6 / 100,
+        iva_6: fixedCols.iva_6 / 100,
+        base_13: fixedCols.base_13 / 100,
+        iva_13: fixedCols.iva_13 / 100,
+        base_23: fixedCols.base_23 / 100,
+        iva_23: fixedCols.iva_23 / 100,
+        ...Object.fromEntries(
+          dynamicColumns.map((col) => [col, (dynamicCols.get(col) ?? 0) / 100]),
+        ),
         retencao: (isLast ? withholdingCents : 0) / 100,
         total: (isLast ? totalCents : 0) / 100,
         moeda: doc.currency,
@@ -191,18 +248,23 @@ export async function runExport(params: {
       // One CSV line per VAT band (A9/AC-6.2.a); withholding/total on the last
       bands.forEach((band, i) => emit(band, i === bands.length - 1))
       for (const band of bands) {
-        const agg = vatTotals.get(band.rate) ?? { baseCents: 0, vatCents: 0 }
+        const region = band.region ?? 'PT'
+        const key = `${region}|${band.rate}`
+        const agg = vatTotals.get(key) ?? { region, rate: band.rate, baseCents: 0, vatCents: 0 }
         agg.baseCents += band.baseCents
         agg.vatCents += band.vatCents
-        vatTotals.set(band.rate, agg)
+        vatTotals.set(key, agg)
       }
     }
   }
 
-  // resumo_iva.csv — sums per rate, computed in integer cents (A1)
-  const resumoLines = ['# formato: pt-PT; separador ;; decimal ,', 'taxa;base;iva']
-  for (const [rate, agg] of [...vatTotals.entries()].sort((a, b) => a[0] - b[0])) {
-    resumoLines.push(`${rate};${ptMoney(agg.baseCents)};${ptMoney(agg.vatCents)}`)
+  // resumo_iva.csv — sums per (region, rate), computed in integer cents (A1)
+  const resumoLines = ['# formato: pt-PT; separador ;; decimal ,', 'regiao;taxa;base;iva']
+  const sortedTotals = [...vatTotals.values()].sort(
+    (a, b) => a.region.localeCompare(b.region) || a.rate - b.rate,
+  )
+  for (const agg of sortedTotals) {
+    resumoLines.push(`${agg.region};${agg.rate};${ptMoney(agg.baseCents)};${ptMoney(agg.vatCents)}`)
   }
 
   const BOM = Buffer.from([0xef, 0xbb, 0xbf])

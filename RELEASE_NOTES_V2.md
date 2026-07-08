@@ -214,3 +214,25 @@ O que é criado: 3 utilizadores (OWNER/ACCOUNTANT/VIEWER), 3 clientes (serviços
 | SD.d [INV] NIFs fictícios passam checksum | PASS |
 | SD.e [INV] Σbases+ΣIVA−retenção=total ao cêntimo em todos os docs | PASS |
 | SD.f banco: 5 conciliados / sugestões variadas c/ autoMatch / 6 limpos / 1 ignorado por regra | PASS |
+
+## Slice pós-auditoria (2026-07-08, branch `feature/audit-fixes`)
+
+Correção dos CRÍTICOS e paredes de adoção de REVIEW_ISSUES.md / UX_CONTABILISTA.md.
+TDD RED→GREEN por item, gate verde por fase (F1/F2/F3), commits atómicos.
+
+| Slice | Estado | RED | Gate |
+|---|---|---|---|
+| F1.1 /accept-invite (C-1) | DONE | ✅ 7 testes | ✅ |
+| F1.2 documentos de todas as origens (C-2) | DONE | ✅ 5 testes | ✅ |
+| F1.3 UI de export como job (C-3) | DONE | ✅ 4 testes | ✅ |
+| F1.4 shell mobile + breakdown legível (UX J0/J4) | DONE | ✅ suite RED | ✅ gate F1 |
+| F2.5 Gmail nextPageToken + fallback 404 (C-4/C-5) | DONE | ✅ 4 testes | ✅ |
+| F2.6 refresh OAuth serializado (advisory lock) (A-3) | DONE | ✅ 3 testes | ✅ |
+| F2.7 rascunho AI retryável (A-6) | DONE | ✅ 2 testes | ✅ gate F2 |
+| F3.8 rotas+UI resolveDuplicate/approveSplit (A-11) | DONE | ✅ | ✅ |
+| F3.9 rejeitar com confirmação+undo (/restore) (M-1) | DONE | ✅ | ✅ |
+| F3.10 conciliação manual por pesquisa (/candidates) | DONE | ✅ | ✅ |
+| F3.11 CSV RFC 4180 + taxas regiões autónomas (A-1/A-2) | DONE | ✅ | ✅ |
+| F3.12 /admin/jobs OWNER-only lê JobLog (A-5 mínimo) | DONE | ✅ | ✅ gate F3 |
+
+Fora do slice: MÉDIO/BAIXO + ALTOs não listados → BACKLOG.md (triagem humana).

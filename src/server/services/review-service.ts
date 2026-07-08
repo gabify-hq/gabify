@@ -412,6 +412,55 @@ export async function reopenDocument(params: {
   return { ok: true, status: updated.status, version: updated.version }
 }
 
+/**
+ * Restores a rejected (soft-deleted) document (audit F3.9 — undo do Rejeitar).
+ * The previous status is untouched — reject never changed it, only deletedAt.
+ */
+export async function restoreDocument(params: {
+  documentId: string
+  officeId: string
+  userId: string
+  role: UserRole
+}): Promise<ReviewResult> {
+  if (!can(params.role, 'document:review')) {
+    return { ok: false, httpStatus: 404, error: 'Não encontrado' }
+  }
+
+  const won = await prisma.document.updateMany({
+    where: { id: params.documentId, officeId: params.officeId, deletedAt: { not: null } },
+    data: { deletedAt: null, version: { increment: 1 } },
+  })
+  if (won.count === 0) {
+    const exists = await prisma.document.findFirst({
+      where: { id: params.documentId, officeId: params.officeId },
+      select: { id: true },
+    })
+    if (!exists) return { ok: false, httpStatus: 404, error: 'Documento não encontrado' }
+    return { ok: false, httpStatus: 409, error: 'Documento não está rejeitado' }
+  }
+
+  const restored = await prisma.document.findUniqueOrThrow({ where: { id: params.documentId } })
+  await prisma.documentReview.create({
+    data: {
+      documentId: params.documentId,
+      reviewerId: params.userId,
+      decision: 'restore',
+      confirmedType: restored.type,
+    },
+  })
+  await prisma.auditLog.create({
+    data: {
+      officeId: params.officeId,
+      userId: params.userId,
+      action: 'DOCUMENT_RESTORED',
+      entityType: 'Document',
+      entityId: params.documentId,
+      metadata: { restoredToStatus: restored.status },
+    },
+  })
+  return { ok: true, status: restored.status, version: restored.version }
+}
+
 /** Duplicate resolution (AC-4.1.f): keep = archive as duplicate; delete = soft-delete; distinct = clear flag. */
 export async function resolveDuplicate(params: {
   documentId: string

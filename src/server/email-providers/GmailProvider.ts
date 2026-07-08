@@ -2,11 +2,23 @@ import type { EmailProvider } from './EmailProvider'
 import type { SyncResult, WatchResult, EmailDraft } from '@/types'
 import type { EmailAccount } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { encryptToken, decryptToken } from '@/lib/crypto'
+import { ensureFreshGmailToken } from './token-refresh'
 
 const GMAIL_BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
-const TOKEN_URL = 'https://oauth2.googleapis.com/token'
-const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000 // 5 minutes
+/** Cap for the full-sync rebuild — enough history without unbounded backfill. */
+const FULL_SYNC_MAX_MESSAGES = 200
+
+/** Gmail API error carrying the HTTP status — 404 on /history means the cursor expired. */
+export class GmailApiError extends Error {
+  constructor(
+    readonly status: number,
+    url: string,
+    statusText: string,
+  ) {
+    super(`GmailProvider: GET failed [${url}]: ${status} ${statusText}`)
+    this.name = 'GmailApiError'
+  }
+}
 
 /**
  * Shape of a Gmail message resource (abbreviated fields we use).
@@ -56,12 +68,6 @@ interface GmailWatchResponse {
   expiration: string
 }
 
-interface GmailTokenResponse {
-  access_token: string
-  refresh_token?: string
-  expires_in: number
-}
-
 /**
  * GmailProvider — Gmail API implementation.
  *
@@ -82,33 +88,58 @@ export class GmailProvider implements EmailProvider {
   async syncInbox(): Promise<SyncResult> {
     const token = await this.refreshTokenIfNeeded()
 
+    if (!this.account.historyId) {
+      return this.fullSync(token)
+    }
+
+    try {
+      return await this.incrementalSync(token, this.account.historyId)
+    } catch (error) {
+      // Gmail returns 404 when startHistoryId is older than its retention
+      // (~1 week). Never brick the account (audit F2.5/C-5): drop the cursor
+      // and rebuild the watermark with a full sync — next sync is incremental.
+      if (error instanceof GmailApiError && error.status === 404) {
+        console.warn(
+          `[gmail] historyId ${this.account.historyId} expired for account ${this.account.id} — falling back to full sync`
+        )
+        await prisma.emailAccount.update({
+          where: { id: this.account.id },
+          data: { historyId: null },
+        })
+        return this.fullSync(token)
+      }
+      throw error
+    }
+  }
+
+  /**
+   * Full sync: paginated INBOX listing (audit F2.5 — the old version read a
+   * single page of 50). The highest message historyId becomes the watermark.
+   */
+  private async fullSync(token: string): Promise<SyncResult> {
     let newMessages = 0
     let skippedUpdates = 0
     let finalHistoryId: string | null = null
+    let fetched = 0
+    let pageToken: string | undefined
 
-    if (!this.account.historyId) {
-      // Initial sync: fetch last 50 messages
-      const listUrl = `${GMAIL_BASE}/messages?labelIds=INBOX&maxResults=50`
+    do {
+      const listUrl =
+        `${GMAIL_BASE}/messages?labelIds=INBOX&maxResults=50` +
+        (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '')
       const listData = await this.gmailGet<GmailMessagesListResponse>(listUrl, token)
 
-      const messageRefs = listData.messages ?? []
-
-      for (const ref of messageRefs) {
+      for (const ref of listData.messages ?? []) {
         const message = await this.gmailGet<GmailMessage>(
           `${GMAIL_BASE}/messages/${ref.id}?format=full`,
           token
         )
-
         const result = await this.upsertMessage(message)
-        if (result === 'created') {
-          newMessages++
-        } else {
-          skippedUpdates++
-        }
+        if (result === 'created') newMessages++
+        else skippedUpdates++
+        fetched++
 
-        // Track the highest historyId across all messages so the next
-        // incremental sync starts from the true latest cursor, not just
-        // the first message's (potentially stale) historyId.
+        // Highest historyId across ALL messages — the true latest cursor
         if (
           message.historyId &&
           (!finalHistoryId || BigInt(message.historyId) > BigInt(finalHistoryId))
@@ -116,35 +147,64 @@ export class GmailProvider implements EmailProvider {
           finalHistoryId = message.historyId
         }
       }
-    } else {
-      // Incremental sync using historyId
-      const historyUrl = `${GMAIL_BASE}/history?startHistoryId=${encodeURIComponent(
-        this.account.historyId
-      )}&historyTypes=messageAdded&labelId=INBOX`
 
+      pageToken = listData.nextPageToken
+    } while (pageToken && fetched < FULL_SYNC_MAX_MESSAGES)
+
+    if (finalHistoryId) {
+      await prisma.emailAccount.update({
+        where: { id: this.account.id },
+        data: { historyId: finalHistoryId },
+      })
+    }
+
+    return {
+      provider: 'GMAIL',
+      emailAccountId: this.account.id,
+      messagesProcessed: newMessages + skippedUpdates,
+      newMessages,
+      errors: [],
+      historyId: finalHistoryId ?? undefined,
+    }
+  }
+
+  /**
+   * Incremental sync: follows nextPageToken until the history is exhausted
+   * and ONLY then persists the cursor (audit F2.5/C-4). A crash mid-way
+   * leaves the old cursor — the retry re-reads everything (upserts are
+   * idempotent); pages are never silently skipped.
+   */
+  private async incrementalSync(token: string, startHistoryId: string): Promise<SyncResult> {
+    let newMessages = 0
+    let skippedUpdates = 0
+    let finalHistoryId: string | null = null
+    let pageToken: string | undefined
+
+    do {
+      const historyUrl =
+        `${GMAIL_BASE}/history?startHistoryId=${encodeURIComponent(startHistoryId)}` +
+        `&historyTypes=messageAdded&labelId=INBOX` +
+        (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '')
       const historyData = await this.gmailGet<GmailHistoryResponse>(historyUrl, token)
 
-      finalHistoryId = historyData.historyId
+      finalHistoryId = historyData.historyId ?? finalHistoryId
 
-      const historyItems = historyData.history ?? []
-      for (const item of historyItems) {
-        const added = item.messagesAdded ?? []
-        for (const { message: ref } of added) {
+      for (const item of historyData.history ?? []) {
+        for (const { message: ref } of item.messagesAdded ?? []) {
           const message = await this.gmailGet<GmailMessage>(
             `${GMAIL_BASE}/messages/${ref.id}?format=full`,
             token
           )
-
           const result = await this.upsertMessage(message)
-          if (result === 'created') {
-            newMessages++
-          } else {
-            skippedUpdates++
-          }
+          if (result === 'created') newMessages++
+          else skippedUpdates++
         }
       }
-    }
 
+      pageToken = historyData.nextPageToken
+    } while (pageToken)
+
+    // Cursor advances only after every page was consumed
     if (finalHistoryId) {
       await prisma.emailAccount.update({
         where: { id: this.account.id },
@@ -291,65 +351,9 @@ export class GmailProvider implements EmailProvider {
 
   // ── Private helpers ─────────────────────────────────────────────────────────
 
+  /** Serialized per account via pg advisory lock (audit F2.6) — see token-refresh.ts. */
   private async refreshTokenIfNeeded(): Promise<string> {
-    const { gmailAccessToken, gmailRefreshToken, gmailTokenExpiry } = this.account
-
-    const isExpiringSoon =
-      !gmailTokenExpiry ||
-      gmailTokenExpiry.getTime() - Date.now() < TOKEN_REFRESH_BUFFER_MS
-
-    if (!isExpiringSoon && gmailAccessToken) {
-      return decryptToken(gmailAccessToken)
-    }
-
-    if (!gmailRefreshToken) {
-      throw new Error(
-        'GmailProvider: no refresh token available — re-authentication required'
-      )
-    }
-
-    const clientId = process.env.GOOGLE_CLIENT_ID
-    const clientSecret = process.env.GOOGLE_CLIENT_SECRET
-    if (!clientId || !clientSecret) {
-      throw new Error(
-        'GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables are required'
-      )
-    }
-
-    const params = new URLSearchParams({
-      grant_type: 'refresh_token',
-      client_id: clientId,
-      client_secret: clientSecret,
-      refresh_token: decryptToken(gmailRefreshToken),
-    })
-
-    const response = await fetch(TOKEN_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: params.toString(),
-    })
-
-    if (!response.ok) {
-      throw new Error(
-        `GmailProvider: token refresh failed: ${response.status} ${response.statusText}`
-      )
-    }
-
-    const tokenData = (await response.json()) as GmailTokenResponse
-    const newAccessToken = tokenData.access_token
-    const newRefreshToken = tokenData.refresh_token ?? decryptToken(gmailRefreshToken)
-    const newExpiry = new Date(Date.now() + tokenData.expires_in * 1000)
-
-    await prisma.emailAccount.update({
-      where: { id: this.account.id },
-      data: {
-        gmailAccessToken: encryptToken(newAccessToken),
-        gmailRefreshToken: encryptToken(newRefreshToken),
-        gmailTokenExpiry: newExpiry,
-      },
-    })
-
-    return newAccessToken
+    return ensureFreshGmailToken(this.account.id)
   }
 
   private async gmailGet<T>(url: string, token: string): Promise<T> {
@@ -358,9 +362,7 @@ export class GmailProvider implements EmailProvider {
     })
 
     if (!response.ok) {
-      throw new Error(
-        `GmailProvider: GET failed [${url}]: ${response.status} ${response.statusText}`
-      )
+      throw new GmailApiError(response.status, url, response.statusText)
     }
 
     return response.json() as Promise<T>
