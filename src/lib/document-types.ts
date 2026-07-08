@@ -1,4 +1,4 @@
-import type { DocumentType } from '@/types'
+import type { DocumentType, DocumentSource, DocumentStatus } from '@/types'
 
 /**
  * PT-PT display labels for document types (UI strings — the only sanctioned
@@ -18,4 +18,28 @@ export const DOCUMENT_TYPE_LABELS: Record<DocumentType, string> = {
   BALANCE_SHEET: 'Balanço',
   INCOME_STATEMENT: 'Dem. resultados',
   OTHER: 'Outro',
+}
+
+/**
+ * PT-PT labels for the document INTAKE source (how the file entered Gabify).
+ * Distinct from `classificationSource`, which says how it was READ.
+ */
+export const DOCUMENT_SOURCE_LABELS: Record<DocumentSource, string> = {
+  EMAIL: 'Email',
+  MANUAL_UPLOAD: 'Carregado',
+  IMPORT: 'Folha importada',
+  PORTAL_UPLOAD: 'Portal do cliente',
+  API_PULL: 'Importado da fonte',
+}
+
+/** PT-PT labels for the REAL document lifecycle states (audit F1.2). */
+export const DOCUMENT_STATUS_LABELS: Record<DocumentStatus, string> = {
+  PENDING_CLASSIFICATION: 'Em processamento',
+  CLASSIFIED: 'Classificado',
+  NEEDS_REVIEW: 'A rever',
+  REVIEWED: 'Arquivado',
+  PRE_VALIDATED: 'Pré-validado',
+  VALIDATED: 'Validado',
+  EXPORTED: 'Exportado',
+  SPLIT: 'Dividido',
 }

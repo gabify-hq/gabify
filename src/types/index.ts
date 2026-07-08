@@ -48,6 +48,17 @@ export type DocumentStatus =
   | 'CLASSIFIED'
   | 'NEEDS_REVIEW'
   | 'REVIEWED'
+  | 'PRE_VALIDATED'
+  | 'VALIDATED'
+  | 'EXPORTED'
+  | 'SPLIT'
+
+export type DocumentSource =
+  | 'EMAIL'
+  | 'MANUAL_UPLOAD'
+  | 'IMPORT'
+  | 'PORTAL_UPLOAD'
+  | 'API_PULL'
 
 export type JobStatus = 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'RETRYING'
 

@@ -25,15 +25,21 @@ import {
 } from '@/components/ui/dialog'
 import { StatusPill } from './status-badge'
 import type { DocumentDTO, ClientOptionDTO } from '@/server/dto'
-import { DOCUMENT_TYPE_LABELS } from '@/lib/document-types'
+import {
+  DOCUMENT_TYPE_LABELS,
+  DOCUMENT_SOURCE_LABELS,
+  DOCUMENT_STATUS_LABELS,
+} from '@/lib/document-types'
 import { cn } from '@/lib/utils'
 
-const SOURCE_LABEL: Record<string, string> = {
+/** How the document was READ (extraction method) — shown in the preview modal. */
+const CLASSIFICATION_SOURCE_LABEL: Record<string, string> = {
   'at-qr-code':       'QR Code Fiscal AT',
   'filename-pattern': 'Nome do ficheiro',
   'claude-vision':    'Visão artificial (imagem)',
   'claude-pdf':       'Leitura de PDF',
   'claude-text':      'Análise de texto',
+  'xml-ubl':          'Fatura eletrónica (XML)',
 }
 
 interface DocumentTableProps {
@@ -47,11 +53,13 @@ export function DocumentTable({ documents, clients = [], hideClientFilter = fals
   const [filterClient, setFilterClient] = useState<string>('all')
   const [filterType, setFilterType] = useState<string>('all')
   const [filterPeriod, setFilterPeriod] = useState<string>('all')
+  const [filterSource, setFilterSource] = useState<string>('all')
   const [previewDoc, setPreviewDoc] = useState<DocumentDTO | null>(null)
 
   const handleClientChange = (v: string | null) => setFilterClient(v ?? 'all')
   const handleTypeChange = (v: string | null) => setFilterType(v ?? 'all')
   const handlePeriodChange = (v: string | null) => setFilterPeriod(v ?? 'all')
+  const handleSourceChange = (v: string | null) => setFilterSource(v ?? 'all')
 
   const periods = Array.from(new Set(documents.map((d) => d.period))).sort().reverse()
 
@@ -59,19 +67,26 @@ export function DocumentTable({ documents, clients = [], hideClientFilter = fals
     if (filterClient !== 'all' && doc.clientId !== filterClient) return false
     if (filterType !== 'all' && doc.type !== filterType) return false
     if (filterPeriod !== 'all' && doc.period !== filterPeriod) return false
+    if (filterSource !== 'all' && doc.source !== filterSource) return false
     return true
   })
 
   const docStatusVariant = (status: DocumentDTO['status']) => {
-    if (status === 'CLASSIFIED') return 'classified' as const
-    if (status === 'NEEDS_REVIEW') return 'needs-review' as const
-    return 'reviewed' as const
-  }
-
-  const docStatusLabel = (status: DocumentDTO['status']) => {
-    if (status === 'CLASSIFIED') return 'Classificado'
-    if (status === 'NEEDS_REVIEW') return 'Rever'
-    return 'Confirmado'
+    switch (status) {
+      case 'PENDING_CLASSIFICATION':
+        return 'processing' as const
+      case 'NEEDS_REVIEW':
+        return 'needs-review' as const
+      case 'CLASSIFIED':
+      case 'PRE_VALIDATED':
+        return 'classified' as const
+      case 'VALIDATED':
+        return 'approved' as const
+      case 'EXPORTED':
+      case 'REVIEWED':
+      case 'SPLIT':
+        return 'reviewed' as const
+    }
   }
 
   const confidenceClass = (confidence: number) => {
@@ -123,6 +138,20 @@ export function DocumentTable({ documents, clients = [], hideClientFilter = fals
             {periods.map((p) => (
               <SelectItem key={p} value={p} className="data text-[12px]">
                 {p}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select value={filterSource} onValueChange={handleSourceChange}>
+          <SelectTrigger className="h-8 w-[160px] border-gray-200 bg-white text-[12px] text-gray-600 focus:ring-green-400">
+            <SelectValue placeholder="Todas as origens" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all" className="text-[12px]">Todas as origens</SelectItem>
+            {Object.entries(DOCUMENT_SOURCE_LABELS).map(([key, label]) => (
+              <SelectItem key={key} value={key} className="text-[12px]">
+                {label}
               </SelectItem>
             ))}
           </SelectContent>
@@ -200,13 +229,9 @@ export function DocumentTable({ documents, clients = [], hideClientFilter = fals
                   </span>
                 </TableCell>
                 <TableCell className="py-2.5">
-                  {doc.classificationSource ? (
-                    <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
-                      {SOURCE_LABEL[doc.classificationSource] ?? doc.classificationSource}
-                    </span>
-                  ) : (
-                    <span className="text-[11px] text-gray-300">—</span>
-                  )}
+                  <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
+                    {doc.sourceLabel}
+                  </span>
                 </TableCell>
                 <TableCell className="py-2.5 text-right">
                   <span className={cn('data text-[12px] font-bold', confidenceClass(doc.confidence))}>
@@ -216,7 +241,7 @@ export function DocumentTable({ documents, clients = [], hideClientFilter = fals
                 <TableCell className="py-2.5">
                   <StatusPill
                     variant={docStatusVariant(doc.status)}
-                    label={docStatusLabel(doc.status)}
+                    label={DOCUMENT_STATUS_LABELS[doc.status] ?? doc.status}
                   />
                 </TableCell>
                 <TableCell className="py-2.5">
@@ -296,11 +321,13 @@ export function DocumentTable({ documents, clients = [], hideClientFilter = fals
                 <dd className={cn('data font-bold', confidenceClass(previewDoc.confidence))}>
                   {Math.round(previewDoc.confidence * 100)}%
                 </dd>
+                <dt className="text-gray-400">Origem</dt>
+                <dd className="font-semibold text-gray-800">{previewDoc.sourceLabel}</dd>
                 {previewDoc.classificationSource && (
                   <>
-                    <dt className="text-gray-400">Origem</dt>
+                    <dt className="text-gray-400">Leitura</dt>
                     <dd className="font-semibold text-gray-800">
-                      {SOURCE_LABEL[previewDoc.classificationSource] ?? previewDoc.classificationSource}
+                      {CLASSIFICATION_SOURCE_LABEL[previewDoc.classificationSource] ?? previewDoc.classificationSource}
                     </dd>
                   </>
                 )}

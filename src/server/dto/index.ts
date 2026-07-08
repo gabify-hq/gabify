@@ -1,4 +1,10 @@
-import type { ActionStatus, DocumentType, EmailStatus } from '@/types'
+import type {
+  ActionStatus,
+  DocumentSource,
+  DocumentStatus,
+  DocumentType,
+  EmailStatus,
+} from '@/types'
 
 /**
  * Server → UI data transfer objects (S1.6).
@@ -41,7 +47,11 @@ export interface DocumentDTO {
   type: DocumentType
   typeLabel: string
   confidence: number
-  status: 'CLASSIFIED' | 'NEEDS_REVIEW' | 'REVIEWED'
+  /** REAL lifecycle state (audit F1.2) — never collapsed into 3 display buckets. */
+  status: DocumentStatus
+  /** Intake source (how the file entered Gabify) + pt-PT label. */
+  source: DocumentSource
+  sourceLabel: string
   extractedDate: string | null
   extractedAmount: number | null
   extractedVATNumber: string | null

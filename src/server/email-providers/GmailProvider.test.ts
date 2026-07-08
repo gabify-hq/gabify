@@ -1,12 +1,13 @@
-import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
+﻿import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
 import type { EmailAccount } from '@prisma/client'
 
-// ── Mocks (must be before any import that resolves them) ────────────────────
+// â”€â”€ Mocks (must be before any import that resolves them) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-vi.mock('@/lib/prisma', () => ({
-  prisma: {
+vi.mock('@/lib/prisma', () => {
+  const prisma = {
     emailAccount: {
       update: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
     },
     inboundEmail: {
       findUnique: vi.fn(),
@@ -21,21 +22,25 @@ vi.mock('@/lib/prisma', () => ({
       findMany: vi.fn(),
       createMany: vi.fn(),
     },
-  },
-}))
+    // token-refresh (F2.6): interactive tx + advisory lock â€” passthrough in unit tests
+    $transaction: vi.fn(),
+    $queryRaw: vi.fn(),
+  }
+  return { prisma }
+})
 
 vi.mock('@/lib/crypto', () => ({
   encryptToken: vi.fn((s: string) => `enc:${s}`),
   decryptToken: vi.fn((s: string) => s.replace('enc:', '')),
 }))
 
-// ── Imports (after mocks) ───────────────────────────────────────────────────
+// â”€â”€ Imports (after mocks) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 import { GmailProvider } from './GmailProvider'
 import { prisma } from '@/lib/prisma'
 import { encryptToken, decryptToken } from '@/lib/crypto'
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
+// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function makeAccount(overrides: Partial<EmailAccount> = {}): EmailAccount {
   return {
@@ -96,7 +101,7 @@ function makeFetchResponse(body: unknown, status = 200): Response {
   } as unknown as Response
 }
 
-// ── Tests ────────────────────────────────────────────────────────────────────
+// â”€â”€ Tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('GmailProvider', () => {
   let fetchMock: ReturnType<typeof vi.fn>
@@ -124,6 +129,15 @@ describe('GmailProvider', () => {
     vi.mocked(prisma.inboundEmail.updateMany).mockResolvedValue({ count: 1 })
     vi.mocked(prisma.emailAttachment.findMany).mockResolvedValue([])
     vi.mocked(prisma.emailAttachment.createMany).mockResolvedValue({ count: 0 })
+
+    // token-refresh (F2.6) reads the account from the DB and locks inside a tx
+    vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockImplementation(
+      (async () => makeAccount()) as never,
+    )
+    vi.mocked(prisma.$transaction).mockImplementation(
+      (async (fn: (tx: unknown) => unknown) => fn(prisma)) as never,
+    )
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([] as never)
   })
 
   afterEach(() => {
@@ -135,7 +149,7 @@ describe('GmailProvider', () => {
     delete process.env.TOKEN_ENCRYPTION_KEY
   })
 
-  // ── token refresh ─────────────────────────────────────────────────────────
+  // â”€â”€ token refresh â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   describe('token refresh', () => {
     it('uses existing access token when not expiring soon', async () => {
@@ -143,6 +157,7 @@ describe('GmailProvider', () => {
         gmailTokenExpiry: new Date(Date.now() + 60 * 60 * 1000),
       })
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       // Initial sync: messages list + one full message fetch
       fetchMock
@@ -161,6 +176,7 @@ describe('GmailProvider', () => {
         gmailTokenExpiry: new Date(Date.now() + 4 * 60 * 1000), // 4 min left
       })
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock
         .mockResolvedValueOnce(
@@ -192,6 +208,7 @@ describe('GmailProvider', () => {
     it('refreshes token when gmailTokenExpiry is null', async () => {
       const account = makeAccount({ gmailTokenExpiry: null })
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock
         .mockResolvedValueOnce(
@@ -210,6 +227,7 @@ describe('GmailProvider', () => {
         gmailTokenExpiry: new Date(Date.now() - 1000),
       })
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       await expect(provider.syncInbox()).rejects.toThrow('no refresh token available')
     })
@@ -220,6 +238,7 @@ describe('GmailProvider', () => {
         gmailTokenExpiry: new Date(Date.now() - 1000),
       })
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       await expect(provider.syncInbox()).rejects.toThrow(
         'GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables are required'
@@ -231,6 +250,7 @@ describe('GmailProvider', () => {
         gmailTokenExpiry: new Date(Date.now() - 1000),
       })
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock.mockResolvedValueOnce(makeFetchResponse({}, 401))
 
@@ -243,6 +263,7 @@ describe('GmailProvider', () => {
         gmailRefreshToken: 'enc:old-refresh-token',
       })
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock
         .mockResolvedValueOnce(
@@ -262,12 +283,13 @@ describe('GmailProvider', () => {
     })
   })
 
-  // ── syncInbox — initial sync ──────────────────────────────────────────────
+  // â”€â”€ syncInbox â€” initial sync â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   describe('syncInbox', () => {
     it('performs initial sync when no historyId is stored', async () => {
       const account = makeAccount({ historyId: null })
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock
         .mockResolvedValueOnce(
@@ -291,6 +313,7 @@ describe('GmailProvider', () => {
     it('stores historyId from the first message during initial sync', async () => {
       const account = makeAccount({ historyId: null })
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock
         .mockResolvedValueOnce(
@@ -309,6 +332,7 @@ describe('GmailProvider', () => {
     it('performs incremental sync when historyId is stored', async () => {
       const account = makeAccount({ historyId: '10000' })
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock
         .mockResolvedValueOnce(
@@ -337,6 +361,7 @@ describe('GmailProvider', () => {
     it('stores updated historyId after incremental sync', async () => {
       const account = makeAccount({ historyId: '10000' })
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock.mockResolvedValueOnce(
         makeFetchResponse({ historyId: '10100', history: [] })
@@ -353,6 +378,7 @@ describe('GmailProvider', () => {
     it('returns zero counts when incremental sync has no new messages', async () => {
       const account = makeAccount({ historyId: '10000' })
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock.mockResolvedValueOnce(
         makeFetchResponse({ historyId: '10001', history: [] })
@@ -367,6 +393,7 @@ describe('GmailProvider', () => {
     it('counts existing messages as updated (not new)', async () => {
       const account = makeAccount({ historyId: null })
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       vi.mocked(prisma.inboundEmail.findUnique).mockResolvedValue({ id: 'existing' } as never)
 
@@ -385,6 +412,7 @@ describe('GmailProvider', () => {
     it('creates EmailThread for messages with a new threadId', async () => {
       const account = makeAccount({ historyId: null })
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       vi.mocked(prisma.emailThread.findFirst).mockResolvedValue(null)
 
@@ -406,6 +434,7 @@ describe('GmailProvider', () => {
     it('reuses existing EmailThread for a known threadId', async () => {
       const account = makeAccount({ historyId: null })
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       vi.mocked(prisma.emailThread.findFirst).mockResolvedValue({ id: 'existing-thread' } as never)
 
@@ -423,6 +452,7 @@ describe('GmailProvider', () => {
     it('throws when Gmail messages list request fails', async () => {
       const account = makeAccount({ historyId: null })
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock.mockResolvedValueOnce(makeFetchResponse({}, 500))
 
@@ -432,12 +462,13 @@ describe('GmailProvider', () => {
     it('parses From header with name and email', async () => {
       const account = makeAccount({ historyId: null })
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       const message = makeGmailMessage({
         payload: {
           headers: [
             { name: 'Subject', value: 'Invoice' },
-            { name: 'From', value: '"João Silva" <joao@empresa.pt>' },
+            { name: 'From', value: '"JoÃ£o Silva" <joao@empresa.pt>' },
             { name: 'Date', value: 'Mon, 15 Jan 2024 10:00:00 +0000' },
           ],
           mimeType: 'text/plain',
@@ -455,12 +486,13 @@ describe('GmailProvider', () => {
 
       const upsertCall = vi.mocked(prisma.inboundEmail.upsert).mock.calls[0][0]
       expect(upsertCall.create.fromEmail).toBe('joao@empresa.pt')
-      expect(upsertCall.create.fromName).toBe('João Silva')
+      expect(upsertCall.create.fromName).toBe('JoÃ£o Silva')
     })
 
     it('handles plain email From header without name', async () => {
       const account = makeAccount({ historyId: null })
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       const message = makeGmailMessage({
         payload: {
@@ -490,6 +522,7 @@ describe('GmailProvider', () => {
     it('decodes text/plain body from base64url', async () => {
       const account = makeAccount({ historyId: null })
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       const bodyText = 'This is the email body'
       const message = makeGmailMessage({
@@ -519,6 +552,7 @@ describe('GmailProvider', () => {
     it('extracts text/plain from multipart message by recursing into parts', async () => {
       const account = makeAccount({ historyId: null })
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       const bodyText = 'Plain text part'
       const message = makeGmailMessage({
@@ -555,12 +589,13 @@ describe('GmailProvider', () => {
     })
   })
 
-  // ── getAttachment ─────────────────────────────────────────────────────────
+  // â”€â”€ getAttachment â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   describe('getAttachment', () => {
     it('returns a Buffer decoded from base64url', async () => {
       const account = makeAccount()
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       const originalData = 'binary-attachment-data'
       const base64urlData = Buffer.from(originalData).toString('base64url')
@@ -578,6 +613,7 @@ describe('GmailProvider', () => {
     it('calls the correct Gmail attachment endpoint', async () => {
       const account = makeAccount()
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock.mockResolvedValueOnce(
         makeFetchResponse({ data: Buffer.from('data').toString('base64url'), size: 4 })
@@ -593,6 +629,7 @@ describe('GmailProvider', () => {
     it('throws when the Gmail request fails', async () => {
       const account = makeAccount()
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock.mockResolvedValueOnce(makeFetchResponse({}, 403))
 
@@ -602,12 +639,13 @@ describe('GmailProvider', () => {
     })
   })
 
-  // ── sendReply ─────────────────────────────────────────────────────────────
+  // â”€â”€ sendReply â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   describe('sendReply', () => {
     it('fetches original message, sends reply, and updates InboundEmail status', async () => {
       const account = makeAccount()
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       // First fetch: get original message
       fetchMock
@@ -642,6 +680,7 @@ describe('GmailProvider', () => {
     it('prefixes Re: to subject only once', async () => {
       const account = makeAccount()
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       const message = makeGmailMessage({
         payload: {
@@ -672,6 +711,7 @@ describe('GmailProvider', () => {
     it('throws when send request fails', async () => {
       const account = makeAccount()
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock
         .mockResolvedValueOnce(makeFetchResponse(makeGmailMessage()))
@@ -685,6 +725,7 @@ describe('GmailProvider', () => {
     it('does not update DB status when send call fails', async () => {
       const account = makeAccount()
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock
         .mockResolvedValueOnce(makeFetchResponse(makeGmailMessage()))
@@ -695,12 +736,13 @@ describe('GmailProvider', () => {
     })
   })
 
-  // ── watchChanges ──────────────────────────────────────────────────────────
+  // â”€â”€ watchChanges â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   describe('watchChanges', () => {
     it('sends watch request and returns WatchResult', async () => {
       const account = makeAccount()
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       const expiration = String(Date.now() + 7 * 24 * 60 * 60 * 1000)
       fetchMock.mockResolvedValueOnce(
@@ -717,6 +759,7 @@ describe('GmailProvider', () => {
     it('sends correct watch payload', async () => {
       const account = makeAccount()
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock.mockResolvedValueOnce(
         makeFetchResponse({ historyId: '50000', expiration: String(Date.now() + 1000) })
@@ -737,6 +780,7 @@ describe('GmailProvider', () => {
     it('stores historyId when account has no historyId yet', async () => {
       const account = makeAccount({ historyId: null })
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock.mockResolvedValueOnce(
         makeFetchResponse({ historyId: '77777', expiration: String(Date.now() + 1000) })
@@ -753,6 +797,7 @@ describe('GmailProvider', () => {
     it('does not update historyId when account already has one', async () => {
       const account = makeAccount({ historyId: 'existing-history' })
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock.mockResolvedValueOnce(
         makeFetchResponse({ historyId: '88888', expiration: String(Date.now() + 1000) })
@@ -767,6 +812,7 @@ describe('GmailProvider', () => {
       delete process.env.GMAIL_PUBSUB_TOPIC
       const account = makeAccount()
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       await expect(provider.watchChanges('https://example.com')).rejects.toThrow(
         'GMAIL_PUBSUB_TOPIC environment variable is not set'
@@ -776,6 +822,7 @@ describe('GmailProvider', () => {
     it('throws when watch request fails', async () => {
       const account = makeAccount()
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock.mockResolvedValueOnce(makeFetchResponse({}, 400))
 
@@ -785,7 +832,7 @@ describe('GmailProvider', () => {
     })
   })
 
-  // ── attachment extraction ─────────────────────────────────────────────────
+  // â”€â”€ attachment extraction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   describe('attachment extraction', () => {
     function makeMultipartMessage(attachments: Array<{
@@ -820,6 +867,7 @@ describe('GmailProvider', () => {
     it('creates EmailAttachment records for each attachment part', async () => {
       const account = makeAccount({ historyId: null })
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       vi.mocked(prisma.inboundEmail.upsert).mockResolvedValue({ id: 'email-db-1' } as never)
 
@@ -858,6 +906,7 @@ describe('GmailProvider', () => {
     it('skips attachments that already exist in the database', async () => {
       const account = makeAccount({ historyId: null })
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       vi.mocked(prisma.inboundEmail.upsert).mockResolvedValue({ id: 'email-db-1' } as never)
       vi.mocked(prisma.emailAttachment.findMany).mockResolvedValue([
@@ -886,6 +935,7 @@ describe('GmailProvider', () => {
     it('does not call createMany when all attachments already exist', async () => {
       const account = makeAccount({ historyId: null })
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       vi.mocked(prisma.inboundEmail.upsert).mockResolvedValue({ id: 'email-db-1' } as never)
       vi.mocked(prisma.emailAttachment.findMany).mockResolvedValue([
@@ -908,6 +958,7 @@ describe('GmailProvider', () => {
     it('does not call emailAttachment methods for plain-text messages with no attachments', async () => {
       const account = makeAccount({ historyId: null })
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       vi.mocked(prisma.inboundEmail.upsert).mockResolvedValue({ id: 'email-db-1' } as never)
 
@@ -926,6 +977,7 @@ describe('GmailProvider', () => {
     it('extracts attachments nested inside multipart/related parts', async () => {
       const account = makeAccount({ historyId: null })
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       vi.mocked(prisma.inboundEmail.upsert).mockResolvedValue({ id: 'email-db-1' } as never)
 
@@ -967,7 +1019,7 @@ describe('GmailProvider', () => {
     })
   })
 
-  // ── token encryption integration ──────────────────────────────────────────
+  // â”€â”€ token encryption integration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   describe('token encryption integration', () => {
     it('encrypts tokens before storing in the database on refresh', async () => {
@@ -975,6 +1027,7 @@ describe('GmailProvider', () => {
         gmailTokenExpiry: new Date(Date.now() - 1000),
       })
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock
         .mockResolvedValueOnce(
@@ -1002,6 +1055,7 @@ describe('GmailProvider', () => {
         gmailTokenExpiry: new Date(Date.now() + 60 * 60 * 1000),
       })
       const provider = new GmailProvider(account)
+      vi.mocked(prisma.emailAccount.findUniqueOrThrow).mockResolvedValue(account as never)
 
       fetchMock.mockResolvedValueOnce(makeFetchResponse({ messages: [] }))
 

@@ -168,6 +168,7 @@ export function DocumentCorrectionForm({ document: doc, clients, role }: Documen
   const [previewError, setPreviewError] = useState(false)
   const [previewOpen, setPreviewOpen] = useState(false) // mobile collapse
   const [busy, setBusy] = useState<'validate' | 'reject' | null>(null)
+  const [duplicateBusy, setDuplicateBusy] = useState<'keep' | 'distinct' | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [conflict, setConflict] = useState(false)
 
@@ -266,6 +267,34 @@ export function DocumentCorrectionForm({ document: doc, clients, role }: Documen
       setErrorMessage('Sem ligação ao servidor. Tente novamente.')
     } finally {
       setBusy(null)
+    }
+  }
+
+  /** Duplicate resolution (audit F3.8): keep = archive; distinct = clear flag. */
+  async function resolveDuplicateAs(resolution: 'keep' | 'distinct'): Promise<void> {
+    setDuplicateBusy(resolution)
+    setErrorMessage(null)
+    try {
+      const res = await fetch(`/api/documents/${doc.id}/resolve-duplicate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resolution, expectedVersion: doc.version }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        setErrorMessage(
+          res.status === 409
+            ? 'Documento atualizado por outro utilizador — recarregue.'
+            : data?.error ?? 'Ocorreu um erro. Tente novamente.',
+        )
+        return
+      }
+      router.push('/review')
+      router.refresh()
+    } catch {
+      setErrorMessage('Sem ligação ao servidor. Tente novamente.')
+    } finally {
+      setDuplicateBusy(null)
     }
   }
 
@@ -370,6 +399,35 @@ export function DocumentCorrectionForm({ document: doc, clients, role }: Documen
             <p className="rounded-lg border border-gray-200 bg-gray-100 px-3 py-2 text-[12px] text-gray-500">
               Documento exportado — apenas o proprietário pode reabrir (com motivo).
             </p>
+          )}
+
+          {/* Duplicate resolution (audit F3.8) — the flag finally has answers */}
+          {canWrite && !isLocked && doc.flags.includes('DUPLICATE_SUSPECT') && (
+            <div className="space-y-2 rounded-lg border border-red-100 bg-red-50/60 px-3 py-2.5">
+              <p className="text-[12px] text-red-700">
+                Este documento parece ser um duplicado de outro já registado. O que quer fazer?
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => resolveDuplicateAs('keep')}
+                  disabled={duplicateBusy !== null}
+                  className="pressable flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
+                >
+                  {duplicateBusy === 'keep' && <Loader2 className="h-3 w-3 animate-spin" />}
+                  É duplicado — arquivar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => resolveDuplicateAs('distinct')}
+                  disabled={duplicateBusy !== null}
+                  className="pressable flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-gray-600 transition-colors hover:border-gray-300 disabled:opacity-50"
+                >
+                  {duplicateBusy === 'distinct' && <Loader2 className="h-3 w-3 animate-spin" />}
+                  São documentos distintos
+                </button>
+              </div>
+            </div>
           )}
 
           {/* Editable fields */}

@@ -2,11 +2,9 @@ import type { EmailProvider } from './EmailProvider'
 import type { SyncResult, WatchResult, EmailDraft } from '@/types'
 import type { EmailAccount } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { encryptToken, decryptToken } from '@/lib/crypto'
+import { ensureFreshOutlookToken } from './token-refresh'
 
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0'
-const TOKEN_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/token'
-const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000 // 5 minutes
 const WEBHOOK_LIFETIME_MINUTES = 4230
 
 // ADDENDUM A4: attachment ingestion limits
@@ -50,12 +48,6 @@ interface GraphDeltaResponse {
   value: GraphMessage[]
   '@odata.nextLink'?: string
   '@odata.deltaLink'?: string
-}
-
-interface GraphTokenResponse {
-  access_token: string
-  refresh_token?: string
-  expires_in: number
 }
 
 interface GraphSubscriptionResponse {
@@ -235,67 +227,9 @@ export class OutlookProvider implements EmailProvider {
 
   // ── Private helpers ─────────────────────────────────────────────────────────
 
+  /** Serialized per account via pg advisory lock (audit F2.6) — see token-refresh.ts. */
   private async refreshTokenIfNeeded(): Promise<string> {
-    const { outlookAccessToken, outlookRefreshToken, outlookTokenExpiry } = this.account
-
-    const isExpiringSoon =
-      !outlookTokenExpiry ||
-      outlookTokenExpiry.getTime() - Date.now() < TOKEN_REFRESH_BUFFER_MS
-
-    if (!isExpiringSoon && outlookAccessToken) {
-      return decryptToken(outlookAccessToken)
-    }
-
-    if (!outlookRefreshToken) {
-      throw new Error(
-        'OutlookProvider: no refresh token available — re-authentication required'
-      )
-    }
-
-    const clientId = process.env.MICROSOFT_CLIENT_ID
-    const clientSecret = process.env.MICROSOFT_CLIENT_SECRET
-    if (!clientId || !clientSecret) {
-      throw new Error(
-        'MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET environment variables are required'
-      )
-    }
-
-    const params = new URLSearchParams({
-      grant_type: 'refresh_token',
-      client_id: clientId,
-      client_secret: clientSecret,
-      refresh_token: decryptToken(outlookRefreshToken),
-      scope:
-        'https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Mail.Send offline_access',
-    })
-
-    const response = await fetch(TOKEN_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: params.toString(),
-    })
-
-    if (!response.ok) {
-      throw new Error(
-        `OutlookProvider: token refresh failed: ${response.status} ${response.statusText}`
-      )
-    }
-
-    const tokenData = (await response.json()) as GraphTokenResponse
-    const newAccessToken = tokenData.access_token
-    const newRefreshToken = tokenData.refresh_token ?? decryptToken(outlookRefreshToken)
-    const newExpiry = new Date(Date.now() + tokenData.expires_in * 1000)
-
-    await prisma.emailAccount.update({
-      where: { id: this.account.id },
-      data: {
-        outlookAccessToken: encryptToken(newAccessToken),
-        outlookRefreshToken: encryptToken(newRefreshToken),
-        outlookTokenExpiry: newExpiry,
-      },
-    })
-
-    return newAccessToken
+    return ensureFreshOutlookToken(this.account.id)
   }
 
   private async graphGet<T>(url: string, token: string): Promise<T> {

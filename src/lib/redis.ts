@@ -14,6 +14,7 @@ export const redisConnection = {
 export const QUEUE_EMAIL_SYNC = 'email-sync'
 export const QUEUE_DOCUMENT_PARSE = 'document-parse'
 export const QUEUE_SUBSCRIPTION_RENEWAL = 'subscription-renewal'
+export const QUEUE_EXPORT = 'export'
 export const QUEUE_TOCONLINE_PUSH = 'toconline-push'
 export const QUEUE_TOCONLINE_PULL = 'toconline-pull'
 export const QUEUE_MOLONI_PULL = 'moloni-pull'
@@ -34,6 +35,7 @@ export const DEFAULT_JOB_OPTIONS = {
 let emailSyncQueue: Queue | null = null
 let documentParseQueue: Queue | null = null
 let subscriptionRenewalQueue: Queue | null = null
+let exportQueue: Queue | null = null
 let toconlinePushQueue: Queue | null = null
 let toconlinePullQueue: Queue | null = null
 let moloniPullQueue: Queue | null = null
@@ -58,6 +60,13 @@ export function getSubscriptionRenewalQueue(): Queue {
     subscriptionRenewalQueue = new Queue(QUEUE_SUBSCRIPTION_RENEWAL, { connection: redisConnection })
   }
   return subscriptionRenewalQueue
+}
+
+export function getExportQueue(): Queue {
+  if (!exportQueue) {
+    exportQueue = new Queue(QUEUE_EXPORT, { connection: redisConnection })
+  }
+  return exportQueue
 }
 
 export function getToconlinePushQueue(): Queue {

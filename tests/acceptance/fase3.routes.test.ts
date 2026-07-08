@@ -15,9 +15,11 @@ const queueAddMock = vi.fn(async () => ({}))
 vi.mock('@/lib/redis', () => ({
   getEmailSyncQueue: () => ({ add: queueAddMock }),
   getDocumentParseQueue: () => ({ add: queueAddMock }),
+  getExportQueue: () => ({ add: queueAddMock }),
   QUEUE_EMAIL_SYNC: 'email-sync',
   QUEUE_DOCUMENT_PARSE: 'document-parse',
   QUEUE_SUBSCRIPTION_RENEWAL: 'subscription-renewal',
+  QUEUE_EXPORT: 'export',
   DEFAULT_JOB_OPTIONS: {},
   redisConnection: {},
 }))
@@ -115,13 +117,19 @@ describe('Fase 3 — rotas API (review, bulk, reopen, supplier-rules, exports)',
     const listRes = await listRules(jsonRequest('/api/supplier-rules', 'GET'))
     expect((await listRes.json()).data.items).toHaveLength(1)
 
-    // Export via route
+    // Export via route — audit F1.3: o POST enfileira; o processor corre o motor
     const { POST: createExport, GET: listExports } = await import('@/app/api/exports/route')
     const expRes = await createExport(
       jsonRequest('/api/exports', 'POST', { periodFrom: '2026-03', periodTo: '2026-03' })
     )
-    expect(expRes.status).toBe(201)
-    const { batchId, documentCount } = (await expRes.json()).data
+    expect(expRes.status).toBe(202)
+    const { processExport } = await import('@/queues/export.processor')
+    const exportResult = await processExport(
+      { officeId: office.id, userId: owner.id, periodFrom: '2026-03', periodTo: '2026-03', includeExported: false },
+      'rt-export',
+    )
+    if (!exportResult.ok) throw new Error(`export failed: ${exportResult.error}`)
+    const { batchId, documentCount } = exportResult
     expect(documentCount).toBe(1)
 
     const history = await listExports(jsonRequest('/api/exports', 'GET'))
